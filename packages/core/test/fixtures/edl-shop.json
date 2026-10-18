@@ -1,0 +1,100 @@
+{
+  "lang": "es",
+  "bpm": 112,
+  "style": { "energy": "bold", "density": "airy" },
+  "hooks": [
+    [
+      {
+        "piece": "KineticHeadline",
+        "beats": 6,
+        "lines": [
+          { "text": "¿Cuánto te cobran", "kind": "framing" },
+          { "text": "por cada venta?", "kind": "framing", "accent": "cada venta?" }
+        ]
+      }
+    ],
+    [
+      {
+        "piece": "KineticHeadline",
+        "beats": 6,
+        "lines": [
+          { "text": "Vendé por WhatsApp", "kind": "claim", "claimId": "c1" },
+          { "text": "sin comisiones.", "kind": "claim", "claimId": "c1", "accent": "sin comisiones." }
+        ]
+      }
+    ],
+    [
+      {
+        "piece": "UiFocus",
+        "beats": 3,
+        "shotId": "s1-mobile",
+        "boxIndex": 0,
+        "lines": [{ "text": "Tu tienda, lista en minutos.", "kind": "claim", "claimId": "c2", "accent": "en minutos." }]
+      },
+      {
+        "piece": "KineticHeadline",
+        "beats": 3,
+        "lines": [{ "text": "Sin comisiones.", "kind": "claim", "claimId": "c1", "accent": "comisiones." }]
+      }
+    ]
+  ],
+  "body": [
+    {
+      "piece": "UiFocus",
+      "beats": 6,
+      "shotId": "s4-mobile",
+      "boxIndex": 1,
+      "lines": [{ "text": "Tus clientes piden por WhatsApp.", "kind": "claim", "claimId": "c6", "accent": "WhatsApp." }]
+    },
+    {
+      "piece": "KineticHeadline",
+      "beats": 5,
+      "transitionIn": "wipe",
+      "lines": [{ "text": "0% de comisión.", "kind": "claim", "claimId": "c3", "accent": "0%" }]
+    },
+    {
+      "piece": "ClaimStack",
+      "beats": 7,
+      "lines": [
+        { "text": "Mercado Pago.", "kind": "claim", "claimId": "c5" },
+        { "text": "Transferencia.", "kind": "claim", "claimId": "c5" },
+        { "text": "Efectivo al retirar.", "kind": "claim", "claimId": "c5", "accent": "Efectivo al retirar." }
+      ]
+    },
+    {
+      "piece": "KineticHeadline",
+      "beats": 6,
+      "transitionIn": "wipe",
+      "lines": [
+        { "text": "Plan Pro", "kind": "claim", "claimId": "c4" },
+        { "text": "$4.990 por mes.", "kind": "claim", "claimId": "c4", "accent": "$4.990" }
+      ]
+    }
+  ],
+  "cta": {
+    "piece": "EndCard",
+    "beats": 6,
+    "transitionIn": "wipe",
+    "lines": [{ "text": "Crear mi tienda", "kind": "claim", "claimId": "c7" }]
+  },
+  "claims": [
+    { "id": "c1", "text": "Vendé por WhatsApp sin comisiones.", "sectionId": "s1", "quote": "Vendé por WhatsApp sin comisiones" },
+    { "id": "c2", "text": "Tu tienda lista en minutos.", "sectionId": "s1", "quote": "Armá tu tienda en minutos" },
+    { "id": "c3", "text": "0% de comisión.", "sectionId": "s2", "quote": "0% de comisión" },
+    { "id": "c4", "text": "Plan Pro a $4.990 por mes.", "sectionId": "s2", "quote": "Plan Pro a $4.990 por mes" },
+    {
+      "id": "c5",
+      "text": "Cobrás con Mercado Pago, transferencia o efectivo al retirar.",
+      "sectionId": "s3",
+      "quote": "Mercado Pago, transferencia y efectivo al retirar"
+    },
+    {
+      "id": "c6",
+      "text": "Tus clientes piden por WhatsApp y vos confirmás el pedido.",
+      "sectionId": "s4",
+      "quote": "piden por WhatsApp y vos confirmás el pedido"
+    },
+    { "id": "c7", "text": "Crear mi tienda.", "sectionId": "s1", "quote": "Crear mi tienda" }
+  ],
+  "musicPrompt": "Upbeat, friendly Latin-pop groove for a small-business ad: warm kick, finger snaps, plucked synth hook, bright marimba accents. Instrumental."
+}

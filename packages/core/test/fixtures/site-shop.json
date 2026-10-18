@@ -1,0 +1,69 @@
+{
+  "url": "https://tiendita.example",
+  "lang": "es",
+  "title": "Tiendita - Vendé por WhatsApp sin comisiones",
+  "description": "Armá tu tienda online en minutos y cobrá directo a tu cuenta. Sin comisiones por venta.",
+  "sections": [
+    {
+      "id": "s1",
+      "heading": "Vendé por WhatsApp sin comisiones",
+      "text": "Armá tu tienda en minutos y cobrá directo a tu cuenta.\nCrear mi tienda\nVer una tienda de ejemplo",
+      "ctas": ["Crear mi tienda", "Ver una tienda de ejemplo"]
+    },
+    {
+      "id": "s2",
+      "heading": "Precios",
+      "text": "0% de comisión en todas tus ventas.\nPlan Pro a $4.990 por mes.\nEl plan gratis incluye hasta 10 productos.",
+      "ctas": []
+    },
+    {
+      "id": "s3",
+      "heading": "Medios de pago",
+      "text": "Mercado Pago, transferencia y efectivo al retirar.\nLa plata va directo a tu cuenta, sin intermediarios.",
+      "ctas": []
+    },
+    {
+      "id": "s4",
+      "heading": "Mirá una tienda de ejemplo",
+      "text": "Tus clientes eligen, piden por WhatsApp y vos confirmás el pedido.\nVer demo",
+      "ctas": ["Ver demo"]
+    }
+  ],
+  "brand": {
+    "colors": [
+      { "hex": "#f7f7f2", "role": "bg", "weight": 0.9 },
+      { "hex": "#ffffff", "role": "bg", "weight": 0.06 },
+      { "hex": "#1f2a24", "role": "text", "weight": 0.7 },
+      { "hex": "#5b655f", "role": "text", "weight": 0.2 },
+      { "hex": "#0b7a4b", "role": "primary", "weight": 0.6 },
+      { "hex": "#f4b942", "role": "accent", "weight": 0.2 }
+    ],
+    "fonts": [
+      {
+        "family": "Plus Jakarta Sans",
+        "role": "display",
+        "source": "google",
+        "url": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400..800&display=swap",
+        "files": [{ "file": "media/fonts/plus-jakarta-sans-400-800.woff2", "weight": "400 800" }],
+        "weight": "800",
+        "letterSpacingEm": -0.03,
+        "lineHeight": 0.98,
+        "alsoBody": true
+      }
+    ],
+    "logo": { "file": "media/logo.png", "kind": "png" }
+  },
+  "shots": [
+    { "id": "s1-mobile", "file": "media/s1-mobile.png", "viewport": "mobile", "dpr": 2, "sectionId": "s1", "width": 780, "height": 1688 },
+    { "id": "s4-mobile", "file": "media/s4-mobile.png", "viewport": "mobile", "dpr": 2, "sectionId": "s4", "width": 780, "height": 1688 }
+  ],
+  "boxes": [
+    { "shotId": "s1-mobile", "sectionId": "s1", "kind": "heading", "text": "Vendé por WhatsApp sin comisiones", "x": 56, "y": 239, "w": 668, "h": 166 },
+    { "shotId": "s1-mobile", "sectionId": "s1", "kind": "cta", "text": "Crear mi tienda", "x": 56, "y": 724, "w": 403, "h": 102 },
+    { "shotId": "s1-mobile", "sectionId": "s1", "kind": "image", "x": 120, "y": 960, "w": 540, "h": 640 },
+    { "shotId": "s4-mobile", "sectionId": "s4", "kind": "heading", "text": "Mirá una tienda de ejemplo", "x": 56, "y": 240, "w": 668, "h": 128 },
+    { "shotId": "s4-mobile", "sectionId": "s4", "kind": "image", "x": 56, "y": 520, "w": 668, "h": 560 },
+    { "shotId": "s4-mobile", "sectionId": "s4", "kind": "cta", "text": "Ver demo", "x": 56, "y": 1180, "w": 300, "h": 102 }
+  ],
+  "recordings": []
+}

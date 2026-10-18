@@ -1,0 +1,44 @@
+name: CI
+
+# Typecheck and tests on every push. It needs no secrets and spends nothing: the tests that pay for a VM,
+# a model or music are opt-in (`test:live`) and are not run here.
+on:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A new push to a branch makes the run of the previous one pointless; on main, let every run finish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Installs the pnpm version in the root package.json ("packageManager"). It goes before setup-node,
+      # which needs pnpm on the PATH to cache its store.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install the dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Test the workflows
+        run: pnpm test:integration
