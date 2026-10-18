@@ -1,12 +1,47 @@
-// The buy adapter's chain reads and its VM poll, against a chain and a gateway that never leave the test. Paying is in
-// vm-payment.test.ts, through payForVm.
+// The buy adapter's chain reads, its VM poll and the backstops around a payment, against a chain and a gateway that
+// never leave the test. The usual ways of paying are in vm-payment.test.ts, through payForVm.
 import { inspect } from 'node:util';
 import { generatePrivateKey } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CeloBuy } from '../src/adapters/real/buy';
-import { BUY_PAY_TO, json, USDC, USDT } from './support/fake-buy-gateway';
+import type { RentVmInput, SignedVmPayment, VmPaymentInfo } from '../src/ports';
+import { BUY_PAY_TO, BUY_VM_URL, fakeBuyGateway, json, USDC, USDT, type SentPayment } from './support/fake-buy-gateway';
 import { authorizationCanceledLog, authorizationUsedLog, FakeChain, transferLog } from './support/fake-chain';
+
+// A buy-core that behaves differently from 0.8.3, for the backstops: it can send the payment under a header the adapter
+// does not know, sign something other than the quote, or quote another token. Off, it is buy-core as it is.
+const drift = vi.hoisted(() => ({
+  hideHeader: false,
+  payment: undefined as ((payment: SentPayment) => SentPayment) | undefined,
+  requirements: undefined as ((requirements: Record<string, unknown>) => Record<string, unknown>) | undefined,
+}));
+
+vi.mock('@celo/buy-core', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@celo/buy-core')>();
+  const payingFetch: typeof real.x402.payingFetch = (ctx, input, init = {}) => {
+    const inner = ctx.fetchImpl ?? fetch;
+    const fetchImpl: typeof fetch = async (request, requestInit) => {
+      const headers = new Headers(requestInit?.headers);
+      const header = headers.get('X-PAYMENT');
+      if (header !== null && drift.payment !== undefined) {
+        const changed = drift.payment(JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as SentPayment);
+        headers.set('X-PAYMENT', Buffer.from(JSON.stringify(changed)).toString('base64'));
+      }
+      if (header !== null && drift.hideHeader) {
+        headers.set('X-PAYMENT-NEXT', headers.get('X-PAYMENT') ?? '');
+        headers.delete('X-PAYMENT');
+      }
+      return inner(request, { ...requestInit, headers });
+    };
+    const { onBeforePayment } = init;
+    return real.x402.payingFetch({ ...ctx, fetchImpl }, input, {
+      ...init,
+      onBeforePayment: onBeforePayment && ((r) => onBeforePayment((drift.requirements?.(r) ?? r) as typeof r)),
+    });
+  };
+  return { ...real, x402: { ...real.x402, payingFetch } };
+});
 
 const RPC_URL = 'https://celo-mainnet.example/v1/secret-rpc-key';
 const PAYER: Address = '0x1234567890AbcdEF1234567890aBcdef12345678';
@@ -18,8 +53,86 @@ let chain: FakeChain;
 let buy: CeloBuy;
 
 beforeEach(() => {
+  drift.hideHeader = false;
+  drift.payment = undefined;
+  drift.requirements = undefined;
   chain = new FakeChain();
   buy = new CeloBuy({ spendKey: generatePrivateKey(), rpcUrl: RPC_URL, fetch: async () => json(404, {}), transport: chain.transport });
+});
+
+describe('CeloBuy.rentVm backstops, in case buy-core changes how it pays', () => {
+  /** A gateway that reads the payment under the header a drifted buy-core sends it in. */
+  const renting = () => {
+    const gw = fakeBuyGateway(chain);
+    const client = new CeloBuy({
+      spendKey: generatePrivateKey(),
+      rpcUrl: RPC_URL,
+      fetch: (input, init) => {
+        const headers = new Headers(init?.headers);
+        const hidden = headers.get('X-PAYMENT-NEXT');
+        if (hidden !== null) headers.set('X-PAYMENT', hidden);
+        return gw.fetch(input, { ...init, headers });
+      },
+      transport: chain.transport,
+    });
+    const seen = { before: [] as SignedVmPayment[], after: [] as VmPaymentInfo[] };
+    const input: RentVmInput = {
+      body: { script: '#!/bin/bash\n', machineType: 'e2-medium' },
+      maxAtomic: 70_000n,
+      beforePayment: async (payment) => {
+        seen.before.push(payment);
+      },
+      onPayment: async (info) => {
+        seen.after.push(info);
+      },
+    };
+    return { gw, client, seen, rent: () => client.rentVm(input) };
+  };
+
+  it('reports a payment that went out without passing through its check as ambiguous, never as not paid', async () => {
+    drift.hideHeader = true;
+    const { gw, seen, rent } = renting();
+    expect(await rent()).toMatchObject({ outcome: 'ambiguous' });
+    expect(gw.paidCalls).toBe(1);
+    expect(seen.before).toEqual([]);
+    // What buy-core reported of it is kept, so the chain can be asked.
+    const sent = gw.payments[0]!.payload.authorization;
+    expect(seen.after).toEqual([
+      expect.objectContaining({ outcome: 'ambiguous', asset: USDT, amount: 67_011n, payTo: BUY_PAY_TO, poll: `${BUY_VM_URL}/abc`, authorization: { from: sent.from, nonce: sent.nonce, validAfter: sent.validAfter, validBefore: sent.validBefore } }),
+    ]);
+  });
+
+  it('sends nothing signed for more than the cap', async () => {
+    drift.payment = (p) => ({ ...p, payload: { ...p.payload, authorization: { ...p.payload.authorization, value: '70001' } } });
+    const { gw, seen, rent } = renting();
+    expect(await rent()).toEqual({ outcome: 'not_paid', reason: 'amount-above-cap' });
+    expect(gw.paidCalls).toBe(0);
+    expect(seen.before).toEqual([]);
+  });
+
+  it('sends nothing in another token than USDT', async () => {
+    drift.requirements = (r) => ({ ...r, asset: USDC, extra: { name: 'USDC', version: '2' } });
+    const { gw, seen, rent } = renting();
+    expect(await rent()).toEqual({ outcome: 'not_paid', reason: 'asset-not-usdt' });
+    expect(gw.paidCalls).toBe(0);
+    expect(seen.before).toEqual([]);
+  });
+
+  it('sends nothing that pays another wallet than the quote names', async () => {
+    drift.payment = (p) => ({ ...p, payload: { ...p.payload, authorization: { ...p.payload.authorization, to: OTHER } } });
+    const { gw, seen, rent } = renting();
+    expect(await rent()).toEqual({ outcome: 'not_paid', reason: 'payee-not-quoted' });
+    expect(gw.paidCalls).toBe(0);
+    expect(seen.before).toEqual([]);
+  });
+
+  it('pays as usual when buy-core does what 0.8.3 does', async () => {
+    const { gw, seen, rent } = renting();
+    expect(await rent()).toEqual({ outcome: 'confirmed' });
+    expect(gw.paidCalls).toBe(1);
+    expect(seen.before).toHaveLength(1);
+    expect(seen.after).toEqual([expect.objectContaining({ outcome: 'confirmed', payTo: BUY_PAY_TO })]);
+  });
 });
 
 /** What the reconciliation asks: did this authorization pay `to` at least `value` of USDT? */

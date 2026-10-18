@@ -104,17 +104,17 @@ export class FakeBuy implements BuyPort {
     } catch (error) {
       return { outcome: 'not_paid', reason: error instanceof Error ? error.message : String(error) };
     }
-    const { asset, amount, authorization } = payment;
+    const { asset, amount, payTo, authorization } = payment;
     const timestamp = new Date().toISOString();
     if (behaviour === 'ambiguous') {
-      await onPayment({ asset, amount, authorization, outcome: 'ambiguous', timestamp });
+      await onPayment({ asset, amount, payTo, authorization, outcome: 'ambiguous', timestamp });
       return { outcome: 'ambiguous', reason: 'buy answered 502 (FAKE_SCENARIO)' };
     }
     // Paid: the chain has the transfer to buy, and buy knows the VM.
     this.consumed(authorization.nonce, { to: FAKE_BUY_PAY_TO, value: amount });
     const poll = `https://usebuy.ai/google/vm/fake-${authorization.nonce.slice(2, 18)}`;
     this.rented.add(poll);
-    await onPayment({ asset, amount, authorization, outcome: 'confirmed', timestamp, poll, txHash: `0x${randomBytes(32).toString('hex')}` });
+    await onPayment({ asset, amount, payTo, authorization, outcome: 'confirmed', timestamp, poll, txHash: `0x${randomBytes(32).toString('hex')}` });
     return { outcome: 'confirmed' };
   }
 

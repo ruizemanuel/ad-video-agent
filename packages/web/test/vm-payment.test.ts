@@ -10,7 +10,7 @@ import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileStore } from '../src/adapters/fake/store';
 import { CeloBuy } from '../src/adapters/real/buy';
 import { payForVm, resolveVmPayment, VM_MAX_ATOMIC, VM_URL, vmPaymentKey } from '../src/payments/vm-payment';
-import type { OrderStore, PaymentRecord } from '../src/ports';
+import type { BuyPort, OrderStore, PaymentRecord } from '../src/ports';
 import { BUY_PAY_TO, fakeBuyGateway, json, servedVm, USDT, type FakeBuyGateway } from './support/fake-buy-gateway';
 import { FakeChain } from './support/fake-chain';
 
@@ -262,17 +262,73 @@ describe('payForVm', () => {
     expect(await payForVm(a, deps)).toEqual({ status: 'paid', pollUrl: null });
   });
 
-  it('sends nothing when the authorization cannot be written down first', async () => {
+  /** The store, with the `n`th writes to a payment failing (counting from 1): the first one is the authorization's. */
+  const failingWrites = (...failing: number[]) => {
     let writes = 0;
-    const failing = Object.assign(Object.create(store) as FileStore, {
-      // The first write is the authorization; the one after it records the refusal.
+    return Object.assign(Object.create(store) as FileStore, {
       updatePayment: async (...args: Parameters<FileStore['updatePayment']>) => {
         writes += 1;
-        if (writes === 1) throw new Error('the database is down');
+        if (failing.includes(writes)) throw new Error('the database is down');
         return store.updatePayment(...args);
       },
     });
-    expect(await payForVm(a, { ...deps, store: failing })).toMatchObject({ status: 'rejected' });
+  };
+
+  it('keeps the poll URL of a payment buy served when recording it fails, and writes it with the next record', async () => {
+    // The write after the 200 fails; the one that records the payment as uncertain goes through.
+    const result = await payForVm(a, { ...deps, store: failingWrites(2) });
+    expect(result).toEqual({ status: 'uncertain', reason: 'the database is down', pollUrl: 'https://usebuy.ai/google/vm/abc' });
+    expect(await payment()).toMatchObject({
+      status: 'uncertain',
+      outcome: 'confirmed',
+      pollUrl: 'https://usebuy.ai/google/vm/abc',
+      txHash: `0x${'6d'.repeat(32)}`,
+      authorization: { nonce: gw.payments[0]!.payload.authorization.nonce },
+    });
+  });
+
+  it('still answers with the poll URL when nothing after the payment can be written, and logs no URL', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const result = await payForVm(a, { ...deps, store: failingWrites(2, 3) });
+      // The flow's step keeps what this returns, when the store cannot.
+      expect(result).toEqual({ status: 'uncertain', reason: 'the database is down', pollUrl: 'https://usebuy.ai/google/vm/abc' });
+      expect(logged).toHaveBeenCalledWith('[vm_payment_unrecorded]', orderId, 'uncertain', 'Error');
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('/google/vm/');
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it('answers with its refusal even when the refusal cannot be written', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await store.addCost(await newOrder(), 'buy:vm', 1.95, 'buy');
+      expect(await payForVm(a, { ...deps, store: failingWrites(1) })).toEqual({ status: 'rejected', reason: 'daily-cap' });
+      expect(gw.paidCalls).toBe(0);
+      expect(logged).toHaveBeenCalledWith('[vm_payment_unrecorded]', orderId, 'rejected', 'Error');
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it('records and counts a payment its adapter reports as gone out without the check before it', async () => {
+    // An adapter whose payment went out unseen (see CeloBuy's backstop): onPayment arrives with no beforePayment.
+    const authorization = { from: SPEND, nonce: `0x${'cd'.repeat(32)}`, validAfter: '0', validBefore: '1790000000' };
+    const unseen: Pick<BuyPort, 'rentVm'> = {
+      rentVm: async ({ onPayment }) => {
+        await onPayment({ asset: USDT, amount: 67_011n, payTo: BUY_PAY_TO, authorization, outcome: 'ambiguous', timestamp: new Date().toISOString() });
+        return { outcome: 'ambiguous', reason: 'unseen' };
+      },
+    };
+    expect(await payForVm(a, { store, buy: unseen, dailyCapUsd: 2 })).toEqual({ status: 'uncertain', reason: 'unseen' });
+    expect(await payment()).toMatchObject({ status: 'uncertain', asset: USDT, amount: 67_011n, payTo: BUY_PAY_TO, authorization });
+    expect(await store.orderCost(orderId)).toBeCloseTo(0.067011);
+  });
+
+  it('sends nothing when the authorization cannot be written down first', async () => {
+    // The first write is the authorization; the one after it records the refusal.
+    expect(await payForVm(a, { ...deps, store: failingWrites(1) })).toMatchObject({ status: 'rejected' });
     expect(gw.paidCalls).toBe(0);
     expect(await store.orderCost(orderId)).toBe(0);
   });
@@ -305,15 +361,28 @@ describe('resolveVmPayment', () => {
     expect(await payment()).toMatchObject({ status: 'uncertain' });
   });
 
-  it('marks it unsettled once the authorization has expired unspent', async () => {
-    gw.settles = false;
-    gw.paid = () => json(500, {});
-    await payForVm(a, deps);
-    const validBefore = Number((await payment())!.authorization!.validBefore);
-    vi.useFakeTimers({ toFake: ['Date'], now: validBefore * 1000 });
-    chain.head.timestamp = BigInt(validBefore);
-    expect(await resolveVmPayment(orderId, deps)).toBe('unsettled');
-    expect(await payment()).toMatchObject({ status: 'unsettled' });
+  describe('an authorization that expired unspent', () => {
+    /** An uncertain payment buy never settled, looked at `seconds` after its validBefore. */
+    const expiredBy = async (seconds: number) => {
+      gw.settles = false;
+      gw.paid = () => json(500, {});
+      await payForVm(a, deps);
+      const validBefore = Number((await payment())!.authorization!.validBefore);
+      vi.useFakeTimers({ toFake: ['Date'], now: (validBefore + seconds) * 1000 });
+      chain.head.timestamp = BigInt(validBefore + seconds);
+    };
+
+    it('is unsettled a full minute after validBefore, when even a server clock running ahead of the chain is past it', async () => {
+      await expiredBy(60);
+      expect(await resolveVmPayment(orderId, deps)).toBe('unsettled');
+      expect(await payment()).toMatchObject({ status: 'unsettled' });
+    });
+
+    it('is still unknown in the minute after validBefore, and the record stays as it is', async () => {
+      await expiredBy(59);
+      expect(await resolveVmPayment(orderId, deps)).toBe('unknown');
+      expect(await payment()).toMatchObject({ status: 'uncertain' });
+    });
   });
 
   it('answers unknown when the chain cannot be read', async () => {

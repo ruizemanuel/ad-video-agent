@@ -134,9 +134,9 @@ describe('reconcile: orders waiting for their settlement', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('marks unpaid an unsettled authorization past validBefore', async () => {
+  it('marks unpaid an unsettled authorization well past validBefore', async () => {
     const now = after(6 * MINUTE);
-    const order = await awaiting(unixSeconds(now) - 1n);
+    const order = await awaiting(unixSeconds(now) - 3600n);
     buy.settlement(order.nonce, 'unsettled');
 
     expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [] });
@@ -144,12 +144,21 @@ describe('reconcile: orders waiting for their settlement', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('marks unpaid at the very second validBefore comes, when the token no longer takes the authorization', async () => {
+  it('marks unpaid a full minute after validBefore, when even a server clock running ahead of the chain is past it', async () => {
     const now = after(6 * MINUTE);
-    const order = await awaiting(unixSeconds(now));
+    const order = await awaiting(unixSeconds(now) - 60n);
     buy.settlement(order.nonce, 'unsettled');
 
     expect((await reconcile(deps(), now)).unpaid).toEqual([order.id]);
+  });
+
+  it('leaves an unsettled authorization alone in the minute after validBefore: the chain may not be there yet', async () => {
+    const now = after(6 * MINUTE);
+    const order = await awaiting(unixSeconds(now) - 59n);
+    buy.settlement(order.nonce, 'unsettled');
+
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await statusOf(order)).toBe('awaiting_settlement');
   });
 
   it('leaves an unsettled authorization alone while it can still settle', async () => {
@@ -188,7 +197,7 @@ describe('reconcile: orders waiting for their settlement', () => {
 
   it('does not mark unpaid an order that was paid while the chain was being asked', async () => {
     const now = after(6 * MINUTE);
-    const order = await awaiting(unixSeconds(now) - 1n);
+    const order = await awaiting(unixSeconds(now) - 3600n);
     const slow = new FakeBuy();
     slow.authorizationSettled = async () => {
       await store.transition(order.id, 'paid');
@@ -231,7 +240,7 @@ describe('reconcile: a nonce spent by another transfer', () => {
 
   it('gives it up as unpaid once past validBefore, and still starts nothing', async () => {
     const now = after(6 * MINUTE);
-    const order = await awaiting(unixSeconds(now) - 1n);
+    const order = await awaiting(unixSeconds(now) - 3600n);
     buy.consumed(order.nonce, burn);
 
     expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [] });

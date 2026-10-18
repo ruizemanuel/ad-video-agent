@@ -7,6 +7,7 @@ import { createPublicClient, decodeEventLog, erc20Abi, http, parseAbi, type Addr
 import { privateKeyToAccount } from 'viem/accounts';
 import { celo } from 'viem/chains';
 import { VM_URL } from '../../payments/vm-payment';
+import { TOKENS } from '../../payments/x402';
 import type { AuthorizationSettlement, BuyPort, RentVmInput, RentVmResult, SignedVmPayment, VmPaymentOutcome, VmPoll } from '../../ports';
 
 /** A GET to buy's tracking URL is free; this is how long it may take. */
@@ -95,6 +96,10 @@ export class CeloBuy implements BuyPort {
           payTo: payment.payload.authorization.to,
           authorization: x402.signedAuthorization(payment),
         };
+        // buy-core checks these itself; this is in case a later one does not. Throwing here sends nothing.
+        if (pending.amount > maxAtomic) throw new Error('amount-above-cap');
+        if (!same(pending.asset, TOKENS.USDT.address)) throw new Error('asset-not-usdt');
+        if (!same(pending.payTo, quote.payTo)) throw new Error('payee-not-quoted');
         await beforePayment(pending);
         signed = pending;
       }
@@ -125,31 +130,38 @@ export class CeloBuy implements BuyPort {
     } catch (error) {
       if (signed === undefined) return { outcome: 'not_paid', reason: reasonOf(error) };
       // The payment went out and no answer came back: it may have settled.
-      const { asset, amount, authorization } = signed;
-      await onPayment({ asset, amount, authorization, outcome: 'ambiguous', timestamp: new Date().toISOString() });
+      const { asset, amount, payTo, authorization } = signed;
+      await onPayment({ asset, amount, payTo, authorization, outcome: 'ambiguous', timestamp: new Date().toISOString() });
       return { outcome: 'ambiguous', reason: `no answer from buy: ${reasonOf(error)}` };
     }
 
-    if (signed === undefined) {
+    const info: x402.OnPaymentInfo | undefined = answered;
+    // buy-core calls onPayment only after a paid request. Without `signed`, that request went out some way this adapter
+    // does not see (a later buy-core): it may have settled, and what buy-core said of it is all there is to go on.
+    const sent: (Omit<SignedVmPayment, 'payTo'> & { payTo?: string }) | undefined =
+      signed ?? (info && { asset: info.asset, amount: BigInt(info.amount), payTo: quote?.payTo, authorization: info.authorization });
+    if (sent === undefined) {
       await response.body?.cancel().catch(() => undefined);
       return { outcome: 'not_paid', reason: `buy answered ${response.status} without asking for a payment` };
     }
     // Every answer to a payment reaches onPayment but a second 402: buy did not take it, and it may still have settled.
-    const outcome: VmPaymentOutcome = answered?.outcome ?? 'rejected';
+    const outcome: VmPaymentOutcome = signed === undefined ? 'ambiguous' : (info?.outcome ?? 'rejected');
     const reply = await readJson(response);
     // Content-Location first; the body's `poll` only when it is on buy's own origin too.
-    const poll = answered?.poll ?? x402.followUpUrl(field(reply, 'poll'), VM_URL);
-    const txHash = [answered?.txHash, field(reply, 'transaction')].find((hash) => hash !== undefined && TX_HASH.test(hash));
-    const { asset, amount, authorization } = signed;
+    const poll = info?.poll ?? x402.followUpUrl(field(reply, 'poll'), VM_URL);
+    const txHash = [info?.txHash, field(reply, 'transaction')].find((hash) => hash !== undefined && TX_HASH.test(hash));
+    const { asset, amount, payTo, authorization } = sent;
     await onPayment({
       asset,
       amount,
       authorization,
       outcome,
-      timestamp: answered?.timestamp ?? new Date().toISOString(),
+      timestamp: info?.timestamp ?? new Date().toISOString(),
+      ...(payTo !== undefined && { payTo }),
       ...(txHash !== undefined && { txHash }),
       ...(poll !== undefined && { poll }),
     });
+    if (signed === undefined) return { outcome, reason: `buy answered ${response.status} to a payment sent without the check before it` };
     return outcome === 'confirmed' ? { outcome } : { outcome, reason: `buy answered ${response.status}` };
   }
 

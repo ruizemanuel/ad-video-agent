@@ -2,7 +2,7 @@
 // never more than VM_MAX_ATOMIC: the intent is written before anything is quoted, the authorization before it goes out,
 // and a payment whose outcome is not clear is looked up on the chain (resolveVmPayment), never paid again. The step that
 // calls payForVm runs with maxRetries = 0, and an attempt after the first one does not pay either.
-import type { AuthorizationSettlement, BuyPort, OrderStore, RentVmResult } from '../ports';
+import { SETTLEMENT_GRACE_SECONDS, type AuthorizationSettlement, type BuyPort, type OrderStore, type RentVmResult, type VmPaymentOutcome } from '../ports';
 
 export const VM_URL = 'https://usebuy.ai/google/vm';
 /** buy quoted the e2-medium at 67011 atomic units of USDT on 17/10: the cap leaves a little room, and no more. */
@@ -15,9 +15,13 @@ export const vmPaymentKey = (orderId: string): string => `${orderId}:vm`;
 /**
  * - `paid`: buy served the VM. `pollUrl` is its tracking URL, when buy gave one.
  * - `rejected`: nothing was paid, and `reason` says why (`daily-cap`, a buy error code such as `amount_exceeds_max`…).
- * - `uncertain`: the money may have moved. `resolveVmPayment` tells, from the chain; paying again never does.
+ * - `uncertain`: the money may have moved. `resolveVmPayment` tells, from the chain; paying again never does. `pollUrl`
+ *   is there when buy gave one: it cannot be had again, and the flow's step keeps what this returns when the store fails.
  */
-export type PayResult = { status: 'paid'; pollUrl: string | null } | { status: 'rejected'; reason: string } | { status: 'uncertain'; reason: string };
+export type PayResult =
+  | { status: 'paid'; pollUrl: string | null }
+  | { status: 'rejected'; reason: string }
+  | { status: 'uncertain'; reason: string; pollUrl?: string };
 
 export type VmPaymentDeps = {
   store: Pick<OrderStore, 'insertPaymentIntent' | 'updatePayment' | 'addCost' | 'buySpendSince'>;
@@ -45,13 +49,23 @@ export async function payForVm(input: { orderId: string; script: string; attempt
     return { status: 'uncertain', reason: 'intent-exists' };
   }
 
+  // What the hooks learn. `sent` is true from the moment the payment may have gone out.
+  const seen: { sent: boolean; refusal?: string; outcome?: VmPaymentOutcome; txHash?: string; pollUrl: string | null } = { sent: false, pollUrl: null };
+
+  // Writes how it ended, with what is known of the answer (a write in onPayment may have failed), and answers even if
+  // this write fails too: the poll URL then lives on in the result.
   const end = async (status: 'rejected' | 'uncertain', reason: string): Promise<PayResult> => {
-    await store.updatePayment(key, { status, reason });
-    return { status, reason };
+    const { outcome, txHash, pollUrl } = seen;
+    try {
+      await store.updatePayment(key, { status, reason, outcome, txHash, pollUrl: pollUrl ?? undefined });
+    } catch (error) {
+      // Neither the URL nor the store's message (which may quote the values it was writing).
+      console.error('[vm_payment_unrecorded]', orderId, status, error instanceof Error ? error.name : typeof error);
+    }
+    if (status === 'rejected') return { status, reason };
+    return pollUrl === null ? { status, reason } : { status, reason, pollUrl };
   };
 
-  // What the hooks learn. `sent` is true from the moment the payment may have gone out.
-  const seen: { sent: boolean; refusal?: string; pollUrl: string | null } = { sent: false, pollUrl: null };
   let result: RentVmResult;
   try {
     result = await buy.rentVm({
@@ -70,9 +84,14 @@ export async function payForVm(input: { orderId: string; script: string; attempt
         await store.addCost(orderId, 'buy:vm', Number(amount) / 1e6, 'buy');
         seen.sent = true;
       },
-      onPayment: async ({ outcome, txHash, poll }) => {
-        seen.pollUrl = poll ?? null;
-        await store.updatePayment(key, { status: outcome === 'confirmed' ? 'paid' : 'uncertain', outcome, txHash, pollUrl: poll });
+      onPayment: async ({ asset, amount, payTo, authorization, outcome, txHash, poll }) => {
+        // Kept in memory first, so that a write that fails loses none of it.
+        Object.assign(seen, { outcome, txHash, pollUrl: poll ?? null });
+        const unseen = !seen.sent;
+        seen.sent = true;
+        await store.updatePayment(key, { status: outcome === 'confirmed' ? 'paid' : 'uncertain', outcome, txHash, pollUrl: poll, asset, amount, payTo, authorization });
+        // A payment that went out without beforePayment (an adapter that did not see it go): it counts all the same.
+        if (unseen) await store.addCost(orderId, 'buy:vm', Number(amount) / 1e6, 'buy');
       },
     });
   } catch (error) {
@@ -121,8 +140,9 @@ export async function resolveVmPayment(orderId: string, deps: ResolveVmPaymentDe
     await store.updatePayment(key, { status: 'settled' });
     return 'settled';
   }
-  // The token takes an authorization until validBefore: before then, an unspent one may still be settled by buy.
-  if (answer === 'unsettled' && BigInt(Math.floor(Date.now() / 1000)) >= BigInt(authorization.validBefore)) {
+  // The token takes an authorization until validBefore, by the chain's clock: before then (and the grace minute this
+  // clock may be ahead by), an unspent one may still be settled by buy.
+  if (answer === 'unsettled' && BigInt(Math.floor(Date.now() / 1000)) >= BigInt(authorization.validBefore) + SETTLEMENT_GRACE_SECONDS) {
     await store.updatePayment(key, { status: 'unsettled' });
     return 'unsettled';
   }

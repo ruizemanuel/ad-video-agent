@@ -229,6 +229,12 @@ export interface BlobPort {
 /** What the chain says about the payment an authorization was signed for. See `BuyPort.authorizationSettled`. */
 export type AuthorizationSettlement = 'settled' | 'unsettled' | 'unknown';
 
+/**
+ * How long past its validBefore an unspent authorization is still taken as able to settle. The token compares
+ * validBefore with the chain's time, and the server's clock may run ahead of it: only after this is "unsettled" final.
+ */
+export const SETTLEMENT_GRACE_SECONDS = 60n;
+
 /** What the service sends buy for a VM. The script is the VM's whole start-up: buy runs it as root. */
 export type VmRequest = { script: string; machineType: string };
 
@@ -253,6 +259,8 @@ export type VmPaymentOutcome = 'confirmed' | 'rejected' | 'ambiguous';
 export type VmPaymentInfo = {
   asset: string;
   amount: bigint;
+  /** The wallet the authorization pays, when the adapter knows it. */
+  payTo?: string;
   txHash?: string;
   authorization: PaymentAuthorization;
   /** The VM's tracking URL, on buy's own origin. */

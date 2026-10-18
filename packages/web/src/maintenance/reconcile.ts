@@ -3,7 +3,7 @@
 // that expired without settling, a paid order whose run never started. It also keeps the refunds that could not be
 // paid in the log, every run, until someone pays them by hand.
 import { markPaidAndStart, startRun } from '../payments/orders';
-import type { BuyPort, OrderStore } from '../ports';
+import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore } from '../ports';
 
 const MINUTE_MS = 60_000;
 /** How old an order has to be before this looks at it: the request that made it has had time to finish. */
@@ -53,10 +53,10 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
         // Found on the chain, which does not say which transaction settled it.
         const payment = { asset: order.asset, payer: order.payer, nonce: order.nonce, txHash: null };
         if ((await markPaidAndStart(payment, { store })) === 'started') result.started.push(order.id);
-      } else if (settlement === 'unsettled' && nowSeconds >= order.validBefore) {
-        // The token takes an authorization only before `validBefore`: this one can never settle (nor could one whose nonce
-        // went to another transfer). If the order was paid while the chain was being asked, the move is refused and the
-        // order stays as it is.
+      } else if (settlement === 'unsettled' && nowSeconds >= order.validBefore + SETTLEMENT_GRACE_SECONDS) {
+        // The token takes an authorization only before `validBefore`, by the chain's clock (this one may run ahead of it):
+        // this one can never settle (nor could one whose nonce went to another transfer). If the order was paid while the
+        // chain was being asked, the move is refused and the order stays as it is.
         if (await store.transition(order.id, 'unpaid')) result.unpaid.push(order.id);
       }
       // `unknown`, or `unsettled` while it still can: nothing to do yet.
