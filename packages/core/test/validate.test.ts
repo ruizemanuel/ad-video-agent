@@ -378,14 +378,14 @@ describe('judgeItems', () => {
   it('identifies a framing item by scene path and line index', () => {
     const { framing: items } = judgeItems(edlShop);
     expect(items.filter((f) => f.id.startsWith('hooks[0][0]'))).toEqual([
-      { id: 'hooks[0][0]:framing:0', text: '¿Cuánto te cobran' },
-      { id: 'hooks[0][0]:framing:1', text: 'por cada venta?' },
+      { id: 'hooks[0][0]:framing:0', text: '¿Cuánto te cobran', context: ['por cada venta?'] },
+      { id: 'hooks[0][0]:framing:1', text: 'por cada venta?', context: ['¿Cuánto te cobran'] },
     ]);
   });
 
   it('counts the line index inside the scene even when claim lines come first', () => {
     const edl = withBody(0, headline([claimLine('0% de comisión.', 'c3'), framing('¿Te animás?')]));
-    expect(judgeItems(edl).framing).toContainEqual({ id: 'body[0]:framing:1', text: '¿Te animás?' });
+    expect(judgeItems(edl).framing).toContainEqual({ id: 'body[0]:framing:1', text: '¿Te animás?', context: ['0% de comisión.'] });
   });
 
   it('joins the lines of a scene that state the same claim into one item', () => {
@@ -412,6 +412,15 @@ describe('judgeItems', () => {
     expect(judgeItems(edl).framing).toEqual([]);
   });
 
+  // "Nadie más te da" says nothing alone, and "0% de comisión." is backed; together they claim no one else does it.
+  it('gives each framing item the other lines of its scene, in order, so the judge reads it with what it introduces', () => {
+    const edl = withBody(0, headline([framing('Nadie más te da'), claimLine('0% de comisión.', 'c3'), framing('¿Te animás?')]));
+    expect(judgeItems(edl).framing.filter((f) => f.id.startsWith('body[0]'))).toEqual([
+      { id: 'body[0]:framing:0', text: 'Nadie más te da', context: ['0% de comisión.', '¿Te animás?'] },
+      { id: 'body[0]:framing:2', text: '¿Te animás?', context: ['Nadie más te da', '0% de comisión.'] },
+    ]);
+  });
+
   // Its only rule is being the host (validateEdl): a judge could read a bare domain as a product claim, and no fix could
   // satisfy both.
   it('leaves the address a TypeIn url types out of the framing items', () => {
@@ -421,7 +430,7 @@ describe('judgeItems', () => {
 
   it('still judges the question a TypeIn prompt types', () => {
     const edl = withBody(0, { piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [framing('¿Cuánto cobrás por venta?')] });
-    expect(judgeItems(edl).framing).toContainEqual({ id: 'body[0]:framing:0', text: '¿Cuánto cobrás por venta?' });
+    expect(judgeItems(edl).framing).toContainEqual({ id: 'body[0]:framing:0', text: '¿Cuánto cobrás por venta?', context: [] });
   });
 });
 

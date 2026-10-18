@@ -110,6 +110,65 @@ describe('runScript', () => {
     expect(rules).toHaveLength(items.claims.length + items.framing.length);
   });
 
+  it('fails an item when any of its verdicts fails it, even if another passes it', async () => {
+    const items = judgeItems(edlShop);
+    llm.judge = async () => ({
+      verdicts: [
+        ...items.claims.map(({ id: itemId }) => ({ id: itemId, equivalent: true, reason: 'Same thing.' })),
+        { id: 'body[1]:c3', equivalent: false, reason: 'It adds a scope.' },
+      ],
+      framing: [
+        ...items.framing.map(({ id: itemId }) => ({ id: itemId, assertsProductFact: false, reason: 'A question.' })),
+        { id: 'hooks[0][0]:framing:0', assertsProductFact: true, reason: 'It asserts a price.' },
+      ],
+      usd: 0.01,
+    });
+    await runScript(args);
+    expect(patchProblems().map((p) => [p.where, p.rule])).toEqual([
+      ['body[1]', 'not-equivalent'],
+      ['hooks[0][0].lines[0]', 'framing-asserts'],
+    ]);
+  });
+
+  // A judge that fails a claim and would pass it on a second look must not get that second look at the same text.
+  describe('a round the corrector could not use leaves the problems as they were', () => {
+    const judgeFailsThenPasses = () => {
+      llm.judge = async ({ claims, framing }) => ({
+        verdicts: claims.map(({ id: itemId }) => ({ id: itemId, equivalent: !(llm.calls.judge === 1 && itemId === 'body[1]:c3'), reason: 'x' })),
+        framing: framing.map(({ id: itemId }) => ({ id: itemId, assertsProductFact: false, reason: 'x' })),
+        usd: 0.01,
+      });
+    };
+
+    it('when the corrector answers with something that does not fit', async () => {
+      judgeFailsThenPasses();
+      llm.patchEdl = async () => {
+        throw new ModelOutputInvalid('The corrector did not answer with valid patches.', 0.04);
+      };
+      expect(await runScript(args)).toEqual({ ok: false, reason: 'validation' });
+      expect(llm.calls).toMatchObject({ judge: 1, patchEdl: 2 });
+    });
+
+    it('when the corrector patches a scene that does not exist', async () => {
+      judgeFailsThenPasses();
+      llm.patchEdl = async () => ({ patches: [{ path: 'body[9]', scene: edlShop.cta }], claimFixes: [], usd: 0.05 });
+      expect(await runScript(args)).toEqual({ ok: false, reason: 'validation' });
+      expect(llm.calls).toMatchObject({ judge: 1, patchEdl: 2 });
+    });
+
+    it('and gives the corrector the same problems again', async () => {
+      llm.edl = withBadNumber(edlShop, 'body[1]');
+      const seen: Problem[][] = [];
+      llm.patchEdl = async ({ problems }) => {
+        seen.push(problems);
+        throw new ModelOutputInvalid('x', 0.04);
+      };
+      await runScript(args);
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toEqual(seen[0]);
+    });
+  });
+
   it('passes a claim whose quote is not on the site to the corrector, which fixes the claim', async () => {
     llm.edl = withQuote(edlShop, 'c3', '0% de comisión siempre');
     expect(await runScript(args)).toEqual({ ok: true, edl: edlShop });

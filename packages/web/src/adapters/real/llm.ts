@@ -3,7 +3,7 @@
 // Output.object, over a provider-safe schema) and says what it cost: what the gateway billed, or, when it does not say,
 // the price of its tokens.
 import { EdlSchema } from '@app/core';
-import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type LanguageModel, type LanguageModelUsage, type UserContent } from 'ai';
+import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, RetryError, type LanguageModel, type LanguageModelUsage, type UserContent } from 'ai';
 import type { z } from 'zod';
 import { CLASSIFY_OUTPUT, CLASSIFY_SYSTEM, classifyPrompt } from '../../prompts/classify';
 import { DIRECTOR_SYSTEM, directorRequest } from '../../prompts/director';
@@ -44,6 +44,15 @@ const billed = (providerMetadata: unknown): number | undefined => {
   const gateway = (providerMetadata as { gateway?: { cost?: unknown } } | undefined)?.gateway;
   const cost = Number(gateway?.cost);
   return Number.isFinite(cost) && cost > 0 ? cost : undefined;
+};
+
+// A failed call, said without what it sent or got back: the SDK's errors carry the whole request (the site's text, the
+// brief, the pictures) and the provider's answer. Only the kind of error and its HTTP status (of the last try) remain.
+const failed = (role: Role, error: unknown): Error => {
+  const last = RetryError.isInstance(error) ? error.lastError : error;
+  const status = (last as { statusCode?: unknown } | null | undefined)?.statusCode;
+  const kind = error instanceof Error ? error.name : 'unknown error';
+  return new Error(`The ${role} model call failed (${kind}${typeof status === 'number' ? `, HTTP ${status}` : ''}).`);
 };
 
 type Ask<T> = {
@@ -116,7 +125,8 @@ export class GatewayLlm implements LlmPort {
   }
 
   // One call for structured output. An answer that does not fit the schema is a ModelOutputInvalid with what the call
-  // cost; its message names the call, never what the model wrote (it can hold the site's text).
+  // cost; any other failure is a plain Error with its kind and status. Neither says what was sent or written (it can
+  // hold the site's text).
   private async ask<T>({ role, instructions, content, schema, name, maxOutputTokens }: Ask<T>): Promise<{ output: T; usd: number }> {
     const id = MODELS[role];
     const invalid = (usd: number) => new ModelOutputInvalid(`The ${role} model did not answer with a valid ${name}.`, usd);
@@ -128,16 +138,14 @@ export class GatewayLlm implements LlmPort {
       output: Output.object({ schema: modelSchema(schema), name }),
       maxOutputTokens,
     }).catch((error: unknown) => {
-      if (NoObjectGeneratedError.isInstance(error)) throw invalid(priced(id, error.usage));
-      throw error;
+      throw NoObjectGeneratedError.isInstance(error) ? invalid(priced(id, error.usage)) : failed(role, error);
     });
     // Each step is billed: there is one unless the SDK had to go on.
     const usd = result.steps.reduce((sum, step) => sum + (billed(step.providerMetadata) ?? priced(id, step.usage)), 0);
     try {
       return { output: result.output, usd };
     } catch (error) {
-      if (NoOutputGeneratedError.isInstance(error)) throw invalid(usd);
-      throw error;
+      throw NoOutputGeneratedError.isInstance(error) ? invalid(usd) : failed(role, error);
     }
   }
 }

@@ -34,24 +34,29 @@ const sceneOf = (itemId: string): { path: string; rest: string } => {
   return { path: itemId.slice(0, at), rest: itemId.slice(at + 1) };
 };
 
-/** What the judge failed, as problems whose `where` starts with the scene path. An item it said nothing about fails. */
+// Why an item fails, or undefined when it passes. It fails closed: with no verdict, or when any of its verdicts fails it.
+const failure = <V extends { id: string; reason: string }>(id: string, verdicts: V[], fails: (v: V) => boolean): string | undefined => {
+  const mine = verdicts.filter((v) => v.id === id);
+  if (mine.length === 0) return 'the judge gave no verdict on it';
+  return mine.find(fails)?.reason;
+};
+
+/** What the judge failed, as problems whose `where` starts with the scene path. */
 const judgeProblems = (
   items: { claims: JudgeItem[]; framing: FramingItem[] },
   verdict: { verdicts: ClaimVerdict[]; framing: FramingVerdict[] },
 ): Problem[] => {
   const problems: Problem[] = [];
   for (const item of items.claims) {
+    const why = failure(item.id, verdict.verdicts, (v) => !v.equivalent);
+    if (why === undefined) continue;
     const { path, rest: claimId } = sceneOf(item.id);
-    const found = verdict.verdicts.find((v) => v.id === item.id);
-    if (found?.equivalent) continue;
-    const why = found ? found.reason : 'the judge gave no verdict on it';
     problems.push({ where: path, rule: 'not-equivalent', detail: `claim ${claimId}: "${item.onScreen}" against its quote "${item.quote}": ${why}` });
   }
   for (const item of items.framing) {
+    const why = failure(item.id, verdict.framing, (v) => v.assertsProductFact);
+    if (why === undefined) continue;
     const { path, rest } = sceneOf(item.id);
-    const found = verdict.framing.find((v) => v.id === item.id);
-    if (found && !found.assertsProductFact) continue;
-    const why = found ? found.reason : 'the judge gave no verdict on it';
     const line = rest.slice('framing:'.length);
     problems.push({ where: `${path}.lines[${line}]`, rule: 'framing-asserts', detail: `framing line "${item.text}" asserts something about the product: ${why}` });
   }
@@ -92,25 +97,36 @@ export async function runScript({
     return judgeProblems(items, await paid('llm:judge', () => llm.judge(items)));
   };
 
-  let { edl } = await paid('llm:director', () => llm.writeEdl({ site, images: capture.directorImages, brief }));
-  for (let round = 0; ; round += 1) {
-    const problems = await problemsOf(edl);
-    if (problems.length === 0) return { ok: true, edl };
-    if (round === PATCH_ROUNDS) return { ok: false, reason: 'validation' };
-    // A patch is only worth it if the judge that checks it fits too.
-    if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge, spendCap)) return { ok: false, reason: 'budget' };
-    // An answer that does not fit, or a patch for a scene that is not there, spends the round: the edit list stays as it was.
+  // The edit list with the corrector's fix, or undefined when the fix cannot be used: an answer that does not fit, or a
+  // patch for a scene that is not there.
+  const patched = async (edl: Edl, problems: Problem[]): Promise<Edl | undefined> => {
     let fix: Awaited<ReturnType<ScriptDeps['llm']['patchEdl']>>;
     try {
       fix = await paid('llm:patch', () => llm.patchEdl({ edl, problems, site }));
     } catch (error) {
-      if (error instanceof ModelOutputInvalid) continue;
+      if (error instanceof ModelOutputInvalid) return undefined;
       throw error;
     }
     try {
-      edl = applyPatches(edl, fix.patches, fix.claimFixes);
+      return applyPatches(edl, fix.patches, fix.claimFixes);
     } catch (error) {
-      if (!(error instanceof RangeError)) throw error;
+      if (error instanceof RangeError) return undefined;
+      throw error;
     }
+  };
+
+  let { edl } = await paid('llm:director', () => llm.writeEdl({ site, images: capture.directorImages, brief }));
+  let problems = await problemsOf(edl);
+  for (let round = 0; problems.length > 0; round += 1) {
+    if (round === PATCH_ROUNDS) return { ok: false, reason: 'validation' };
+    // A patch is only worth it if the judge that checks it fits too.
+    if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge, spendCap)) return { ok: false, reason: 'budget' };
+    const next = await patched(edl, problems);
+    // A round whose fix cannot be used is spent, and what was found stands: the same text is never judged twice, so a
+    // verdict that fails it cannot be turned by asking again.
+    if (next === undefined) continue;
+    edl = next;
+    problems = await problemsOf(edl);
   }
+  return { ok: true, edl };
 }

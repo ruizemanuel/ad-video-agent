@@ -16,7 +16,8 @@ export type Problem = {
   detail: string;
 };
 export type JudgeItem = { id: string; onScreen: string; quote: string };
-export type FramingItem = { id: string; text: string };
+/** A framing line, and the other lines of its scene in order: read together, two lines can claim what neither does alone. */
+export type FramingItem = { id: string; text: string; context: string[] };
 export type ScenePatch = { path: string; scene: Scene };
 
 const HOOKS = { min: 1, max: 3 };
@@ -204,8 +205,9 @@ export const validateEdl = (edl: Edl, site: SiteData, banned: BannedPhrases = BA
 // ---------- the semantic judge ----------
 
 // What the judge reads: one item per (scene, claim) with the lines that state it read together, and one per framing
-// line, which must not assert anything about the product. The address a TypeIn url types is left out: its only rule is
-// being the host (checkTypeIn), and a judge could read a bare domain as a claim that no fix could take back.
+// line, with the rest of its scene, which must not assert anything about the product. The address a TypeIn url types
+// is left out: its only rule is being the host (checkTypeIn), and a judge could read a bare domain as a claim that no
+// fix could take back.
 export const judgeItems = (edl: Edl): { claims: JudgeItem[]; framing: FramingItem[] } => {
   const known = new Map(edl.claims.map((c) => [c.id, c]));
   const items: { claims: JudgeItem[]; framing: FramingItem[] } = { claims: [], framing: [] };
@@ -213,7 +215,8 @@ export const judgeItems = (edl: Edl): { claims: JudgeItem[]; framing: FramingIte
     const stated = new Map<string, { claim: Claim; texts: string[] }>();
     scene.lines.forEach((line, k) => {
       if (line.kind === 'framing') {
-        if (!isTypedAddress(scene, k)) items.framing.push({ id: `${path}:framing:${k}`, text: line.text });
+        const context = scene.lines.filter((_, j) => j !== k).map((neighbour) => neighbour.text);
+        if (!isTypedAddress(scene, k)) items.framing.push({ id: `${path}:framing:${k}`, text: line.text, context });
         return;
       }
       const claim = line.claimId === undefined ? undefined : known.get(line.claimId);

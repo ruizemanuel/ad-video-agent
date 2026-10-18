@@ -4,6 +4,7 @@
 import { BANNED_PHRASES, type SiteData } from '@app/core';
 import { siteForModel, type ModelSite } from '../pipeline/site-for-model';
 import type { DirectorImage } from '../ports';
+import { jsonBlock } from './json-block';
 
 const BANNED = [...BANNED_PHRASES.es, ...BANNED_PHRASES.en].map((phrase) => `"${phrase}"`).join(', ');
 
@@ -139,8 +140,8 @@ ${COMPOSITION_RULES}
 
 Think about who visits this site and what would make them stop scrolling, then return the EDL.`;
 
-/** The site as the models read it, in a fenced block. */
-export const siteBlock = (view: ModelSite): string => `Site data:\n\`\`\`json\n${JSON.stringify(view, null, 1)}\n\`\`\``;
+/** The site as the models read it, in a fenced block that its text cannot close. */
+export const siteBlock = (view: ModelSite): string => jsonBlock('Site data', view);
 
 const imageLabel = (view: ModelSite, shotId: string): string => {
   const shot = view.shots.find((s) => s.id === shotId);

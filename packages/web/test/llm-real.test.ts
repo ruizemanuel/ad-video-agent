@@ -1,12 +1,13 @@
 // The real LlmPort over the AI Gateway, run against the AI SDK's mock model: no network and no money. It checks what each
 // call asks which model, what it sends, how it reads the answer and how it counts the cost.
+import { APICallError, RetryError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { judgeItems, type Problem } from '@app/core';
 import { GatewayLlm, MODELS } from '../src/adapters/real/llm';
 import { DIRECTOR_SYSTEM } from '../src/prompts/director';
 import { JUDGE_SYSTEM } from '../src/prompts/judge';
-import { PATCH_SYSTEM } from '../src/prompts/patch';
+import { PATCH_SYSTEM, patchPrompt } from '../src/prompts/patch';
 import { CLASSIFY_SYSTEM } from '../src/prompts/classify';
 import { ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop, siteShop } from './support/shop';
@@ -100,14 +101,62 @@ describe('GatewayLlm.writeEdl', () => {
     expect((failure as Error).message).not.toContain('Vendé');
   });
 
-  it('lets a failure that is not about the answer through as it is', async () => {
-    const model = new MockLanguageModelV4({
-      doGenerate: async () => {
-        throw new Error('The gateway is down.');
-      },
+  // The SDK's errors carry the whole request (site text, brief, pictures) and the provider's answer: none of it may
+  // reach a log or a workflow's record. The error that goes up names the call, the error's kind and its status only.
+  describe('a call that fails', () => {
+    const failingWith = (error: Error) =>
+      new GatewayLlm(
+        () =>
+          new MockLanguageModelV4({
+            doGenerate: async () => {
+              throw error;
+            },
+          }),
+      );
+    const apiError = (statusCode: number) =>
+      new APICallError({
+        message: 'Bad request: Vendé por WhatsApp sin comisiones',
+        url: 'https://ai-gateway.vercel.sh/v1/ai/language-model',
+        requestBodyValues: { prompt: 'Vendé por WhatsApp sin comisiones', brief: 'Para emprendedores' },
+        statusCode,
+        responseBody: '{"error":"Vendé por WhatsApp sin comisiones"}',
+        isRetryable: false,
+      });
+    const caught = (llm: GatewayLlm): Promise<Error> =>
+      llm.writeEdl(input).then(
+        () => {
+          throw new Error('the call did not fail');
+        },
+        (error: unknown) => error as Error,
+      );
+    const clean = (error: Error) => {
+      expect(error).toBeInstanceOf(Error);
+      expect(APICallError.isInstance(error)).toBe(false);
+      expect(RetryError.isInstance(error)).toBe(false);
+      expect(error).not.toHaveProperty('requestBodyValues');
+      expect(error).not.toHaveProperty('responseBody');
+      expect(error).not.toHaveProperty('errors');
+      expect(error.cause).toBeUndefined();
+      expect(JSON.stringify({ message: error.message, stack: error.stack })).not.toMatch(/Vendé|emprendedores/);
+    };
+
+    it('keeps only the status of an API error', async () => {
+      const error = await caught(failingWith(apiError(400)));
+      clean(error);
+      expect(error.message).toBe('The director model call failed (AI_APICallError, HTTP 400).');
     });
-    const llm = new GatewayLlm(() => model);
-    await expect(llm.writeEdl(input)).rejects.toThrow('The gateway is down.');
+
+    it('keeps only the status of the last try when the SDK gave up retrying', async () => {
+      const error = await caught(failingWith(new RetryError({ message: 'Failed after 3 attempts. Last error: Vendé', reason: 'maxRetriesExceeded', errors: [apiError(503), apiError(529)] })));
+      clean(error);
+      expect(error.message).toBe('The director model call failed (AI_RetryError, HTTP 529).');
+    });
+
+    it('keeps only the name of any other error', async () => {
+      const error = await caught(failingWith(new TypeError('fetch failed: Vendé por WhatsApp')));
+      clean(error);
+      expect(error.message).toBe('The director model call failed (TypeError).');
+    });
   });
 });
 
@@ -123,7 +172,7 @@ describe('GatewayLlm.patchEdl', () => {
     expect(systemText(call())).toBe(PATCH_SYSTEM);
     const parts = userParts(call());
     expect(parts.every((p) => p.type === 'text')).toBe(true);
-    expect(parts.map((p) => (p.type === 'text' ? p.text : '')).join('')).toContain('[number-mismatch] body[1].lines[0]');
+    expect(parts.map((p) => (p.type === 'text' ? p.text : '')).join('')).toBe(patchPrompt({ edl: edlShop(), problems: [problem], site: siteShop() }));
   });
 
   it('returns the patched scenes, the corrected claims and the cost', async () => {
