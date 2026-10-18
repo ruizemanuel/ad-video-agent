@@ -84,6 +84,38 @@ describe('precheck', () => {
     expect(seen[0]?.text.startsWith('Hola palabra palabra')).toBe(true);
   });
 
+  it('bounds everything the classifier is sent, not only the text: a page can make its title or its address huge', async () => {
+    const seen: Parameters<typeof llm.classifySite>[0][] = [];
+    llm.classifySite = async (input) => {
+      seen.push(input);
+      return { admissible: true, reason: 'ok', usd: 0.0004 };
+    };
+    // A 100 KB title, a 100 KB text and an address (after a redirect) of 10 KB.
+    const long = 'palabra '.repeat(12_500);
+    serve(`<title>${long}</title><body><p>${long}</p></body>`, { finalUrl: `https://tienda.example/${'a'.repeat(10_000)}` });
+    await precheck(U, deps);
+    expect(seen).toHaveLength(1);
+    const input = seen[0];
+    expect(input?.title).toHaveLength(300);
+    expect(input?.title.startsWith('palabra palabra')).toBe(true);
+    expect(input?.text).toHaveLength(4000);
+    expect(input?.url).toHaveLength(2048);
+    expect(input?.url.startsWith('https://tienda.example/aaa')).toBe(true);
+    expect(JSON.stringify(input).length).toBeLessThan(6500);
+  });
+
+  it('does not cut a title or an address that fits', async () => {
+    const seen: Parameters<typeof llm.classifySite>[0][] = [];
+    llm.classifySite = async (input) => {
+      seen.push(input);
+      return { admissible: true, reason: 'ok', usd: 0.0004 };
+    };
+    serve(`<title>${'t'.repeat(300)}</title><body>hola</body>`, { finalUrl: `https://tienda.example/${'a'.repeat(2048 - 'https://tienda.example/'.length)}` });
+    await precheck(U, deps);
+    expect(seen[0]?.title).toHaveLength(300);
+    expect(seen[0]?.url).toHaveLength(2048);
+  });
+
   it('records what the classifier cost as a card cost that belongs to no order', async () => {
     llm.classifySite = async () => ({ admissible: true, reason: 'ok', usd: 0.0004 });
     await precheck(U, deps);

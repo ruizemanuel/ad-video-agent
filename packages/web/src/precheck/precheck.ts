@@ -18,8 +18,11 @@ export type PrecheckDeps = {
 /** How long an answer is kept. */
 export const PRECHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-// How much of the page the classifier reads.
+// How much the classifier is sent. Every part is bounded, not only the text: the title and the address of a page
+// (after a redirect) are the site's to make as long as it likes, and this runs for anyone, before any payment.
 const CLASSIFIER_TEXT_CHARS = 4000;
+const CLASSIFIER_TITLE_CHARS = 300;
+const CLASSIFIER_URL_CHARS = 2048;
 
 const fail = (code: Extract<PrecheckResult, { ok: false }>['code'], reason: string): PrecheckResult => ({ ok: false, code, reason });
 
@@ -55,7 +58,11 @@ export async function precheck(url: string, deps: PrecheckDeps): Promise<Prechec
   if (analysis.loginWall) return fail('login_wall', 'The page asks for a login. Send the address of a public page that anyone can open.');
 
   // Only a page that loaded well is judged, and only what the model judged is kept: it is what costs money.
-  const verdict = await deps.llm.classifySite({ url: page.finalUrl, title: analysis.title, text: analysis.text.slice(0, CLASSIFIER_TEXT_CHARS) });
+  const verdict = await deps.llm.classifySite({
+    url: page.finalUrl.slice(0, CLASSIFIER_URL_CHARS),
+    title: analysis.title.slice(0, CLASSIFIER_TITLE_CHARS),
+    text: analysis.text.slice(0, CLASSIFIER_TEXT_CHARS),
+  });
   await deps.store.addCost('precheck', 'llm:classify', verdict.usd, 'card');
   const result: PrecheckResult = verdict.admissible
     ? { ok: true, thin: analysis.thin, demoLinks: findDemoLinks(analysis.anchors, page.finalUrl) }
