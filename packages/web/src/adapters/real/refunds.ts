@@ -17,6 +17,7 @@ import {
   keccak256,
   publicActions,
   TransactionReceiptNotFoundError,
+  type Address,
   type Hex,
   type Transport,
 } from 'viem';
@@ -107,6 +108,8 @@ function checkedNonce(rawTx: Hex, expected: { token: string; feeCurrency: string
 }
 
 export class CeloRefunds implements RefundPort {
+  /** The refunds' wallet's address (public): only its key is secret. */
+  readonly wallet: Address;
   // Private (#) so that printing the adapter shows none of them: the account is made from the key only when a refund is
   // signed, and the transport keeps the RPC URL.
   readonly #account: () => ReturnType<typeof privateKeyToAccount>;
@@ -117,6 +120,7 @@ export class CeloRefunds implements RefundPort {
   constructor(settings: CeloRefundsSettings) {
     const { refundKey, erc8021Code } = settings;
     this.#account = () => privateKeyToAccount(refundKey);
+    this.wallet = this.#account().address;
     this.#transport = settings.transport ?? http(settings.rpcUrl);
     this.#chain = chainClient(this.#transport);
     this.#suffix = erc8021Code === undefined ? undefined : toDataSuffix(erc8021Code);
@@ -158,7 +162,7 @@ export class CeloRefunds implements RefundPort {
     }
     const nonce = checkedNonce(rawTx, { token: token.address, feeCurrency, data });
     // The hash is the keccak of the signed bytes: the node reports the same one.
-    return { hash: keccak256(rawTx), rawTx, nonce };
+    return { hash: keccak256(rawTx), rawTx, nonce, from: account.address };
   }
 
   async broadcast(rawTx: Hex): Promise<Hex> {
@@ -187,7 +191,7 @@ export class CeloRefunds implements RefundPort {
     try {
       const head = await this.#chain.getBlockNumber();
       const used = await this.#chain.getTransactionCount({
-        address: this.#account().address,
+        address: this.wallet,
         blockNumber: head > NONCE_CHECK_BLOCKS_BACK ? head - NONCE_CHECK_BLOCKS_BACK : 0n,
       });
       return used > nonce;
@@ -198,17 +202,20 @@ export class CeloRefunds implements RefundPort {
 
   async minedSafely(hash: Hex): Promise<boolean> {
     try {
-      let mined: { from: string; blockNumber: bigint };
+      let mined: { from: string; blockNumber: bigint; blockHash: Hex };
       try {
         mined = await this.#chain.getTransactionReceipt({ hash });
       } catch (error) {
         if (error instanceof TransactionReceiptNotFoundError) return false;
         throw error;
       }
-      if (!same(mined.from, this.#account().address)) return false;
+      if (!same(mined.from, this.wallet)) return false;
       // The safe head after the receipt: a node further behind can only make the answer more careful.
       const safe = await this.#chain.getBlock({ blockTag: 'safe' });
-      return mined.blockNumber <= safe.number;
+      if (mined.blockNumber > safe.number) return false;
+      // The receipt and the safe head may come from different nodes: the block at that height has to be the receipt's.
+      const block = await this.#chain.getBlock({ blockNumber: mined.blockNumber });
+      return same(block.hash, mined.blockHash);
     } catch (error) {
       throw chainError('safety check', error);
     }

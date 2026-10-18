@@ -102,6 +102,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       rawTx: '0xraw',
       txHash: '0xhash',
       nonce: 7,
+      signer: '0xsigner',
       ...over,
     });
 
@@ -580,6 +581,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           rawTx: '0xraw',
           txHash: '0xhash',
           nonce: 7,
+          signer: '0xsigner',
           replacedTxHash: null,
         });
         expect(await s.getRefund('ord_norefund')).toBeNull();
@@ -665,6 +667,15 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.stalledRefunds(ago(minutes(1)))).toEqual([]);
         // An order refunding with no refund signed yet is not one of them.
         expect((await s.stalledRefunds(ahead(minutes(1)))).map((o) => o.id)).not.toContain(unsigned.id);
+      });
+
+      it('finds the orders refunding with no refund signed, paid before a moment', async () => {
+        const unsigned = await orderIn('refunding');
+        const signed = await orderIn('refunding');
+        await orderIn('running');
+        await s.insertRefund(refund(signed.id));
+        expect((await s.unsignedRefunds(ahead(minutes(1)))).map((o) => o.id)).toEqual([unsigned.id]);
+        expect(await s.unsignedRefunds(ago(minutes(1)))).toEqual([]);
       });
 
       it('ignores an update to a refund that does not exist', async () => {

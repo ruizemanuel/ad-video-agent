@@ -1,7 +1,7 @@
 // The OrderStore on Postgres (Neon over HTTP in production, PGlite in the tests), through drizzle. Neon's HTTP
 // driver has no interactive transactions, so every operation that must be atomic is one statement.
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, gte, inArray, isNull, lt, ne, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, lt, ne, or, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
 import { costs, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
 import {
@@ -216,6 +216,7 @@ export class DrizzleStore implements OrderStore {
       rawTx: r.rawTx,
       txHash: r.txHash,
       nonce: r.nonce,
+      signer: r.signer,
       createdAt: now,
       updatedAt: now,
     };
@@ -259,6 +260,22 @@ export class DrizzleStore implements OrderStore {
       .from(orders)
       .innerJoin(refunds, eq(refunds.orderId, orders.id))
       .where(and(eq(orders.status, 'refunding'), lt(refunds.updatedAt, updatedBefore)))
+      .orderBy(asc(orders.createdAt));
+    return rows.map((row) => row.order);
+  }
+
+  async unsignedRefunds(paidBefore: Date): Promise<Order[]> {
+    const rows = await this.db
+      .select({ order: orders })
+      .from(orders)
+      .leftJoin(refunds, eq(refunds.orderId, orders.id))
+      .where(
+        and(
+          eq(orders.status, 'refunding'),
+          isNull(refunds.orderId),
+          or(lt(orders.paidAt, paidBefore), and(isNull(orders.paidAt), lt(orders.createdAt, paidBefore))),
+        ),
+      )
       .orderBy(asc(orders.createdAt));
     return rows.map((row) => row.order);
   }

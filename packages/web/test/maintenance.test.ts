@@ -440,6 +440,33 @@ describe('reconcile: refund failures', () => {
     expect(await statusOf(order)).toBe('refunded');
   });
 
+  /** An order moved to `refunding` whose refund was never signed: the chain could not be read, and the run died. */
+  async function leftUnsigned(): Promise<Order> {
+    const order = await paid();
+    await store.transition(order.id, 'running');
+    await store.transition(order.id, 'refunding', { failureReason: 'render' });
+    return order;
+  }
+
+  it('hands to a person, as refund_failed, an order left refunding with no refund signed two hours after it was paid', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await leftUnsigned();
+
+    expect((await reconcile(deps(), after(2 * 60 * MINUTE + MINUTE))).refundFailed).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unsigned' });
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+    // It signs and sends nothing.
+    expect(refunds.prepareCalls).toBe(0);
+    expect(refunds.broadcasts).toEqual([]);
+  });
+
+  it('leaves alone an order refunding with no refund signed yet, while its run may still sign one', async () => {
+    const order = await leftUnsigned();
+
+    expect((await reconcile(deps(), after(2 * 60 * MINUTE - MINUTE))).refundFailed).toEqual([]);
+    expect(await statusOf(order)).toBe('refunding');
+  });
+
   it('stays quiet when no refund has failed', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await paid();

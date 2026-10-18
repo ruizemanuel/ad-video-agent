@@ -172,6 +172,8 @@ export type RefundRecord = {
   txHash: string | null;
   /** The refunds' wallet nonce the transaction was signed with. */
   nonce: number | null;
+  /** The address of the wallet that signed it: REFUND_WALLET_PRIVATE_KEY may change, and a nonce is only that key's. */
+  signer: string | null;
   /** The hash of the refund this one replaced, given up on as dead (the store fills it in). */
   replacedTxHash: string | null;
 };
@@ -240,6 +242,8 @@ export interface OrderStore {
   refundsByNonce(nonce: number): Promise<RefundRecord[]>;
   /** The orders still `refunding` whose refund was last written before `updatedBefore`, oldest first. */
   stalledRefunds(updatedBefore: Date): Promise<Order[]>;
+  /** The orders still `refunding` with no refund signed, paid (or, unpaid, made) before `paidBefore`, oldest first. */
+  unsignedRefunds(paidBefore: Date): Promise<Order[]>;
 
   getPrecheck(key: string, maxAgeMs: number): Promise<PrecheckResult | null>;
   putPrecheck(key: string, r: PrecheckResult): Promise<void>;
@@ -427,8 +431,11 @@ export interface MusicPort {
 /** A refund as the RefundPort is asked for it: `amount` (atomic units) of the token at `asset`, to `to`. */
 export type RefundRequest = { to: string; asset: string; amount: bigint };
 
-/** A refund signed and not sent: its bytes, the hash they will have on the chain (their keccak256) and their nonce. */
-export type PreparedRefund = { hash: Hex; rawTx: Hex; nonce: number };
+/**
+ * A refund signed and not sent: its bytes, the hash they will have on the chain (their keccak256), their nonce, and the
+ * address of the wallet that signed them.
+ */
+export type PreparedRefund = { hash: Hex; rawTx: Hex; nonce: number; from: string };
 
 /** What the chain says of a refund's transaction: mined and done, mined and reverted, or not mined (yet, or ever). */
 export type RefundReceipt = 'success' | 'reverted' | 'pending';
@@ -439,6 +446,8 @@ export type RefundReceipt = 'success' | 'reverted' | 'pending';
  * kept before anything leaves.
  */
 export interface RefundPort {
+  /** The address of the refunds' wallet now: what it signs with from here on. */
+  readonly wallet: string;
   /**
    * Signs the transfer and sends nothing. Before signing, it throws FeeTooHigh when the most its gas could cost is over
    * what a refund may spend on it, and InsufficientBalance when the wallet holds less of the token than the amount and
@@ -447,8 +456,9 @@ export interface RefundPort {
   prepare(input: RefundRequest): Promise<PreparedRefund>;
   /**
    * Hands the signed bytes to the node once, and never again on its own. A node that already has them, or whose wallet
-   * nonce is already past theirs ("already known", "nonce too low"), is no error: the hash comes back, and `receipt` and
-   * `dead` say the rest. A throw does not say the node did not take them either: the hash does.
+   * nonce is already past theirs ("already known", "nonce too low"), is no error: the hash comes back, and `receipt` says
+   * the rest (with `nonceUsed` and `minedSafely`, for one that may never land). A throw does not say the node did not take
+   * them either: the hash does.
    */
   broadcast(rawTx: Hex): Promise<Hex>;
   /** What the chain says of the transaction with this hash. It only reads. */
@@ -460,8 +470,8 @@ export interface RefundPort {
   nonceUsed(nonce: number): Promise<boolean>;
   /**
    * Whether the transaction with this hash, sent by the refunds' wallet, is mined (whatever came of it) in a block at or
-   * below the safe head, which will not be undone. Positive evidence only: no receipt, or a newer block, is false. It
-   * only reads.
+   * below the safe head, which will not be undone, and that block is the one at that height. Positive evidence only: no
+   * receipt, a newer block, or a block since replaced, is false. It only reads.
    */
   minedSafely(hash: Hex): Promise<boolean>;
 }

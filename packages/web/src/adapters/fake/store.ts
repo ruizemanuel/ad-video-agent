@@ -89,6 +89,7 @@ const publicRefund = ({ createdAt: _created, updatedAt: _updated, ...refund }: S
   ...refund,
   // Files written before these were kept.
   nonce: refund.nonce ?? null,
+  signer: refund.signer ?? null,
   replacedTxHash: refund.replacedTxHash ?? null,
 });
 const publicTask = ({ seq: _seq, ...task }: StoredTask): VmTask => task;
@@ -377,6 +378,7 @@ export class FileStore implements OrderStore {
         rawTx: r.rawTx,
         txHash: r.txHash,
         nonce: r.nonce,
+        signer: r.signer,
         replacedTxHash: existing?.txHash ?? null,
         createdAt: now,
         updatedAt: now,
@@ -417,6 +419,13 @@ export class FileStore implements OrderStore {
     return this.locked(async () => {
       const stalled = new Set((await this.all<StoredRefund>('refunds')).filter((refund) => refund.updatedAt < updatedBefore).map((refund) => refund.orderId));
       return this.ordersWhere((o) => o.status === 'refunding' && stalled.has(o.id));
+    });
+  }
+
+  unsignedRefunds(paidBefore: Date): Promise<Order[]> {
+    return this.locked(async () => {
+      const signed = new Set((await this.all<StoredRefund>('refunds')).map((refund) => refund.orderId));
+      return this.ordersWhere((o) => o.status === 'refunding' && !signed.has(o.id) && (o.paidAt ?? o.createdAt) < paidBefore);
     });
   }
 

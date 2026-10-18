@@ -28,7 +28,7 @@ export type BroadcastRefundDeps = { store: Pick<OrderStore, 'getRefund' | 'updat
 
 export type ConfirmRefundDeps = {
   store: Pick<OrderStore, 'getRefund' | 'updateRefund' | 'transition' | 'getOrder' | 'refundsByNonce'>;
-  refunds: Pick<RefundPort, 'receipt' | 'nonceUsed' | 'minedSafely'>;
+  refunds: Pick<RefundPort, 'wallet' | 'receipt' | 'nonceUsed' | 'minedSafely'>;
 };
 
 /**
@@ -108,7 +108,16 @@ export async function prepareRefund(orderId: string, reason: string, deps: Refun
   // In place of a refund given up on, if there is one; never next to one that can still be mined. When another call kept
   // its refund first, that one is the order's, and this one is never sent. Either way the store says which refund is the
   // order's now, and what it replaced.
-  await store.insertRefund({ orderId, ...request, status: 'prepared', reason, rawTx: signed.rawTx, txHash: signed.hash, nonce: signed.nonce });
+  await store.insertRefund({
+    orderId,
+    ...request,
+    status: 'prepared',
+    reason,
+    rawTx: signed.rawTx,
+    txHash: signed.hash,
+    nonce: signed.nonce,
+    signer: signed.from,
+  });
   const kept = await store.getRefund(orderId);
   if (kept === null) throw new Error('The order has a refund that cannot be read.');
   return kept;
@@ -145,16 +154,18 @@ export async function broadcastRefund(orderId: string, deps: BroadcastRefundDeps
 }
 
 /**
- * Positive evidence that the refund can never be mined: another of our kept refunds signed with its nonce is mined in a
- * block at or below the safe head. A nonce used by anything else proves nothing here (a node behind may simply not have
- * this refund's receipt yet), and is left to a person. The chain's nonce is only a filter, read before the store.
+ * Positive evidence that the refund can never be mined: another of our kept refunds signed by the same wallet with the
+ * same nonce is mined in a block at or below the safe head. Only a refund the wallet's current key signed is judged: one
+ * an older key signed (REFUND_WALLET_PRIVATE_KEY changed, or another deployment shares the store) can still be mined by
+ * that key, whatever this one does, and is left to a person. So is a nonce used by anything else: a node behind may simply
+ * not have this refund's receipt yet. The chain's nonce is only a filter, read before the store.
  */
 async function provenDead(refund: RefundRecord, deps: ConfirmRefundDeps): Promise<boolean> {
   const { store, refunds } = deps;
-  if (refund.nonce === null || refund.txHash === null) return false;
+  if (refund.nonce === null || refund.txHash === null || refund.signer === null || !same(refund.signer, refunds.wallet)) return false;
   if (!(await refunds.nonceUsed(refund.nonce))) return false;
   for (const other of await store.refundsByNonce(refund.nonce)) {
-    if (other.txHash === null || same(other.txHash, refund.txHash)) continue;
+    if (other.txHash === null || same(other.txHash, refund.txHash) || !same(other.signer, refund.signer)) continue;
     if (await refunds.minedSafely(other.txHash as Hex)) return true;
   }
   return false;
@@ -197,13 +208,20 @@ export async function confirmRefund(orderId: string, deps: ConfirmRefundDeps): P
     return 'pending';
   }
 
-  // Each write holds only while the refund is the one that was read, and not yet mined: otherwise nothing is decided.
+  // Each write holds only while the refund is the one that was read, and not yet mined. When it does not, another call
+  // may have just recorded the same thing: its answer is this one's (otherwise nothing is decided).
+  const recordedMeanwhile = async (status: 'confirmed' | 'reverted'): Promise<boolean> => {
+    const now = await store.getRefund(orderId);
+    return now !== null && same(now.txHash, hash) && now.status === status;
+  };
   if (answer === 'success') {
-    if (!(await store.updateRefund(orderId, hash, { status: 'confirmed' }, UNMINED))) return 'pending';
+    const written = await store.updateRefund(orderId, hash, { status: 'confirmed' }, UNMINED);
+    if (!written && !(await recordedMeanwhile('confirmed'))) return 'pending';
     return refunded(orderId, store);
   }
   if (answer === 'reverted') {
-    if (!(await store.updateRefund(orderId, hash, { status: 'reverted' }, UNMINED))) return 'pending';
+    const written = await store.updateRefund(orderId, hash, { status: 'reverted' }, UNMINED);
+    if (!written && !(await recordedMeanwhile('reverted'))) return 'pending';
     await store.transition(orderId, 'refund_failed', { failureReason: 'refund-reverted' });
     return 'reverted';
   }

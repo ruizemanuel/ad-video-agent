@@ -130,8 +130,9 @@ export const refunds = pgTable(
     reason: text('reason').notNull(),
     rawTx: text('raw_tx'),
     txHash: text('tx_hash'),
-    /** The refunds' wallet nonce the transaction was signed with. */
+    /** The refunds' wallet nonce the transaction was signed with, and the wallet's address: its key may change. */
     nonce: integer('nonce'),
+    signer: text('signer'),
     /** The hash of the refund this one replaced, given up on as dead. */
     replacedTxHash: text('replaced_tx_hash'),
     createdAt: createdAt(),

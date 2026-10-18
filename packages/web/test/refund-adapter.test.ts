@@ -56,6 +56,8 @@ const KEY = generatePrivateKey();
 const WALLET = privateKeyToAccount(KEY).address;
 // Mixed case that is not a checksum, as an order may keep a payer's address.
 const PAYER: Address = '0x1234567890AbcdEF1234567890aBcdef12345678';
+// The block every receipt of the fake node names.
+const RECEIPT_BLOCK_HASH: Hex = `0x${'33'.repeat(32)}`;
 // The adapters are 18-decimal views of the 6-decimal tokens: a fee priced through them is 10^12 atomic units' worth.
 const ADAPTER_SCALE = 10n ** 12n;
 
@@ -86,6 +88,8 @@ class FakeNode {
   readonly receipts = new Map<string, 'success' | 'reverted'>();
   readonly receiptBlocks = new Map<string, bigint>();
   readonly receiptSenders = new Map<string, Address>();
+  /** The hash of the block at a height, when it is not the one the receipts name (that block was undone since). */
+  readonly blockHashes = new Map<bigint, Hex>();
   readonly calls: { method: string; params: unknown[] }[] = [];
   readonly sent: Hex[] = [];
 
@@ -115,7 +119,12 @@ class FakeNode {
       case 'eth_blockNumber':
         return numberToHex(this.head);
       case 'eth_getBlockByNumber': {
-        const number = params[0] === 'safe' ? this.safe : this.head;
+        const tag = params[0] as string;
+        if (tag !== 'safe' && tag !== 'latest') {
+          const number = BigInt(tag);
+          return { number: tag, hash: this.blockHashes.get(number) ?? RECEIPT_BLOCK_HASH, timestamp: '0x6700', baseFeePerGas: '0x5d21dba00', transactions: [] };
+        }
+        const number = tag === 'safe' ? this.safe : this.head;
         return { number: numberToHex(number), hash: `0x${'22'.repeat(32)}`, timestamp: '0x6700', baseFeePerGas: '0x5d21dba00', transactions: [] };
       }
       // Asked without a fee currency, these would price the gas in CELO, which the wallet does not hold.
@@ -170,7 +179,7 @@ class FakeNode {
     return {
       transactionHash: hash,
       transactionIndex: '0x0',
-      blockHash: `0x${'33'.repeat(32)}`,
+      blockHash: RECEIPT_BLOCK_HASH,
       blockNumber: numberToHex(this.receiptBlocks.get(hash.toLowerCase()) ?? this.safe - 50n),
       from: this.receiptSenders.get(hash.toLowerCase()) ?? WALLET,
       to: TOKENS.USDT.address,
@@ -255,11 +264,15 @@ describe('CeloRefunds.prepare', () => {
   });
 
   it('is signed by the refund wallet, its hash is the one the chain will give it, and its nonce comes with it', async () => {
-    const { hash, rawTx, nonce } = await adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    const refunds = adapter();
+    const { hash, rawTx, nonce, from } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
     expect(hash).toBe(keccak256(rawTx));
     expect(await signerOf(rawTx)).toBe(WALLET);
     expect(parseCip64(rawTx).nonce).toBe(7);
     expect(nonce).toBe(7);
+    // Which key signed it, kept with it: the wallet's key may change.
+    expect(from).toBe(WALLET);
+    expect(refunds.wallet).toBe(WALLET);
   });
 
   it('estimates the gas and prices it in the fee currency, never in CELO', async () => {
@@ -458,13 +471,24 @@ describe('CeloRefunds.minedSafely', () => {
     expect(await refunds.minedSafely(hash)).toBe(false);
   });
 
-  it('reads the receipt first and the safe head after it', async () => {
+  it('is false when the block at that height is not the one the receipt names: a node saw it in a block since undone', async () => {
+    const refunds = adapter();
+    const hash = keccak256('0x06');
+    node.receipts.set(hash, 'success');
+    node.receiptBlocks.set(hash, node.safe - 1n);
+    node.blockHashes.set(node.safe - 1n, `0x${'44'.repeat(32)}`);
+    expect(await refunds.minedSafely(hash)).toBe(false);
+  });
+
+  it('reads the receipt first, then the safe head, then the block at the receipt\'s height', async () => {
     const refunds = adapter();
     const hash = keccak256('0x05');
     node.receipts.set(hash, 'success');
-    await refunds.minedSafely(hash);
-    expect(node.methods()).toEqual(['eth_getTransactionReceipt', 'eth_getBlockByNumber']);
+    node.receiptBlocks.set(hash, node.safe - 3n);
+    expect(await refunds.minedSafely(hash)).toBe(true);
+    expect(node.methods()).toEqual(['eth_getTransactionReceipt', 'eth_getBlockByNumber', 'eth_getBlockByNumber']);
     expect(node.calls[1]?.params[0]).toBe('safe');
+    expect(node.calls[2]?.params[0]).toBe(numberToHex(node.safe - 3n));
   });
 });
 

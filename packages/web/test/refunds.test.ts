@@ -77,6 +77,7 @@ async function refundedElsewhere(amount: bigint): Promise<void> {
     rawTx: '0x01',
     txHash: `0x${'ab'.repeat(32)}`,
     nonce: null,
+    signer: null,
   });
 }
 
@@ -116,6 +117,7 @@ describe('prepareRefund', () => {
       rawTx: refunds.lastPrepared?.rawTx,
       txHash: refunds.lastPrepared?.hash,
       nonce: refunds.lastPrepared?.nonce,
+      signer: refunds.wallet,
       replacedTxHash: null,
     });
   });
@@ -369,6 +371,33 @@ describe('confirmRefund', () => {
     expect(refunds.receiptQueries).toHaveLength(1);
   });
 
+  it.each([
+    ['mined', 'success', 'confirmed', 'refunded'],
+    ['reverted', 'reverted', 'reverted', 'refund_failed'],
+  ] as const)('answers as the call that recorded the refund %s while this one was reading the chain', async (_label, receipt, answer, status) => {
+    const order = await orderIn('running');
+    await prepared(order.id);
+    await broadcastRefund(order.id, deps);
+    const stale = (await store.getRefund(order.id))!;
+    refunds.receiptAnswer = receipt;
+    // The other call, faster.
+    expect(await confirmRefund(order.id, deps)).toBe(answer);
+    // This one read the refund before that call wrote it.
+    let reads = 0;
+    const slow: ConfirmRefundDeps = {
+      refunds,
+      store: {
+        getRefund: async (id) => (reads++ === 0 ? stale : store.getRefund(id)),
+        updateRefund: (...args) => store.updateRefund(...args),
+        transition: (...args) => store.transition(...args),
+        getOrder: (...args) => store.getOrder(...args),
+        refundsByNonce: (...args) => store.refundsByNonce(...args),
+      },
+    };
+    expect(await confirmRefund(order.id, slow)).toBe(answer);
+    expect((await store.getOrder(order.id))?.status).toBe(status);
+  });
+
   it('is pending while there is no signed refund to look for', async () => {
     const order = await orderIn('running');
     expect(await confirmRefund(order.id, deps)).toBe('pending');
@@ -456,6 +485,44 @@ describe('a refund that can never be mined', () => {
     expect(await confirmRefund(order.id, deps)).toBe('pending');
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast' });
     expect(console.error).toHaveBeenCalledWith('[refund_receipt_unread]', order.id, 'the node did not answer either');
+  });
+
+  it('counts as proof no refund recorded as signed by another wallet', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { a, b, first } = await collision();
+    // A's record says another key signed it: whatever the chain says of it, it proves nothing of B.
+    await store.updateRefund(a.id, first.txHash!, { signer: `0x${'ee'.repeat(20)}` });
+    expect(await confirmRefund(b.id, deps)).toBe('pending');
+    expect(await store.getRefund(b.id)).toMatchObject({ status: 'broadcast' });
+    await store.updateRefund(a.id, first.txHash!, { signer: refunds.wallet });
+    expect(await confirmRefund(b.id, deps)).toBe('dead');
+  });
+
+  it('is never judged, nor signed again, when a key the wallet no longer has signed it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const a = await orderIn('running');
+    const b = await orderIn('running');
+    const before = refunds.wallet;
+    const old = await prepared(b.id);
+    expect(old.signer).toBe(before);
+    // Sent, and not mined yet.
+    refunds.broadcastError = new Error('the node did not answer');
+    await broadcastRefund(b.id, deps);
+    refunds.broadcastError = undefined;
+
+    // REFUND_WALLET_PRIVATE_KEY changes: the new key's first refund has the same nonce number, and is mined.
+    refunds.wallet = `0x${'b2'.repeat(20)}`;
+    const fresh = await prepared(a.id);
+    expect(fresh).toMatchObject({ signer: refunds.wallet, nonce: old.nonce });
+    await broadcastRefund(a.id, deps);
+    expect(await confirmRefund(a.id, deps)).toBe('confirmed');
+
+    // The old bytes can still be mined by the old key: B is not even judged, it is left for a person, never re-signed.
+    expect(await confirmRefund(b.id, deps)).toBe('pending');
+    expect(refunds.nonceQueries).toEqual([]);
+    expect(await store.getRefund(b.id)).toMatchObject({ status: 'broadcast', txHash: old.txHash, signer: before });
+    expect(await prepareRefund(b.id, 'render', deps)).toMatchObject({ txHash: old.txHash });
+    expect(refunds.prepareCalls).toBe(2);
   });
 
   it('is never written over by a call that read it before it was replaced', async () => {

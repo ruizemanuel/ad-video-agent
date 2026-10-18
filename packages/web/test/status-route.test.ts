@@ -125,6 +125,7 @@ describe('GET /v1/videos/<id>', () => {
       rawTx: '0x02',
       txHash: `0x${'cd'.repeat(32)}`,
       nonce: 3,
+      signer: `0x${'5'.repeat(40)}`,
     });
     const status = await body(await get(order.id));
     expect(status).toMatchObject({ status: 'refunding', refund: { status: 'broadcast', txHash: `0x${'cd'.repeat(32)}` } });

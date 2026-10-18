@@ -1,9 +1,9 @@
 // The reconciliation, run by the cron every 10 minutes. It closes what the paying request could not: a settlement
 // that landed on chain but was never reported (the facilitator timed out, or the request died), an authorization
 // that expired without settling, a paid order whose run never started, a refund that landed after the flow gave up on
-// it or stopped watching it (the run died, or the store failed between two writes). It only reads the chain for refunds:
-// it never signs nor sends one. It also keeps the refunds that could not be paid in the log, every run, until someone
-// pays them by hand.
+// it or stopped watching it (the run died, or the store failed between two writes), an order a run left refunding with
+// no refund signed (handed to a person). It only reads the chain for refunds: it never signs nor sends one. It also keeps
+// the refunds that could not be paid in the log, every run, until someone pays them by hand.
 import { markPaidAndStart, startRun } from '../payments/orders';
 import { confirmRefund } from '../payments/refunds';
 import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
@@ -16,6 +16,12 @@ const GRACE_MS = 5 * MINUTE_MS;
  * watches a refund for about 10 minutes (40 looks, 15 s apart): this leaves it well past that.
  */
 export const REFUND_WINDOW_MS = 30 * MINUTE_MS;
+/**
+ * How long after its payment an order may stay `refunding` with no refund signed before it is taken as left by its run
+ * (which moved it there, and died before signing). Longer than any run: VM, capture, script, music, reviews, render and
+ * the refund's own watch together take well under an hour.
+ */
+export const UNSIGNED_REFUND_AFTER_MS = 2 * 60 * MINUTE_MS;
 
 export type ReconcileDeps = {
   store: Pick<
@@ -24,6 +30,7 @@ export type ReconcileDeps = {
     | 'paidWithoutRun'
     | 'refundFailures'
     | 'stalledRefunds'
+    | 'unsignedRefunds'
     | 'findOrderByPayment'
     | 'getOrder'
     | 'transition'
@@ -35,7 +42,7 @@ export type ReconcileDeps = {
   >;
   buy: Pick<BuyPort, 'authorizationSettled'>;
   /** Only to read the chain: the reconciliation sends no refund. */
-  refunds: Pick<RefundPort, 'receipt' | 'nonceUsed' | 'minedSafely'>;
+  refunds: Pick<RefundPort, 'wallet' | 'receipt' | 'nonceUsed' | 'minedSafely'>;
   /** The wallet the payments go to (PAYTO_ADDRESS): a settlement counts only if it paid this one. */
   payTo: string;
 };
@@ -135,6 +142,13 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
   // Before the refund failures, so an order handed to a person here is in this pass's log.
   for (const order of await store.stalledRefunds(new Date(now.getTime() - REFUND_WINDOW_MS))) {
     await settleStalled(order.id, { store, refunds });
+  }
+  // Nothing was signed, so nothing is looked up nor sent: the order goes to a person. A refund its run signs and sends
+  // after all is still found, by its hash, in the pass below.
+  for (const order of await store.unsignedRefunds(new Date(now.getTime() - UNSIGNED_REFUND_AFTER_MS))) {
+    await attempt(order.id, async () => {
+      await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unsigned' });
+    });
   }
 
   for (const order of await store.refundFailures()) {
