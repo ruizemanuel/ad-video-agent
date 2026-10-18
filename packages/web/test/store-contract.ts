@@ -593,6 +593,25 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.refundsSince(ago(minutes(1)))).toBe(0);
       });
 
+      it('replaces a failed refund with a new one, and only a failed one', async () => {
+        const order = await create();
+        await s.insertRefund(refund(order.id));
+        await s.updateRefund(order.id, { status: 'failed' });
+        expect(await s.insertRefund(refund(order.id, { rawTx: '0xraw2', txHash: '0xhash2', reason: 'vm-timeout' }))).toBe(true);
+        expect(await s.getRefund(order.id)).toMatchObject({ status: 'prepared', rawTx: '0xraw2', txHash: '0xhash2', reason: 'vm-timeout' });
+        expect(await s.insertRefund(refund(order.id, { rawTx: '0xraw3', txHash: '0xhash3' }))).toBe(false);
+        expect(await s.getRefund(order.id)).toMatchObject({ txHash: '0xhash2' });
+        expect(await s.refundsSince(ago(minutes(1)))).toBe(0.05);
+      });
+
+      it('lets one of two replacements of a failed refund at once through', async () => {
+        const order = await create();
+        await s.insertRefund(refund(order.id, { status: 'failed' }));
+        const inserted = await Promise.all([s.insertRefund(refund(order.id, { txHash: '0xb' })), s.insertRefund(refund(order.id, { txHash: '0xc' }))]);
+        expect(inserted.filter(Boolean)).toHaveLength(1);
+        expect((await s.getRefund(order.id))?.txHash).toBe(inserted[0] ? '0xb' : '0xc');
+      });
+
       it('ignores an update to a refund that does not exist', async () => {
         await s.updateRefund('ord_norefund', { status: 'confirmed' });
         expect(await s.getRefund('ord_norefund')).toBeNull();

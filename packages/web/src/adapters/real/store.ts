@@ -205,21 +205,23 @@ export class DrizzleStore implements OrderStore {
 
   async insertRefund(r: RefundRecord): Promise<boolean> {
     const now = new Date();
+    const values = {
+      toAddress: r.to,
+      asset: r.asset,
+      amount: r.amount,
+      status: r.status,
+      reason: r.reason,
+      rawTx: r.rawTx,
+      txHash: r.txHash,
+      createdAt: now,
+      updatedAt: now,
+    };
+    // A refund that failed moved no money: a new one takes its place, in the same statement, so of two only one does.
+    // Any other refund stands, and nothing is written.
     const inserted = await this.db
       .insert(refunds)
-      .values({
-        orderId: r.orderId,
-        toAddress: r.to,
-        asset: r.asset,
-        amount: r.amount,
-        status: r.status,
-        reason: r.reason,
-        rawTx: r.rawTx,
-        txHash: r.txHash,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoNothing({ target: refunds.orderId })
+      .values({ orderId: r.orderId, ...values })
+      .onConflictDoUpdate({ target: refunds.orderId, set: values, setWhere: eq(refunds.status, 'failed') })
       .returning({ orderId: refunds.orderId });
     return inserted.length > 0;
   }

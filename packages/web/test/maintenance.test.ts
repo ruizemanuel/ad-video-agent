@@ -7,12 +7,14 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { start } from 'workflow/api';
 import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
+import { FakeRefunds } from '../src/adapters/fake/refunds';
 import { FileStore } from '../src/adapters/fake/store';
 import { setCronDeps } from '../src/app/api/cron/deps';
 import { GET as cleanupRoute } from '../src/app/api/cron/cleanup/route';
 import { GET as reconcileRoute } from '../src/app/api/cron/reconcile/route';
 import { cleanup } from '../src/maintenance/cleanup';
 import { reconcile } from '../src/maintenance/reconcile';
+import { broadcastRefund, prepareRefund } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/x402';
 import type { Order } from '../src/ports';
 import { orderWorkflow } from '../src/workflows/order';
@@ -36,6 +38,7 @@ const dirs: string[] = [];
 let store: FileStore;
 let blob: FileBlob;
 let buy: FakeBuy;
+let refunds: FakeRefunds;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -44,6 +47,7 @@ beforeEach(async () => {
   store = new FileStore(dir);
   blob = new FileBlob(dir);
   buy = new FakeBuy();
+  refunds = new FakeRefunds();
 });
 
 afterEach(() => {
@@ -95,7 +99,7 @@ async function delivered(): Promise<Order> {
 }
 
 /** What reconcile runs on: the service's wallet is where the payments go. */
-const deps = (chain: FakeBuy = buy) => ({ store, buy: chain, payTo: PAYTO });
+const deps = (chain: FakeBuy = buy) => ({ store, buy: chain, refunds, payTo: PAYTO });
 const statusOf = async (order: Order) => (await store.getOrder(order.id))!.status;
 /** Orders made in the same millisecond have no fixed order between them. */
 const sorted = (ids: string[]): string[] => [...ids].sort();
@@ -332,12 +336,60 @@ describe('reconcile: refund failures', () => {
     const result = await reconcile(deps(), after(MINUTE));
     expect(result).toMatchObject({ started: [], unpaid: [] });
     expect(sorted(result.refundFailed)).toEqual(sorted([order.id, other.id]));
-    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id);
-    expect(spy).toHaveBeenCalledWith('[refund_failed]', other.id);
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', other.id, null, null);
 
     spy.mockClear();
     await reconcile(deps(), after(11 * MINUTE));
-    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id);
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+  });
+
+  /** An order whose refund was signed and sent, and that the flow then gave up on before the chain said anything. */
+  async function givenUpOn(): Promise<Order> {
+    const order = await paid();
+    await store.transition(order.id, 'running');
+    const refundDeps = { store, refunds, dailyCapUsd: 10 };
+    await prepareRefund(order.id, 'render', refundDeps);
+    await broadcastRefund(order.id, refundDeps);
+    await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unconfirmed' });
+    return order;
+  }
+
+  it('moves to refunded an order whose refund landed after it was given up on', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await givenUpOn();
+    const { txHash } = (await store.getRefund(order.id))!;
+
+    const result = await reconcile(deps(), after(MINUTE));
+    expect(result.refundFailed).toEqual([]);
+    expect(await statusOf(order)).toBe('refunded');
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'confirmed', txHash });
+    expect(spy).toHaveBeenCalledWith('[refund_landed_late]', order.id, txHash);
+    expect(spy).not.toHaveBeenCalledWith('[refund_failed]', order.id, expect.anything(), expect.anything());
+    // It only looked: the refund was sent once, by the flow.
+    expect(refunds.broadcasts).toHaveLength(1);
+  });
+
+  it('keeps logging a refund that has not landed, with its status and hash', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await givenUpOn();
+    const { txHash } = (await store.getRefund(order.id))!;
+    refunds.receiptAnswer = 'pending';
+
+    expect((await reconcile(deps(), after(MINUTE))).refundFailed).toEqual([order.id]);
+    expect(await statusOf(order)).toBe('refund_failed');
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
+  });
+
+  it('does not look up a refund that already reverted', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await givenUpOn();
+    await store.updateRefund(order.id, { status: 'reverted' });
+    const { txHash } = (await store.getRefund(order.id))!;
+
+    expect((await reconcile(deps(), after(MINUTE))).refundFailed).toEqual([order.id]);
+    expect(refunds.receiptQueries).toEqual([]);
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'reverted', txHash);
   });
 
   it('stays quiet when no refund has failed', async () => {
@@ -430,7 +482,7 @@ describe('the cron routes', () => {
   });
 
   it('rejects cron calls without the CRON_SECRET bearer, and does not run the job', async () => {
-    setCronDeps({ store, blob, buy });
+    setCronDeps({ store, blob, buy, refunds });
     const old = await delivered();
     vi.useFakeTimers({ toFake: ['Date'], now: after(31 * DAY) });
 
@@ -440,7 +492,7 @@ describe('the cron routes', () => {
   });
 
   it('runs the reconciliation for the bearer, and answers what it did', async () => {
-    setCronDeps({ store, blob, buy });
+    setCronDeps({ store, blob, buy, refunds });
     const order = await awaiting(unixSeconds(after(10 * MINUTE)));
     // Settled only if the payment went to PAYTO_ADDRESS, the service's wallet.
     buy.consumed(order.nonce, { to: PAYTO, value: order.amount });
@@ -454,7 +506,7 @@ describe('the cron routes', () => {
   });
 
   it('runs the cleanup for the bearer, and answers what it did', async () => {
-    setCronDeps({ store, blob, buy });
+    setCronDeps({ store, blob, buy, refunds });
     const old = await delivered();
     vi.useFakeTimers({ toFake: ['Date'], now: after(31 * DAY) });
 

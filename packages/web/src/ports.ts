@@ -156,7 +156,9 @@ export type PaymentPatch = Partial<Omit<PaymentRecord, 'key' | 'orderId' | 'kind
  */
 export type RefundStatus = 'prepared' | 'broadcast' | 'confirmed' | 'reverted' | 'failed';
 
-/** The refund of an order: one at most. The transaction is signed and kept before it is broadcast. */
+/**
+ * The refund of an order: one at most that has not failed. The transaction is signed and kept before it is broadcast.
+ */
 export type RefundRecord = {
   orderId: string;
   to: string;
@@ -212,7 +214,10 @@ export interface OrderStore {
   finishTask(taskId: string, ok: boolean, result: unknown): Promise<VmTask | null>;
   getTask(taskId: string): Promise<VmTask | null>;
 
-  /** False if the order already has a refund. */
+  /**
+   * False if the order already has a refund that has not failed. A failed one (it can never move money) is replaced by
+   * this one, which counts toward the daily cap from now: an order has at most one refund that has not failed.
+   */
   insertRefund(r: RefundRecord): Promise<boolean>;
   updateRefund(orderId: string, patch: RefundPatch): Promise<void>;
   getRefund(orderId: string): Promise<RefundRecord | null>;
@@ -418,17 +423,24 @@ export type RefundReceipt = 'success' | 'reverted' | 'pending';
  */
 export interface RefundPort {
   /**
-   * Signs the transfer and sends nothing. It throws InsufficientBalance, before signing, when the wallet holds less of
-   * the token than the amount and the most its gas can cost. Anything it throws was not sent.
+   * Signs the transfer and sends nothing. Before signing, it throws FeeTooHigh when the most its gas could cost is over
+   * what a refund may spend on it, and InsufficientBalance when the wallet holds less of the token than the amount and
+   * that gas. Anything it throws was not sent.
    */
   prepare(input: RefundRequest): Promise<PreparedRefund>;
   /**
-   * Hands the signed bytes to the node once, and never again on its own. A throw does not say the node did not take
-   * them: the hash does.
+   * Hands the signed bytes to the node once, and never again on its own. A node that already has them, or whose wallet
+   * nonce is already past theirs ("already known", "nonce too low"), is no error: the hash comes back, and `receipt` and
+   * `dead` say the rest. A throw does not say the node did not take them either: the hash does.
    */
   broadcast(rawTx: Hex): Promise<Hex>;
   /** What the chain says of the transaction with this hash. It only reads. */
   receipt(hash: Hex): Promise<RefundReceipt>;
+  /**
+   * Whether this signed transaction can never be mined: the wallet's nonce was used, some blocks back, by another
+   * transaction, and this one has no receipt. Only then may another refund be signed in its place. It only reads.
+   */
+  dead(rawTx: Hex): Promise<boolean>;
 }
 
 /** The refunds' wallet holds less of the token than a refund needs (`needed`: the amount, and its gas when known). */
@@ -440,6 +452,18 @@ export class InsufficientBalance extends Error {
   ) {
     super(`The refunds' wallet holds ${balance} atomic units of the token at ${asset}, and the refund needs ${needed}.`);
     this.name = 'InsufficientBalance';
+  }
+}
+
+/** The most a refund's gas could cost (`fee`, in the token's atomic units) is over what a refund may spend on it (`cap`). */
+export class FeeTooHigh extends Error {
+  constructor(
+    readonly asset: string,
+    readonly fee: bigint,
+    readonly cap: bigint,
+  ) {
+    super(`The refund's gas could cost ${fee} atomic units of the token at ${asset}, over the ${cap} a refund may spend on it.`);
+    this.name = 'FeeTooHigh';
   }
 }
 

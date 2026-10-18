@@ -111,17 +111,18 @@ describe('getAdapters', () => {
     expect(await Promise.all([getAdapters(), getAdapters()])).toEqual([first, first]);
   });
 
-  it('gives the cron routes the same adapters, buy included', async () => {
+  it('gives the cron routes the same adapters, buy and the refunds included', async () => {
     vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
     vi.stubEnv('FAKE_DIR', await tempDir());
     for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
     const { getAdapters } = await import('../src/adapters');
     const { cronDeps } = await import('../src/app/api/cron/deps');
-    const { store, blob, buy } = await getAdapters();
+    const { store, blob, buy, refunds } = await getAdapters();
     const deps = await cronDeps();
     expect(deps.store).toBe(store);
     expect(deps.blob).toBe(blob);
     expect(deps.buy).toBe(buy);
+    expect(deps.refunds).toBe(refunds);
     // It answers, where the cron used to get a buy that always failed.
     vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ settled: 'settled' }));
     const authorization = { from: order.payer, nonce: order.nonce, validAfter: '0', validBefore: '1790000000' };

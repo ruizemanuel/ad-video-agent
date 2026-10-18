@@ -24,7 +24,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { parseTransaction, type CeloTransactionSerializable } from 'viem/celo';
 import { celo } from 'viem/chains';
 import { FEE_ADAPTER_DECIMALS, FEE_ADAPTERS, TOKENS, tokenSymbol } from '../../payments/tokens';
-import { InsufficientBalance, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRequest } from '../../ports';
+import { FeeTooHigh, InsufficientBalance, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRequest } from '../../ports';
 
 export type CeloRefundsSettings = {
   /** REFUND_WALLET_PRIVATE_KEY: the refunds' wallet. */
@@ -36,6 +36,19 @@ export type CeloRefundsSettings = {
   /** For tests: the chain's side of the wire (a viem transport). */
   transport?: Transport;
 };
+
+/** The most a refund may spend on gas, in the token's atomic units (6 decimals): 0.05. A transfer's gas costs a fraction of a cent. */
+export const MAX_REFUND_FEE_ATOMIC = 50_000n;
+
+/**
+ * How far behind the head the wallet's nonce is read before a refund is given up as dead. forno spreads its calls over
+ * nodes that are not all at the same block, and a node a little behind may not have a receipt yet: a nonce used this many
+ * blocks back (about 30 s on Celo) was used before anything a node that answers can be missing.
+ */
+export const DEAD_AFTER_BLOCKS = 30n;
+
+/** What a node answers when it has these bytes already, or its wallet's nonce is past theirs: the hash says the rest. */
+const ALREADY_SENT = /already known|known transaction|nonce too low/i;
 
 const chainClient = (transport: Transport) => createWalletClient({ chain: celo, transport }).extend(publicActions);
 type ChainClient = ReturnType<typeof chainClient>;
@@ -49,22 +62,34 @@ function feeInToken(gas: bigint, maxFeePerGas: bigint, decimals: number): bigint
 }
 
 const URL_LIKE = /[a-z][a-z0-9+.-]*:\/\/\S*/gi;
+// Longer than a hash: a signed transaction, a signature, calldata.
+const LONG_HEX = /0x[0-9a-f]{65,}/gi;
 
 /**
  * An error from the chain, made safe to show: viem's messages name the RPC URL, and keep the request and its cause. What
  * is kept is what failed, the kind of error and the node's own reason (which says whether to wait or fix something),
- * with anything that looks like a URL taken out.
+ * with anything that looks like a URL, or like a signed transaction, taken out.
  */
 function chainError(what: string, error: unknown): Error {
   const kind = error instanceof Error ? error.name : typeof error;
-  const reason = error instanceof BaseError && error.details ? ` ${error.details.replace(URL_LIKE, '[url]').slice(0, 200)}` : '';
+  const details = error instanceof BaseError ? error.details : undefined;
+  const reason = details ? ` ${details.replace(URL_LIKE, '[url]').replace(LONG_HEX, '[data]').slice(0, 200)}` : '';
   return new Error(`The refund's ${what} failed on the chain (${kind}).${reason}`);
+}
+
+/** The signed bytes read back. viem's parser puts the whole transaction, signature included, in its errors: they stay here. */
+function readBack(rawTx: Hex): CeloTransactionSerializable {
+  try {
+    // Any serialized transaction may come back from the parser.
+    return parseTransaction(rawTx) as CeloTransactionSerializable;
+  } catch {
+    throw new Error('The signed refund could not be read back.');
+  }
 }
 
 /** The signed bytes are the transfer that was asked for, with its gas in the token: or they are not given back. */
 function assertTransfer(rawTx: Hex, expected: { token: string; feeCurrency: string; data: Hex }): void {
-  // Any serialized transaction may come back from the parser; only a CIP-64 one passes.
-  const tx = parseTransaction(rawTx) as CeloTransactionSerializable;
+  const tx = readBack(rawTx);
   const isTransfer =
     tx.type === 'cip64' &&
     tx.chainId === celo.id &&
@@ -116,11 +141,13 @@ export class CeloRefunds implements RefundPort {
       if (request.gas === undefined || request.maxFeePerGas === undefined) throw new Error('The refund was left without its gas or its fee cap.');
       // The node checks that the token covers the fee, not the fee and the amount: a transfer of nearly all of it would be
       // mined, burn its fee and revert. So the most it can cost is checked here, in the token's units.
-      const needed = amount + feeInToken(request.gas, request.maxFeePerGas, token.decimals);
-      if (balance < needed) throw new InsufficientBalance(token.address, balance, needed);
+      const fee = feeInToken(request.gas, request.maxFeePerGas, token.decimals);
+      // A fee cap that high is a node's mistake, or a fee spike a refund can wait out: it is not paid.
+      if (fee > MAX_REFUND_FEE_ATOMIC) throw new FeeTooHigh(token.address, fee, MAX_REFUND_FEE_ATOMIC);
+      if (balance < amount + fee) throw new InsufficientBalance(token.address, balance, amount + fee);
       rawTx = await wallet.signTransaction(request);
     } catch (error) {
-      if (error instanceof InsufficientBalance) throw error;
+      if (error instanceof InsufficientBalance || error instanceof FeeTooHigh) throw error;
       throw chainError('preparation', error);
     }
     assertTransfer(rawTx, { token: token.address, feeCurrency, data });
@@ -133,6 +160,9 @@ export class CeloRefunds implements RefundPort {
       // viem sends a raw transaction once: it never retries this call.
       return await this.#chain.sendRawTransaction({ serializedTransaction: rawTx });
     } catch (error) {
+      // The node has them already, or a transaction with their nonce was mined (these bytes, or others): for `receipt` and
+      // `dead` to tell, not for this call.
+      if (error instanceof BaseError && ALREADY_SENT.test(error.details ?? '')) return keccak256(rawTx);
       throw chainError('broadcast', error);
     }
   }
@@ -144,6 +174,30 @@ export class CeloRefunds implements RefundPort {
     } catch (error) {
       if (error instanceof TransactionReceiptNotFoundError) return 'pending';
       throw chainError('receipt', error);
+    }
+  }
+
+  async dead(rawTx: Hex): Promise<boolean> {
+    const { nonce } = readBack(rawTx);
+    if (nonce === undefined) throw new Error('The signed refund has no nonce to look for.');
+    try {
+      const head = await this.#chain.getBlockNumber();
+      // The nonce first, then the receipt: a transaction mined between the two reads is found by the second.
+      const used = await this.#chain.getTransactionCount({
+        address: this.#account().address,
+        blockNumber: head > DEAD_AFTER_BLOCKS ? head - DEAD_AFTER_BLOCKS : 0n,
+      });
+      if (used <= nonce) return false;
+      try {
+        await this.#chain.getTransactionReceipt({ hash: keccak256(rawTx) });
+        return false;
+      } catch (error) {
+        // Its nonce went to another transaction: this one can never be mined.
+        if (error instanceof TransactionReceiptNotFoundError) return true;
+        throw error;
+      }
+    } catch (error) {
+      throw chainError('nonce check', error);
     }
   }
 }

@@ -356,7 +356,9 @@ export class FileStore implements OrderStore {
   insertRefund(r: RefundRecord): Promise<boolean> {
     return this.locked(async () => {
       await this.requireOrder(r.orderId);
-      if (await this.read('refunds', r.orderId)) return false;
+      // A refund that failed moved no money: a new one takes its place. Any other stands.
+      const existing = await this.read<StoredRefund>('refunds', r.orderId);
+      if (existing && existing.status !== 'failed') return false;
       const now = new Date();
       const refund: StoredRefund = {
         orderId: r.orderId,

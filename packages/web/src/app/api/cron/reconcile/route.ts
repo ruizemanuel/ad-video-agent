@@ -7,6 +7,6 @@ import { cronDeps } from '../deps';
 export async function GET(req: Request): Promise<Response> {
   const refused = refuseWithoutSecret(req);
   if (refused !== null) return refused;
-  const { store, buy } = await cronDeps();
-  return Response.json(await reconcile({ store, buy, payTo: env().PAYTO_ADDRESS }, new Date()), { headers: NO_STORE });
+  const { store, buy, refunds } = await cronDeps();
+  return Response.json(await reconcile({ store, buy, refunds, payTo: env().PAYTO_ADDRESS }, new Date()), { headers: NO_STORE });
 }

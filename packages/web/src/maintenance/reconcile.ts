@@ -1,20 +1,29 @@
 // The reconciliation, run by the cron every 10 minutes. It closes what the paying request could not: a settlement
 // that landed on chain but was never reported (the facilitator timed out, or the request died), an authorization
-// that expired without settling, a paid order whose run never started. It also keeps the refunds that could not be
-// paid in the log, every run, until someone pays them by hand.
+// that expired without settling, a paid order whose run never started, a refund that landed after the flow gave up on
+// it. It also keeps the refunds that could not be paid in the log, every run, until someone pays them by hand.
 import { markPaidAndStart, startRun } from '../payments/orders';
-import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore } from '../ports';
+import { confirmRefund } from '../payments/refunds';
+import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
 
 const MINUTE_MS = 60_000;
 /** How old an order has to be before this looks at it: the request that made it has had time to finish. */
 const GRACE_MS = 5 * MINUTE_MS;
 
 export type ReconcileDeps = {
-  store: Pick<OrderStore, 'ordersAwaitingSettlement' | 'paidWithoutRun' | 'refundFailures' | 'findOrderByPayment' | 'transition' | 'setStep' | 'setRunId'>;
+  store: Pick<
+    OrderStore,
+    'ordersAwaitingSettlement' | 'paidWithoutRun' | 'refundFailures' | 'findOrderByPayment' | 'getOrder' | 'transition' | 'setStep' | 'setRunId' | 'getRefund' | 'updateRefund'
+  >;
   buy: Pick<BuyPort, 'authorizationSettled'>;
+  /** Only to read the chain: the reconciliation sends no refund. */
+  refunds: Pick<RefundPort, 'receipt' | 'dead'>;
   /** The wallet the payments go to (PAYTO_ADDRESS): a settlement counts only if it paid this one. */
   payTo: string;
 };
+
+/** The refunds that may still have landed: sent, or about to be. */
+const MAY_HAVE_LANDED: readonly RefundStatus[] = ['prepared', 'broadcast', 'confirmed'];
 
 /** The ids of the orders it started, the ones it gave up as unpaid, and the ones whose refund has failed. */
 export type ReconcileResult = { started: string[]; unpaid: string[]; refundFailed: string[] };
@@ -31,8 +40,25 @@ async function attempt(orderId: string, work: () => Promise<void>): Promise<void
   }
 }
 
+/**
+ * Whether the refund of an order the flow gave up on landed after all, by its hash: then the order goes back through
+ * `refunding` (the only way) to `refunded`. A refund that can never land is given up on here too, for a person to retry.
+ */
+async function landedLate(orderId: string, deps: Pick<ReconcileDeps, 'store' | 'refunds'>): Promise<boolean> {
+  const { store } = deps;
+  let landed = false;
+  await attempt(orderId, async () => {
+    const refund = await store.getRefund(orderId);
+    if (refund === null || !MAY_HAVE_LANDED.includes(refund.status)) return;
+    if ((await confirmRefund(orderId, deps)) !== 'confirmed-unapplied') return;
+    landed = (await store.transition(orderId, 'refunding')) && (await store.transition(orderId, 'refunded'));
+    if (landed) console.error('[refund_landed_late]', orderId, refund.txHash);
+  });
+  return landed;
+}
+
 export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
-  const { store, buy, payTo } = deps;
+  const { store, buy, refunds, payTo } = deps;
   const result: ReconcileResult = { started: [], unpaid: [], refundFailed: [] };
   const olderThan = new Date(now.getTime() - GRACE_MS);
   const nowSeconds = BigInt(Math.floor(now.getTime() / 1000));
@@ -72,7 +98,10 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
   }
 
   for (const order of await store.refundFailures()) {
-    console.error('[refund_failed]', order.id);
+    if (await landedLate(order.id, { store, refunds })) continue;
+    // What became of its refund, if it has one: its status and its hash say where to look.
+    const refund = await store.getRefund(order.id).catch(() => null);
+    console.error('[refund_failed]', order.id, refund?.status ?? null, refund?.txHash ?? null);
     result.refundFailed.push(order.id);
   }
   return result;

@@ -21,10 +21,35 @@ import {
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { parseTransaction, serializeTransaction, type TransactionSerializableCIP64 } from 'viem/celo';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { CeloRefunds, type CeloRefundsSettings } from '../src/adapters/real/refunds';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CeloRefunds, DEAD_AFTER_BLOCKS, MAX_REFUND_FEE_ATOMIC, type CeloRefundsSettings } from '../src/adapters/real/refunds';
 import { FEE_ADAPTERS, TOKENS } from '../src/payments/tokens';
-import { InsufficientBalance } from '../src/ports';
+import { FeeTooHigh, InsufficientBalance } from '../src/ports';
+
+// A viem whose read-back of a signed transaction can be made to differ from what was signed (as a serializer that drops a
+// field would), or to fail the way viem's parser does: with the whole signed transaction in its message. Off, it is viem.
+const readBack = vi.hoisted(() => ({
+  change: undefined as ((tx: Record<string, unknown>) => Record<string, unknown>) | undefined,
+  fail: false,
+  seen: [] as string[],
+}));
+
+vi.mock('viem/celo', async (importOriginal) => {
+  const real = await importOriginal<typeof import('viem/celo')>();
+  const parse = ((raw: Hex) => {
+    readBack.seen.push(raw);
+    if (readBack.fail) throw new Error(`Invalid serialized transaction of type "cip64" was provided. Serialized Transaction: "${raw}"`);
+    const tx = real.parseTransaction(raw);
+    return readBack.change === undefined ? tx : readBack.change(tx as Record<string, unknown>);
+  }) as typeof real.parseTransaction;
+  return { ...real, parseTransaction: parse };
+});
+
+afterEach(() => {
+  readBack.change = undefined;
+  readBack.fail = false;
+  readBack.seen.length = 0;
+});
 
 const RPC_URL = 'https://celo-mainnet.example/v1/secret-rpc-key';
 const KEY = generatePrivateKey();
@@ -46,8 +71,15 @@ class FakeNode {
   fill: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | undefined;
   /** Every call fails, with an error that names the URL and its key, as viem's do. */
   down = false;
-  /** Only eth_sendRawTransaction fails. */
+  /** Only eth_sendRawTransaction fails, with no answer. */
   sendFails = false;
+  /** What the node says to eth_sendRawTransaction instead of taking it ("already known", "nonce too low"…). */
+  sendRefusal: string | undefined;
+  /** The latest block. */
+  head = 80_000_000n;
+  /** The wallet's next nonce counting what waits in the pool, and counting only what was mined. */
+  pendingNonce = 7n;
+  minedNonce = 7n;
   /** The mined transactions, by hash. */
   readonly receipts = new Map<string, 'success' | 'reverted'>();
   readonly calls: { method: string; params: unknown[] }[] = [];
@@ -75,7 +107,9 @@ class FakeNode {
       case 'eth_fillTransaction':
         return this.filled(params[0] as Record<string, string>);
       case 'eth_getTransactionCount':
-        return '0x7';
+        return numberToHex(params[1] === 'pending' ? this.pendingNonce : this.minedNonce);
+      case 'eth_blockNumber':
+        return numberToHex(this.head);
       case 'eth_getBlockByNumber':
         return { number: '0x4c4b400', hash: `0x${'22'.repeat(32)}`, timestamp: '0x6700', baseFeePerGas: '0x5d21dba00', transactions: [] };
       // Asked without a fee currency, these would price the gas in CELO, which the wallet does not hold.
@@ -87,6 +121,8 @@ class FakeNode {
         const raw = params[0] as Hex;
         this.sent.push(raw);
         if (this.sendFails) throw new Error(`HTTP request failed. URL: ${RPC_URL}`);
+        // A JSON-RPC error, as a node answers one.
+        if (this.sendRefusal !== undefined) throw Object.assign(new Error(this.sendRefusal), { code: -32000 });
         return keccak256(raw);
       }
       case 'eth_getTransactionReceipt':
@@ -284,6 +320,55 @@ describe('CeloRefunds.prepare', () => {
     await adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
     expect(node.methods()).not.toContain('eth_sendRawTransaction');
   });
+
+  it('refuses, before signing, a gas fee over 0.05 of the token, and takes one of exactly that', async () => {
+    expect(MAX_REFUND_FEE_ATOMIC).toBe(50_000n);
+    // gas 100000 × fee cap ((4.8e11 − 3.8e11) × 1.2 + 3.8e11 = 5e11) = 5e16 in the adapter's units: 50000 of the token.
+    node.gas = 100_000n;
+    node.gasPrice = 480_000_000_000n;
+    node.tip = 380_000_000_000n;
+    const { rawTx } = await adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    expect(feeOf(parseCip64(rawTx))).toBe(50_000n);
+
+    // One more unit of fee cap per gas makes it 50001, rounded up.
+    node.gasPrice += 1n;
+    node.tip += 1n;
+    const refused = adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    await expect(refused).rejects.toBeInstanceOf(FeeTooHigh);
+    await expect(refused).rejects.toMatchObject({ asset: TOKENS.USDT.address, fee: 50_001n, cap: 50_000n });
+  });
+
+  it('refuses the fee cap even when the wallet could pay it', async () => {
+    node.gasPrice *= 1_000n;
+    node.balance = 10n ** 18n;
+    await expect(adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n })).rejects.toBeInstanceOf(FeeTooHigh);
+  });
+
+  it.each([
+    ['without its fee currency', (tx: Record<string, unknown>) => ({ ...tx, feeCurrency: undefined })],
+    ['as another kind of transaction', (tx: Record<string, unknown>) => ({ ...tx, type: 'eip1559' })],
+    ['to another contract', (tx: Record<string, unknown>) => ({ ...tx, to: FEE_ADAPTERS.USDT })],
+    ['with other data', (tx: Record<string, unknown>) => ({ ...tx, data: transfer(WALLET, 50_000n) })],
+    ['on another chain', (tx: Record<string, unknown>) => ({ ...tx, chainId: 1 })],
+    ['carrying CELO', (tx: Record<string, unknown>) => ({ ...tx, value: 1n })],
+  ])('gives back nothing when the signed transaction reads back %s', async (_label, change) => {
+    readBack.change = change;
+    await expect(adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n })).rejects.toThrow('not the transfer it was asked to be');
+  });
+
+  it('keeps the signed transaction out of the error when it cannot be read back', async () => {
+    readBack.fail = true;
+    const error: unknown = await adapter()
+      .prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const signed = readBack.seen.at(-1);
+    expect(signed).toMatch(/^0x7b/);
+    const printed = inspect(error, { depth: 10, showHidden: true });
+    // Not even the signature at its end.
+    expect(printed).not.toContain(signed!.slice(-64));
+    expect(printed).toContain('could not be read back');
+  });
 });
 
 describe('CeloRefunds.broadcast', () => {
@@ -300,6 +385,54 @@ describe('CeloRefunds.broadcast', () => {
     node.sendFails = true;
     await expect(refunds.broadcast(rawTx)).rejects.toThrow();
     expect(node.sent).toEqual([rawTx]);
+  });
+
+  it.each(['already known', 'nonce too low: next nonce 8, tx nonce 7', 'known transaction: 0xabc'])(
+    'takes "%s" for sent, and gives back the hash: the receipt says the rest',
+    async (answer) => {
+      const refunds = adapter();
+      const { hash, rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+      node.sendRefusal = answer;
+      expect(await refunds.broadcast(rawTx)).toBe(hash);
+      expect(node.sent).toEqual([rawTx]);
+    },
+  );
+
+  it('throws any other refusal, with the node\'s reason', async () => {
+    const refunds = adapter();
+    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    node.sendRefusal = 'replacement transaction underpriced';
+    await expect(refunds.broadcast(rawTx)).rejects.toThrow('replacement transaction underpriced');
+  });
+});
+
+describe('CeloRefunds.dead', () => {
+  it('is false while the wallet has not used the transaction\'s nonce', async () => {
+    const refunds = adapter();
+    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    expect(await refunds.dead(rawTx)).toBe(false);
+  });
+
+  it('is true when the nonce was used, blocks back, by a transaction that is not this one', async () => {
+    const refunds = adapter();
+    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    node.minedNonce = 8n;
+    node.calls.length = 0;
+    expect(await refunds.dead(rawTx)).toBe(true);
+    // The nonce first, at a block well behind the head (a node a little behind still has it), then the receipt: a
+    // transaction mined between the two reads is found by the second.
+    expect(node.methods()).toEqual(['eth_blockNumber', 'eth_getTransactionCount', 'eth_getTransactionReceipt']);
+    const count = node.calls.find((call) => call.method === 'eth_getTransactionCount');
+    expect(count?.params).toEqual([WALLET, numberToHex(node.head - DEAD_AFTER_BLOCKS)]);
+    expect(DEAD_AFTER_BLOCKS).toBeGreaterThanOrEqual(30n);
+  });
+
+  it('is false when this transaction is the one that used the nonce', async () => {
+    const refunds = adapter();
+    const { hash, rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+    node.minedNonce = 8n;
+    node.receipts.set(hash.toLowerCase(), 'success');
+    expect(await refunds.dead(rawTx)).toBe(false);
   });
 });
 
@@ -331,6 +464,7 @@ describe('CeloRefunds keeps its key and the RPC URL to itself', () => {
       refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n }).catch((error: unknown) => error),
       refunds.broadcast(rawTx).catch((error: unknown) => error),
       refunds.receipt(hash).catch((error: unknown) => error),
+      refunds.dead(rawTx).catch((error: unknown) => error),
     ]);
     for (const error of errors) {
       expect(error).toBeInstanceOf(Error);
