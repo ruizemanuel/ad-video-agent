@@ -1,0 +1,81 @@
+// The pictures of a page: one DPR 2 screenshot per section at each viewport, plus the whole page, each with the boxes of
+// what is in it; and the small JPEGs the director looks at.
+import { execFile } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import type { CaptureLog, Shot, SiteData } from '@app/core';
+import type { Page } from 'puppeteer-core';
+import { childEnv } from '../child-env';
+import { inPageBoxes, MAX_FULL_PAGE_CSS_PX, type RawSection } from './extract';
+import { addNote, DPR, removeOverlays, sleep, VIEWPORTS, type ViewportName } from './page';
+
+/**
+ * Shoots each of `sections` (the page scrolled so its heading is near the top) and then the whole page, up to
+ * 8000 CSS pixels, and adds the shots and their boxes to `site`. Two sections that frame the page the same way give one
+ * shot. The ids are `<prefix><d|m>-<section>` and `<prefix><d|m>-full`; `prefix` is empty for the site and `x<n>-` for
+ * its extra pages.
+ */
+export async function shoot(
+  page: Page,
+  viewport: ViewportName,
+  prefix: string,
+  sections: readonly RawSection[],
+  site: Pick<SiteData, 'shots' | 'boxes'>,
+  pageHeight: number,
+  { runDir, log }: { runDir: string; log: CaptureLog },
+): Promise<void> {
+  const vp = VIEWPORTS[viewport];
+  const v = viewport === 'desktop' ? 'd' : 'm';
+  let lastY = -Infinity;
+  for (const s of sections) {
+    const y = await page.evaluate((id) => {
+      const el = document.querySelector(`[data-capsec="${id}"]`);
+      if (!el) return null;
+      const top = el.getBoundingClientRect().top + scrollY;
+      const target = Math.max(0, Math.min(top - 120, document.documentElement.scrollHeight - innerHeight));
+      scrollTo(0, target);
+      return scrollY;
+    }, s.id);
+    if (y === null || Math.abs(y - lastY) < 200) continue; // same framing as the previous shot
+    lastY = y;
+    await sleep(700); // reveal-on-scroll animations
+    // A popup that came up since the page was opened (a newsletter after a few seconds, or on scroll) is not the site.
+    if ((await removeOverlays(page, log, `${prefix}${v}-${s.id}`)) > 0) await sleep(300);
+    const id = `${prefix}${v}-${s.id}`;
+    const file = `media/${id}.png`;
+    await page.screenshot({ path: join(runDir, file) });
+    site.shots.push({ id, file, viewport, dpr: DPR, sectionId: s.id, width: vp.width * DPR, height: vp.height * DPR });
+    for (const b of await page.evaluate(inPageBoxes, false, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
+  }
+  await page.evaluate(() => scrollTo(0, 0));
+  await sleep(500);
+  const h = Math.min(pageHeight, MAX_FULL_PAGE_CSS_PX);
+  if (pageHeight > MAX_FULL_PAGE_CSS_PX) addNote(log, `${viewport} full page clipped from ${pageHeight} to ${h} css px`);
+  const id = `${prefix}${v}-full`;
+  const file = `media/${id}.png`;
+  await page.screenshot({ path: join(runDir, file), clip: { x: 0, y: 0, width: vp.width, height: h }, captureBeyondViewport: true });
+  site.shots.push({ id, file, viewport, dpr: DPR, width: vp.width * DPR, height: h * DPR });
+  for (const b of await page.evaluate(inPageBoxes, true, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
+}
+
+/** The shots the director is shown: those of the phone (the video is vertical), without the full-page ones, which are too tall to read. */
+export const shotsForDirector = (shots: readonly Shot[]): Shot[] => shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'));
+
+export const buildDirectorJpegArgs = (png: string, jpg: string): string[] => ['-v', 'error', '-y', '-i', png, '-vf', 'scale=480:-1', '-q:v', '4', jpg];
+
+const run = promisify(execFile);
+
+/** Writes `director/<shot id>.jpg` for each shot the director is shown. ffmpeg gets an environment of its own. */
+export async function makeDirectorJpegs(runDir: string, shots: readonly Shot[]): Promise<void> {
+  mkdirSync(join(runDir, 'director'), { recursive: true });
+  for (const shot of shotsForDirector(shots)) {
+    const args = buildDirectorJpegArgs(join(runDir, shot.file), join(runDir, 'director', `${shot.id}.jpg`));
+    try {
+      await run('ffmpeg', args, { env: childEnv(), timeout: 30_000 });
+    } catch (error) {
+      const stderr = typeof (error as { stderr?: unknown }).stderr === 'string' ? (error as { stderr: string }).stderr : '';
+      throw new Error(`ffmpeg could not make the picture of ${shot.id}: ${stderr.trim().split('\n').at(-1) || (error instanceof Error ? error.name : 'unknown error')}`);
+    }
+  }
+}

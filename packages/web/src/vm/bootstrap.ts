@@ -43,6 +43,8 @@ const SHAPES = {
 // Root keeps running commands after the worker has run code, so none may come from a place the worker can write to:
 // root's PATH has system folders only, and Node is unpacked without the archive's owner (the tarball says uid 1001,
 // which the worker may well get). In the apt line are the libraries Chrome needs, plus ffmpeg for the video.
+//
+// The worker starts from its own folder: only @app/vm depends on tsx, so only from there can Node find it.
 const TEMPLATE = String.raw`#!/bin/bash
 # Order VM start-up, run as root. Out: ports 53/80/443/123 only, and a blocked call hangs: everything has a timeout.
 # The only secret here is the order token (75 min). stdout is ONE JSON line: the failed step and the seconds each took.
@@ -81,7 +83,8 @@ s node bash -o pipefail -c 'mkdir -p /opt/node&&timeout 180 curl -fsSL https://n
 s fw N&&
 s fetch R bash -o pipefail -c 'mkdir -p ~/app&&cd ~/app&&timeout 120 curl -fsSL https://codeload.github.com/@REPO@/tar.gz/@REF@|tar -xz --strip-components=1'&&cd $W/app&&
 s install R timeout 900 pnpm install --frozen-lockfile --filter @app/vm...&&
-s run R timeout 3300 env API_BASE=@API@ VM_TOKEN=$K node --import tsx packages/vm/src/main.ts
+cd packages/vm&&
+s run R timeout 3300 env API_BASE=@API@ VM_TOKEN=$K node --import tsx src/main.ts
 echo "{\"failed\":\"$F\",\"msg\":\"$M\",\"t\":{$(paste -sd, $T),\"total\":$(($(date +%s)-S))}}"
 `;
 

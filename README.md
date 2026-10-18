@@ -26,6 +26,7 @@ pnpm typecheck
 pnpm test                # unit tests of every package
 pnpm test:integration    # workflow integration tests (none yet)
 pnpm --filter @app/core test
+pnpm --filter @app/vm test:browser   # opt-in: drives a real Chrome (downloaded on the first run) against a local site
 ```
 
 Tests that spend money (paid VMs, models, music) are opt-in and never run in CI.

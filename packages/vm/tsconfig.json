@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The `dom` types are for the functions that run inside the page (capture/extract.ts, capture/page.ts).
+    "lib": ["es2023", "dom"],
+    "types": ["node"]
+  },
+  "include": ["src", "test", "*.ts"]
+}

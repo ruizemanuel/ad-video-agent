@@ -86,7 +86,16 @@ describe('buildBootstrap', () => {
     const s = script();
     expect(s).toContain('https://codeload.github.com/ruizemanuel/r/tar.gz/abc123');
     expect(s).toContain('--frozen-lockfile --filter @app/vm...');
-    expect(s).toContain('node --import tsx packages/vm/src/main.ts');
+  });
+
+  // Only @app/vm depends on tsx, so with pnpm 12 Node finds it from packages/vm and not from the root of the repo.
+  it('starts the worker from its own folder, after the install, so that node finds tsx', () => {
+    const s = script();
+    expect(s).toContain('node --import tsx src/main.ts');
+    expect(s).not.toContain('packages/vm/src/main.ts');
+    const cd = s.indexOf('\ncd packages/vm&&\n');
+    expect(cd).toBeGreaterThan(s.indexOf('\ns install '));
+    expect(cd).toBeLessThan(s.indexOf('\ns run '));
   });
 
   it('installs Node v24.22.0 from the official tarball', () => {

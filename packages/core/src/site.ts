@@ -37,6 +37,12 @@ export type SiteFont = {
   alsoBody?: boolean;
 };
 
+/** A section of an extra page (a demo the site links to, a page the client named). It is there to be filmed: its text never backs a claim. */
+export type ExtraSection = { id: string; heading: string; text: string; ctas: string[]; /** The address of the page it came from. */ page: string };
+
+/** What the capture did, for whoever has to find out why a site came out as it did. The video does not read it. */
+export type CaptureLog = { startedAt: string; finishedAt?: string; notes: string[]; timings: Record<string, number> };
+
 export type SiteData = {
   url: string;
   lang: string;
@@ -53,4 +59,7 @@ export type SiteData = {
   shots: Shot[];
   boxes: Box[];
   recordings: { file: string; viewport: 'desktop' | 'mobile'; seconds: number }[];
+  /** The sections of the extra pages. Ids continue those of `sections`, so they are unique across pages. */
+  extraSections?: ExtraSection[];
+  log?: CaptureLog;
 };
