@@ -1,6 +1,7 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
-// VM tasks, payment intents, costs, refunds and pre-checks); the other ports arrive with the tasks that use them.
+// VM tasks, payment intents, costs, refunds and pre-checks) and the BlobPort (the private files); the other ports
+// arrive with the tasks that use them.
 import type { OrderRequestSchema, VmTaskKind } from '@app/core';
 import type { z } from 'zod';
 
@@ -200,4 +201,21 @@ export interface OrderStore {
   paidWithoutRun(olderThan: Date): Promise<Order[]>;
   ordersToExpire(createdBefore: Date): Promise<Order[]>;
   refundFailures(): Promise<Order[]>;
+}
+
+/**
+ * The private file store. A path is the blob's name in the store (`orders/<id>/out/<name>`), with no leading slash.
+ * The presigned URLs stand in for a secret: whoever holds one can do what it allows, until it expires.
+ */
+export interface BlobPort {
+  /** Writes the blob, replacing what is at that path. `bytes` is the size of what was stored. */
+  put(path: string, body: Uint8Array | string, contentType: string): Promise<{ bytes: number }>;
+  /** Fails if there is no blob at that path. */
+  get(path: string): Promise<Uint8Array>;
+  /** A URL that writes that path once (it will not overwrite), with that content type and no more than `maxBytes`. */
+  presignPut(path: string, contentType: string, maxBytes: number, minutes: number): Promise<string>;
+  /** A URL that reads that path. */
+  presignGet(path: string, minutes: number): Promise<string>;
+  /** Deletes every blob whose path starts with `prefix`, and says how many. An empty prefix is refused. */
+  deletePrefix(prefix: string): Promise<number>;
 }

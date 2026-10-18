@@ -85,6 +85,12 @@ describe('parseEnv', () => {
     expect(parsed.REFUND_WALLET_PRIVATE_KEY).toBeUndefined();
   });
 
+  it('reads the folder the fake adapters keep their files in, and counts an empty one as missing', () => {
+    expect(parseEnv({ ...base, FAKE_DIR: '/tmp/fake' }).FAKE_DIR).toBe('/tmp/fake');
+    expect(parseEnv({ ...base, FAKE_DIR: '' }).FAKE_DIR).toBeUndefined();
+    expect(parseEnv(base).FAKE_DIR).toBeUndefined();
+  });
+
   it('refuses fake adapters in production', () => {
     expect(() => parseEnv({ ...base, VERCEL_ENV: 'production', AD_AGENT_ADAPTERS: 'fake' })).toThrow('AD_AGENT_ADAPTERS');
   });

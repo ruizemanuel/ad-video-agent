@@ -71,6 +71,8 @@ const schema = z
     ERC8021_CODE: blank(z.string().min(1).optional()),
     /** `real` for the service; `fake` only in tests. */
     AD_AGENT_ADAPTERS: blank(z.enum(['real', 'fake']).default('real')),
+    /** The folder the fake adapters keep their files in: the tests make a temporary one. */
+    FAKE_DIR: blank(z.string().min(1).optional()),
     /** Only for the refund run: a cheap price and a forced failure. */
     DEV_MODE: blank(
       z
