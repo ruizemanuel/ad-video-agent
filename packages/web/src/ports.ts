@@ -224,16 +224,27 @@ export interface BlobPort {
   deletePrefix(prefix: string): Promise<number>;
 }
 
-/** What the chain says about a payment authorization: `unknown` when it could not be asked (or did not answer). */
+/** What the chain says about the payment an authorization was signed for. See `BuyPort.authorizationSettled`. */
 export type AuthorizationSettlement = 'settled' | 'unsettled' | 'unknown';
 
 /** Buy, as far as the tasks so far use it: renting the VM and following it arrive with the task that pays for it. */
 export interface BuyPort {
   /**
-   * Whether an EIP-3009 authorization has been used on chain. `unsettled` is only a fact for now: until `validBefore`
-   * it may still settle, and after it, never. `asset` is the token's address.
+   * Whether the payment an order was made for reached the service. It is not enough that the authorization's nonce was
+   * spent: a nonce belongs to the payer and says nothing of who is paid or how much, so the payer can spend it on a
+   * transfer to themselves, and the service's settlement then fails. `asset` is the token's address, `to` the address
+   * that has to be paid (compared whatever the case of the hex) and `value` the least it has to receive, in atomic units.
+   * - `settled`: the transaction that spent the nonce moved at least `value` of `asset` from `authorization.from` to `to`.
+   * - `unsettled`: that payment did not happen. The nonce is not spent yet (it may still be, until `validBefore`) or it
+   *   was spent by any other transfer (this authorization can then never settle).
+   * - `unknown`: the chain could not be read, or its answer is not final.
    */
-  authorizationSettled(input: { asset: string; authorization: PaymentAuthorization }): Promise<AuthorizationSettlement>;
+  authorizationSettled(input: {
+    asset: string;
+    authorization: PaymentAuthorization;
+    to: string;
+    value: bigint;
+  }): Promise<AuthorizationSettlement>;
 }
 
 /** What the model says about a site: `usd` is what the call cost. */

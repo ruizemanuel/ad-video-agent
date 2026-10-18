@@ -12,6 +12,8 @@ const GRACE_MS = 5 * MINUTE_MS;
 export type ReconcileDeps = {
   store: Pick<OrderStore, 'ordersAwaitingSettlement' | 'paidWithoutRun' | 'refundFailures' | 'findOrderByPayment' | 'transition' | 'setStep' | 'setRunId'>;
   buy: Pick<BuyPort, 'authorizationSettled'>;
+  /** The wallet the payments go to (PAYTO_ADDRESS): a settlement counts only if it paid this one. */
+  payTo: string;
 };
 
 /** The ids of the orders it started, the ones it gave up as unpaid, and the ones whose refund has failed. */
@@ -30,7 +32,7 @@ async function attempt(orderId: string, work: () => Promise<void>): Promise<void
 }
 
 export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
-  const { store, buy } = deps;
+  const { store, buy, payTo } = deps;
   const result: ReconcileResult = { started: [], unpaid: [], refundFailed: [] };
   const olderThan = new Date(now.getTime() - GRACE_MS);
   const nowSeconds = BigInt(Math.floor(now.getTime() / 1000));
@@ -42,14 +44,19 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
       const settlement = await buy.authorizationSettled({
         asset: order.asset,
         authorization: { from: order.payer, nonce: order.nonce, validAfter: order.validAfter.toString(), validBefore: order.validBefore.toString() },
+        // Not only that the nonce was spent: that the service got the price. The payer can spend the nonce on a transfer to
+        // themselves, which makes the settlement fail while the nonce looks used.
+        to: payTo,
+        value: order.amount,
       });
       if (settlement === 'settled') {
         // Found on the chain, which does not say which transaction settled it.
         const payment = { asset: order.asset, payer: order.payer, nonce: order.nonce, txHash: null };
         if ((await markPaidAndStart(payment, { store })) === 'started') result.started.push(order.id);
       } else if (settlement === 'unsettled' && nowSeconds >= order.validBefore) {
-        // The token takes an authorization only before `validBefore`: this one can never settle. If the order was paid
-        // while the chain was being asked, the move is refused and the order stays as it is.
+        // The token takes an authorization only before `validBefore`: this one can never settle (nor could one whose nonce
+        // went to another transfer). If the order was paid while the chain was being asked, the move is refused and the
+        // order stays as it is.
         if (await store.transition(order.id, 'unpaid')) result.unpaid.push(order.id);
       }
       // `unknown`, or `unsettled` while it still can: nothing to do yet.
