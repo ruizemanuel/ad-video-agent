@@ -53,7 +53,12 @@ export type SiteData = {
     /** `hex` is `#rrggbb`. `weight` is the share of the page that uses the color. */
     colors: { hex: string; role: 'bg' | 'text' | 'primary' | 'accent'; weight: number }[];
     fonts: SiteFont[];
-    logo?: { file: string; kind: 'svg' | 'png'; png?: string };
+    /**
+     * `png` is a raster of the whole logo (DPR 4, transparent); the video shows it, or `file` when there is none.
+     * `width` and `height` are the natural size of that picture in pixels, when the capture could read it: every render
+     * of the video decides from them whether the logo reads, instead of loading the picture to find out.
+     */
+    logo?: { file: string; kind: 'svg' | 'png'; png?: string; width?: number; height?: number };
     ogImage?: string;
   };
   shots: Shot[];
