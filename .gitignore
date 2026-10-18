@@ -1,0 +1,21 @@
+# Local only: never committed
+docs/superpowers/
+.claude/
+.agents/
+.playwright-mcp/
+.superpowers/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Vercel
+.vercel
+
+# Build and dependencies
+node_modules/
+.next/
+out/
+dist/
+*.mp4
