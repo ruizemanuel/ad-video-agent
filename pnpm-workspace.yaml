@@ -1,8 +1,11 @@
 packages:
   - "packages/*"
 
-# No dependency runs install scripts. These have prebuilt binaries (or a pure-JS fallback) without them.
+# No dependency runs install scripts. These have prebuilt binaries (or a pure-JS fallback) without them. @google/genai
+# ships built (its prepare script only builds it from source), and protobufjs's postinstall only sets up its CLI.
 allowBuilds:
   esbuild: false
   "@swc/core": false
   cbor-extract: false
+  "@google/genai": false
+  protobufjs: false

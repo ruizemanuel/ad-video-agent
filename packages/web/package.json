@@ -16,6 +16,7 @@
     "@app/core": "workspace:*",
     "@celo/buy-core": "0.8.3",
     "@electric-sql/pglite": "0.5.10",
+    "@google/genai": "2.30.0",
     "@neondatabase/serverless": "1.2.0",
     "@vercel/blob": "2.8.2",
     "@x402/core": "2.28.0",

@@ -1,16 +1,19 @@
 // Which adapters the service runs on: the real ones, or the doubles when AD_AGENT_ADAPTERS is `fake` (tests only;
 // env.ts refuses it in production). The routes and the flow ask here, and never build an adapter themselves.
+import { GoogleGenAI } from '@google/genai';
 import type { Hex } from 'viem';
 import { openDb } from '../db/client';
 import { env, type Env } from '../env';
-import type { BlobPort, BuyPort, LlmPort, OrderStore } from '../ports';
+import type { BlobPort, BuyPort, LlmPort, MusicPort, OrderStore } from '../ports';
 import { FileBlob } from './fake/blob';
 import { FakeBuy } from './fake/buy';
 import { FakeLlm } from './fake/llm';
+import { FakeMusic } from './fake/music';
 import { FileStore } from './fake/store';
 import { VercelBlob } from './real/blob';
 import { CeloBuy } from './real/buy';
 import { GatewayLlm } from './real/llm';
+import { LyriaMusic } from './real/music';
 import { DrizzleStore } from './real/store';
 
 export type Adapters = {
@@ -18,18 +21,19 @@ export type Adapters = {
   blob: BlobPort;
   buy: BuyPort;
   llm: LlmPort;
+  music: MusicPort;
 };
 
 /** The adapters for a set of settings. It is async because the database opens asynchronously. */
 export async function createAdapters(settings: Env): Promise<Adapters> {
   if (settings.AD_AGENT_ADAPTERS === 'fake') {
     if (settings.FAKE_DIR === undefined) throw new Error('AD_AGENT_ADAPTERS=fake needs FAKE_DIR: the folder the fake adapters keep their files in.');
-    return { store: new FileStore(settings.FAKE_DIR), blob: new FileBlob(settings.FAKE_DIR), buy: new FakeBuy(), llm: new FakeLlm() };
+    return { store: new FileStore(settings.FAKE_DIR), blob: new FileBlob(settings.FAKE_DIR), buy: new FakeBuy(), llm: new FakeLlm(), music: new FakeMusic() };
   }
   // env.ts has already required these when the adapters are the real ones.
-  const { DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY, CELO_RPC_URL } = settings;
-  if (DATABASE_URL === undefined || BLOB_READ_WRITE_TOKEN === undefined || SPEND_WALLET_PRIVATE_KEY === undefined) {
-    throw new Error('The real adapters need DATABASE_URL, BLOB_READ_WRITE_TOKEN and SPEND_WALLET_PRIVATE_KEY.');
+  const { DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY, GEMINI_API_KEY, CELO_RPC_URL } = settings;
+  if (DATABASE_URL === undefined || BLOB_READ_WRITE_TOKEN === undefined || SPEND_WALLET_PRIVATE_KEY === undefined || GEMINI_API_KEY === undefined) {
+    throw new Error('The real adapters need DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY and GEMINI_API_KEY.');
   }
   return {
     store: new DrizzleStore(await openDb(DATABASE_URL)),
@@ -38,6 +42,8 @@ export async function createAdapters(settings: Env): Promise<Adapters> {
     buy: new CeloBuy({ spendKey: SPEND_WALLET_PRIVATE_KEY as Hex, rpcUrl: CELO_RPC_URL }),
     // The AI Gateway signs in with the deployment's OIDC token: no setting.
     llm: new GatewayLlm(),
+    // Lyria is reached with the Gemini API's key, which only this client holds.
+    music: new LyriaMusic(new GoogleGenAI({ apiKey: GEMINI_API_KEY })),
   };
 }
 

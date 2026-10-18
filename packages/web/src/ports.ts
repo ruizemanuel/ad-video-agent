@@ -1,8 +1,8 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
 // VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
-// models, as far as the tasks so far use them) and the BuyPort (renting the VM, following it, and what the chain says
-// about a payment); the other ports arrive with the tasks that use them.
+// models, as far as the tasks so far use them), the BuyPort (renting the VM, following it, and what the chain says
+// about a payment) and the MusicPort (Lyria); the other ports arrive with the tasks that use them.
 import type {
   CaptureFile,
   Claim,
@@ -360,6 +360,18 @@ export interface LlmPort {
 
   /** The judge, on the items judgeItems builds: a verdict per item, which may leave some out. */
   judge(input: { claims: JudgeItem[]; framing: FramingItem[] }): Promise<{ verdicts: ClaimVerdict[]; framing: FramingVerdict[]; usd: number }>;
+}
+
+/**
+ * The music model. It writes one track per call and bills it whole: the caller records `usd` on the order, and measures
+ * the track, since Lyria does not keep the tempo or the length the prompt asks for.
+ */
+export interface MusicPort {
+  /**
+   * One track for the prompt, as a WAV file. It fails for good (a `FatalError`, which is not retried) when what came back
+   * is not a WAV; any other failure is the provider's and may be tried again.
+   */
+  generate(prompt: string): Promise<{ wav: Uint8Array; model: 'lyria-3.5'; usd: number }>;
 }
 
 /**
