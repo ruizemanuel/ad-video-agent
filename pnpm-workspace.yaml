@@ -1,5 +1,8 @@
 packages:
   - "packages/*"
 
+# No dependency runs install scripts. These have prebuilt binaries (or a pure-JS fallback) without them.
 allowBuilds:
   esbuild: false
+  "@swc/core": false
+  cbor-extract: false

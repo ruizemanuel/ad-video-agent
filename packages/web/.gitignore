@@ -1,0 +1,4 @@
+# Written by `next build`: Next's type references and the workflow compiler's cache (the workflow builder looks for
+# the "/.swc" line here and adds it if it is missing).
+next-env.d.ts
+/.swc
