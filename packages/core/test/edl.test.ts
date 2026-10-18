@@ -32,6 +32,11 @@ describe('EDL contract', () => {
     expect(ClaimSchema.parse({ id: 'c1', text: 'x', sectionId: 's1', quote: 'x' }).quote).toBe('x');
   });
 
+  it('accepts a fractional bpm, because a measured tempo has decimals', () =>
+    expect(EdlSchema.parse({ ...edlShop, bpm: 113.19 }).bpm).toBe(113.19));
+
+  it.each([0, -112, Number.NaN])('rejects a bpm of %s', (bpm) => expect(() => EdlSchema.parse({ ...edlShop, bpm })).toThrow());
+
   it('tells the director that hooks[0] is the main version', () =>
     expect(EdlSchema.shape.hooks.description).toContain('three hooks, strongest first; hooks[0] is the main version'));
 });

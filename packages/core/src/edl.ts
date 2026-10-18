@@ -40,7 +40,9 @@ export const SceneSchema = z.object({
 
 export const EdlSchema = z.object({
   lang: z.string().describe('Language of the on-screen text, e.g. "es".'),
-  bpm: z.number().int().describe('Tempo of the music; every cut lands on a beat.'),
+  // Not an integer: after retimeForBpm the edit list carries the tempo measured on the track (e.g. 113.19).
+  // The usable range (90-128) is a rule of validateEdl, not of the schema.
+  bpm: z.number().positive().describe('Tempo of the music in beats per minute; every cut lands on a beat.'),
   style: z.object({ energy: z.enum(['calm', 'bold']), density: z.enum(['airy', 'dense']) }),
   hooks: z
     .array(z.array(SceneSchema))

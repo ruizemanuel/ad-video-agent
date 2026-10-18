@@ -69,6 +69,16 @@ describe('retimeForBpm', () => {
     }
   });
 
+  it.each([110.11, 113.19, 84.78])('produces an edit list that still parses at the measured %s bpm', (measured) => {
+    const r = retimeForBpm(edlShop, measured);
+    expect(EdlSchema.parse(r)).toEqual(r);
+    expect(r.bpm).toBe(measured);
+    for (const hook of [0, 1, 2]) {
+      const planned = (beatsOf(edlShop, hook) * measured) / edlShop.bpm;
+      expect(Math.abs(beatsOf(r, hook) - planned)).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('does not accumulate rounding error across many short scenes', () => {
     const scene = first(edlShop.body);
     const long: Edl = { ...edlShop, body: Array.from({ length: 10 }, () => ({ ...scene, beats: 3 })) };
