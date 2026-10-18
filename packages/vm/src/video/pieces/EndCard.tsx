@@ -1,10 +1,10 @@
 import { useMemo, type FC } from 'react';
-import { AbsoluteFill, Img, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { alpha, TYPE } from '@app/core';
-import { brandName, fitLogo, logoReads } from '../logo';
+import { brandName } from '../logo';
 import { BUTTON_IN, endCardSteps, pressState } from '../rhythm';
 import { layoutLines, pillSize, toWords } from '../type';
-import { centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, type PieceProps } from './common';
+import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, showsLogo, useAd, type PieceProps } from './common';
 
 // The brand comes in a few frames into the scene, under the end of the wipe that usually brings the close in.
 const MARK_AT = 3;
@@ -17,10 +17,9 @@ const PILL_HEIGHT_EM = 2.24;
 // domain; on beat 4.5 the button is pressed. Centered on the frame's center line, not in the safe zone (which is
 // lopsided in 9:16).
 export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
-  const { theme, format, site, edl, logoSize } = useAd();
+  const ad = useAd();
+  const { theme, format, site, edl } = ad;
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const logo = site.brand.logo;
   const layout = useMemo(() => {
     const type = TYPE[format];
     const column = centeredSafeBox(format);
@@ -33,17 +32,17 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
       type,
       column,
       logoBox: { width: Math.round(column.width * 0.7), height: Math.round(type.logo * 3.2) },
-      name: layoutLines([toWords({ text: name, kind: 'framing' })], { ...fit, max: Math.round(type.headline * 0.8) }),
+      name,
       tagline: tagline ? layoutLines([toWords(tagline)], { ...fit, max: Math.round(type.caption * 0.8) }) : null,
       cta: cta?.text ?? '',
       ctaSize: pillSize(cta?.text ?? '', column.width, format, measure),
-      // A name that fell back to the address is not repeated under the button.
-      domain: domain === name ? null : domain,
+      domain,
       domainSize: Math.round(type.caption * 0.62),
     };
   }, [scene, site, format, theme]);
-  const { type, column, logoBox, name, tagline, cta, ctaSize, domain, domainSize } = layout;
-  const image = logo && logoSize && logoReads(logoSize, logoBox) ? { file: logo.png ?? logo.file, ...fitLogo(logoSize, logoBox) } : null;
+  const { type, column, logoBox, name, tagline, cta, ctaSize, domainSize } = layout;
+  // A name that fell back to the address, when it is the mark, is not repeated under the button.
+  const domain = !showsLogo(ad, logoBox) && layout.domain === name ? null : layout.domain;
   const { button, press } = endCardSteps(timed, edl.bpm);
   const gaps = { tagline: Math.round(type.logo * 0.45), button: Math.round(type.logo * 0.9), domain: Math.round(type.logo * 0.5) };
   const buttonHeight = ctaSize * PILL_HEIGHT_EM;
@@ -51,7 +50,6 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   // The whole close is centered; until the button comes in, the brand is, moved down by half of what goes under it.
   const below = gaps.button + buttonHeight + (domain ? gaps.domain + domainHeight : 0);
   const moved = progress(frame, button, button + BUTTON_IN, EASE_IN_OUT);
-  const markIn = spring({ frame: frame - MARK_AT, fps, config: { damping: 200 }, durationInFrames: 14 });
   const pillIn = progress(frame, button + 2, button + BUTTON_IN);
   const domainIn = progress(frame, button + 5, button + BUTTON_IN);
   const pressed = pressState(frame, press);
@@ -59,14 +57,7 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
     <AbsoluteFill style={{ background: theme.bg }}>
       <div style={{ ...column, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: `translateY(${((1 - moved) * below) / 2}px)` }}>
-          {image ? (
-            <Img
-              src={staticFile(image.file)}
-              style={{ width: image.width, height: image.height, display: 'block', opacity: markIn, transform: `scale(${0.96 + 0.04 * markIn})` }}
-            />
-          ) : (
-            <RevealLines lines={name.lines} size={name.size} font={theme.display} color={theme.accentText} accent={theme.accentText} delay={MARK_AT} align="center" />
-          )}
+          <BrandMark box={logoBox} name={{ max: Math.round(type.headline * 0.8), width: column.width }} align="center" delay={MARK_AT} />
           {tagline && (
             <div style={{ marginTop: gaps.tagline }}>
               <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={MARK_AT + 6} align="center" />

@@ -13,6 +13,9 @@ export type TypeLine = Word[];
 const FILL = 0.98;
 // How tall the glyphs of a line may be, ascent plus descent, in em: with tight line spacing they reach past the line's box.
 const GLYPH_EM = 1.3;
+
+/** How far, in em, the glyphs of a line may reach past its box, above and below, at this line height. */
+export const glyphOverhang = (lineHeight: number): number => Math.max(0, GLYPH_EM - lineHeight) / 2;
 // Below this share of the largest size, the widest line is split in two.
 const SPLIT_BELOW = 0.62;
 

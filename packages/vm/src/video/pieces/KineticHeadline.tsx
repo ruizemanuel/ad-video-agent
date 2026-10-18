@@ -3,7 +3,7 @@ import { AbsoluteFill } from 'remotion';
 import { FORMATS, safeWidth, settledFrame, TYPE } from '@app/core';
 import { lineEnterFrame } from '../rhythm';
 import { layoutLines, lineSources, toWords } from '../type';
-import { Logo, measureWith, RevealLines, safeBox, useAd, type PieceProps } from './common';
+import { BrandMark, measureWith, RevealLines, safeBox, useAd, type PieceProps } from './common';
 
 // The first line comes in after the logo of the opening scene.
 const AFTER_LOGO = 4;
@@ -13,7 +13,8 @@ const SPLIT_STAGGER = 5;
 const LINE_IN = 12;
 
 // One big idea in type: 1-3 lines in the site's display font, the accent in the brand color, line i coming in on beat i
-// (sooner when the scene is too short for that). The first scene of a video carries the logo over it.
+// (sooner when the scene is too short for that). The first scene of a video carries the brand over it: its logo, or its
+// name when the logo does not read (see BrandMark).
 export const KineticHeadline: FC<PieceProps> = ({ scene, timed, showLogo }) => {
   const { theme, format, edl } = useAd();
   const type = TYPE[format];
@@ -44,7 +45,7 @@ export const KineticHeadline: FC<PieceProps> = ({ scene, timed, showLogo }) => {
             justifyContent: type.align === 'center' ? 'center' : 'flex-start',
           }}
         >
-          <Logo height={type.logo} />
+          <BrandMark box={{ width: safeWidth(format), height: type.logo }} name={{ max: Math.round(type.logo * 0.75), width: safeWidth(format) }} align={type.align} />
         </div>
       )}
       <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>

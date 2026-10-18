@@ -91,9 +91,9 @@ function makeFixtureEdl(site: SiteData): Edl {
 }
 
 /**
- * An edit list of the fixture site with the new pieces: a typed address (and, as hook 1, a typed question), a word
- * cycle, a UI scene whose caption is replaced on a beat, a headline whose lines come in on the beat, and the close in two
- * steps with a tagline.
+ * An edit list of the fixture site with the new pieces: a typed address (and, as hook 1, a typed question; hook 2 opens
+ * on a headline under the brand), a word cycle, a UI scene whose caption is replaced on a beat, a headline whose lines
+ * come in on the beat, and the close in two steps with a tagline.
  */
 function makeNewPiecesEdl(site: SiteData): Edl {
   const host = new URL(site.url).hostname.replace(/^www\./, '');
@@ -105,6 +105,7 @@ function makeNewPiecesEdl(site: SiteData): Edl {
     hooks: [
       [{ piece: 'TypeIn', beats: 4, variant: 'url', lines: [{ text: host, kind: 'framing' }] }],
       [{ piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [{ text: 'Where do my customers pay me?', kind: 'framing' }] }],
+      [{ piece: 'KineticHeadline', beats: 4, lines: [{ text: 'Sell on WhatsApp', kind: 'framing' }, { text: 'with no fees.', kind: 'framing', accent: 'no fees' }] }],
     ],
     body: [
       {
@@ -290,6 +291,15 @@ describe('the new pieces and the rhythm', () => {
     const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
     const close = (await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 0 })).find((s) => s.path === 'cta')!;
     expect(close.text.map((t) => t.text)).toEqual(['Your shop in one link.', 'Start free', new URL(site.url).hostname]);
+  });
+
+  it('opens on the brand name over the headline when the logo is a whole text header, and on the logo when it reads', async () => {
+    const opening = (await renderKeyframes({ edl: pieces, site, runDir: dir, format: '9x16', hook: 2 })).filter((s) => s.path === 'hooks[2][0]');
+    expect(checkStills(opening, pieces, site, '9x16', 2).filter((c) => !c.pass)).toEqual([]);
+    expect(textsOf(opening, 'hooks[2][0]')).toEqual(['Tiendita', 'Sell on WhatsApp', 'with no fees.']);
+    const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
+    const marked = await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 2 });
+    expect(textsOf(marked, 'hooks[2][0]')).toEqual(['Sell on WhatsApp', 'with no fees.']);
   });
 
   it('renders a typed question as hook 1 and its stills pass the code checks', async () => {

@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitHeadline, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
+import { fitHeadline, glyphOverhang, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -106,6 +106,15 @@ describe('captions that replace one another', () => {
   it('never sets them below the smallest size of the format', () => {
     const long = words('A caption far too long to be set at any readable size in this block');
     expect(layoutCaptions([words('Pro plan'), long], caption).size).toBe(TYPE['9x16'].min);
+  });
+});
+
+describe('the glyphs past the line', () => {
+  it('reaches past a tight line by half of what the glyphs (1.3 em) exceed it, above and below', () => {
+    expect(glyphOverhang(1)).toBeCloseTo(0.15);
+    expect(glyphOverhang(1.12)).toBeCloseTo(0.09);
+    expect(glyphOverhang(1.3)).toBe(0);
+    expect(glyphOverhang(1.5)).toBe(0);
   });
 });
 
