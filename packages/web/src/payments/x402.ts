@@ -70,20 +70,26 @@ const uint = z.string().regex(/^(0|[1-9][0-9]{0,77})$/);
 
 const PaymentSchema = z.object({
   x402Version: z.literal(2),
-  accepted: z.object({ network: z.literal(CELO), asset: z.string() }),
+  accepted: z.object({ network: z.literal(CELO), asset: z.string(), amount: uint, payTo: hex(40) }),
   payload: z.object({
-    authorization: z.object({ from: hex(40), value: uint, validAfter: uint, validBefore: uint, nonce: hex(64) }),
+    authorization: z.object({ from: hex(40), to: hex(40), value: uint, validAfter: uint, validBefore: uint, nonce: hex(64) }),
   }),
 });
 
-/** Null for anything else: another network, another token, another way of paying, or a payload that is not whole. */
+/**
+ * Null for anything else: another network, another token, another way of paying, a payload that is not whole, or an
+ * authorization that does not pay exactly the offer it claims to accept (another amount, or to another address). The
+ * facilitator checks this too; the service does not count on it.
+ */
 export function readSignedPayment(payment: PaymentPayload | DeepReadonly<PaymentPayload>): SignedPayment | null {
   const parsed = PaymentSchema.safeParse(payment);
   if (!parsed.success) return null;
   const { accepted, payload } = parsed.data;
   const symbol = SYMBOLS.find((s) => TOKENS[s].address.toLowerCase() === accepted.asset.toLowerCase());
   if (symbol === undefined) return null;
-  const { from, value, validAfter, validBefore, nonce } = payload.authorization;
+  const { from, to, value, validAfter, validBefore, nonce } = payload.authorization;
+  // Both amounts are whole numbers written without leading zeros, so equal text is an equal amount.
+  if (value !== accepted.amount || to.toLowerCase() !== accepted.payTo.toLowerCase()) return null;
   return {
     network: accepted.network,
     asset: TOKENS[symbol].address,

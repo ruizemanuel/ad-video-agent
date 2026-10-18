@@ -8,7 +8,7 @@ import { withX402 } from '@x402/next';
 import { NextRequest, NextResponse } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
-import { createResourceServer, formatPrice, readSignedPayment, routeConfig, type SignedPayment } from '../../../payments/x402';
+import { createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
 import { precheck } from '../../../precheck/precheck';
 import type { OrderRequest } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
@@ -45,6 +45,12 @@ function signedPayment(request: Request): SignedPayment | null {
   }
 }
 
+type OrderLink = { orderId: string; statusUrl: string };
+
+// The order each request's own verified payment made (or found), kept until its answer is written: if the settlement
+// then fails or ends in doubt, the answer still tells the payer where the order is.
+const ordersOfRequests = new WeakMap<Request, OrderLink>();
+
 /**
  * Makes the order of a verified payment. The same payment always gives the same order, so a client that sends it
  * again gets the order it already has. An answer of 400 or more cancels the settlement, so nothing is charged.
@@ -54,14 +60,23 @@ const createOrder =
   async (request: NextRequest): Promise<NextResponse> => {
     const payment = signedPayment(request);
     if (payment === null) {
-      return NextResponse.json({ error: 'invalid_payment', reason: 'The payment must be a USDT or USDC authorization on Celo.' }, { status: 400, headers: NO_STORE });
+      const reason = 'The payment must be a USDT or USDC authorization on Celo for the full price, to the address the quote names.';
+      return NextResponse.json({ error: 'invalid_payment', reason }, { status: 400, headers: NO_STORE });
     }
     const body = await readBody(request);
     if (!body.ok) return NextResponse.json({ error: 'invalid_request', reason: body.reason }, { status: 400, headers: NO_STORE });
     const { order } = await deps.store.createOrder({ request: body.order, ...payment });
-    const statusUrl = `${serviceBase(settings, request)}${ROUTE}/${order.id}`;
-    return NextResponse.json({ orderId: order.id, statusUrl }, { status: 202, headers: { ...NO_STORE, 'content-location': statusUrl } });
+    const link = { orderId: order.id, statusUrl: `${serviceBase(settings, request)}${ROUTE}/${order.id}` };
+    ordersOfRequests.set(request, link);
+    return NextResponse.json(link, { status: 202, headers: { ...NO_STORE, 'content-location': link.statusUrl } });
   };
+
+/** Runs after each settlement that went through. A settled payment with no order is money with nowhere to go: say so. */
+async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promise<void> {
+  if ((await markPaidAndStart(payment, { store: deps.store })) === 'unknown') {
+    console.error('[settled_without_order]', payment.asset, payment.payer, payment.nonce);
+  }
+}
 
 type PaidHandler = (request: NextRequest) => Promise<NextResponse>;
 
@@ -70,10 +85,20 @@ let paid: { deps: VideosDeps; handler: PaidHandler } | undefined;
 
 function paidHandler(deps: VideosDeps, settings: Env): PaidHandler {
   if (paid?.deps !== deps) {
-    const server = createResourceServer(settings, deps.facilitator, (payment) => markPaidAndStart(payment, { store: deps.store }));
+    const server = createResourceServer(settings, deps.facilitator, (payment) => paymentSettled(payment, deps));
     paid = { deps, handler: withX402(createOrder(deps, settings), { [ROUTE]: routeConfig(settings) }, server) };
   }
   return paid.handler;
+}
+
+/** A JSON body as an object, or an empty one when it is not. */
+async function jsonObject(res: Response): Promise<Record<string, unknown>> {
+  try {
+    const value: unknown = await res.json();
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -90,16 +115,26 @@ export async function POST(req: Request): Promise<Response> {
   if (!check.ok) return refuse(422, check.code, check.reason);
 
   const res = await paidHandler(deps, settings)(request);
-  if (res.status !== 402) return res;
+  // Only this request's own verified payment made an order: a payment the facilitator refused never got this far.
+  const made = ordersOfRequests.get(request);
+  if (res.status < 400 || (res.status !== 402 && made === undefined)) return res;
 
-  // The price is in the PAYMENT-REQUIRED header, for x402 clients. The body says it for whoever reads it.
+  // The status and the x402 headers stay as they are. The price is in the PAYMENT-REQUIRED header, for x402 clients;
+  // the body says it for whoever reads it. When the settlement failed or ended in doubt (a facilitator timeout) after
+  // the order was made, the body and Content-Location also say where the order is: it starts if the payment reaches
+  // the chain, and is given up as unpaid if it never does.
   const headers = new Headers(res.headers);
   headers.set('content-type', 'application/json');
+  headers.set('cache-control', 'no-store');
   headers.delete('content-length');
-  const quote = {
-    precheck: { thinSite: check.thin, ...(check.thin === true && { hint: THIN_HINT }) },
-    termsUrl: `${serviceBase(settings, request)}/terms`,
-    price: { amount: formatPrice(settings.PRICE_ATOMIC), assets: ['USDT', 'USDC'] },
-  };
-  return Response.json(quote, { status: 402, headers });
+  const answer =
+    res.status === 402
+      ? {
+          precheck: { thinSite: check.thin, ...(check.thin === true && { hint: THIN_HINT }) },
+          termsUrl: `${serviceBase(settings, request)}/terms`,
+          price: { amount: formatPrice(settings.PRICE_ATOMIC), assets: ['USDT', 'USDC'] },
+        }
+      : await jsonObject(res);
+  if (made !== undefined) headers.set('content-location', made.statusUrl);
+  return Response.json({ ...answer, ...made }, { status: res.status, headers });
 }

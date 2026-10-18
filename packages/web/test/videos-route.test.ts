@@ -13,7 +13,7 @@ import { TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
 import { FAKE_SETTLE_TX, FakeFacilitator } from './support/fake-facilitator';
-import { pay as payFor, type PaymentHeaders } from './support/pay';
+import { pay as payFor, type PaymentHeaders, type PayOptions } from './support/pay';
 
 vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_test' })) }));
 
@@ -48,7 +48,8 @@ const fetchPage = vi.fn(async (url: string): Promise<FetchedPage> => {
   const html = url.includes('login') ? loginHtml : url.includes('rich') ? richHtml : thinHtml;
   return { finalUrl: url, status: 200, html };
 });
-setVideosDeps({ store, llm, fetchPage, facilitator });
+const deps = { store, llm, fetchPage, facilitator };
+setVideosDeps(deps);
 
 const post = (body: unknown, headers: Record<string, string> = {}) =>
   new Request(`${BASE}/v1/videos`, {
@@ -58,7 +59,7 @@ const post = (body: unknown, headers: Record<string, string> = {}) =>
   });
 const json = async (res: Response | Promise<Response>) => (await res).json() as Promise<Record<string, unknown>>;
 /** Asks for the price of `body`, then signs what the 402 asks for, from a new wallet. */
-const pay = async (body: unknown = { url: U }, asset?: string): Promise<PaymentHeaders> => payFor(await POST(post(body)), { asset });
+const pay = async (body: unknown = { url: U }, options: PayOptions = {}): Promise<PaymentHeaders> => payFor(await POST(post(body)), options);
 /** The order a payment made, found the way the reconciliation finds it. */
 const orderOf = async (headers: PaymentHeaders) => {
   const payment = decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']);
@@ -68,7 +69,8 @@ const orderOf = async (headers: PaymentHeaders) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  facilitator.settles = true;
+  facilitator.verification = 'valid';
+  facilitator.settlement = 'success';
   facilitator.calls.verify = 0;
   facilitator.calls.settle = 0;
 });
@@ -176,7 +178,7 @@ describe('POST /v1/videos with a payment', () => {
   });
 
   it('takes USDC as well as USDT', async () => {
-    const res = await POST(post({ url: U }, await pay({ url: U }, TOKENS.USDC.address)));
+    const res = await POST(post({ url: U }, await pay({ url: U }, { asset: TOKENS.USDC.address })));
     expect(res.status).toBe(202);
     const { orderId } = (await res.json()) as { orderId: string };
     expect((await store.getOrder(orderId))!.asset).toBe(TOKENS.USDC.address);
@@ -191,14 +193,85 @@ describe('POST /v1/videos with a payment', () => {
     expect((await orderOf(headers))!.id).toBe(first.orderId);
   });
 
-  it('leaves the order awaiting settlement when settle fails', async () => {
+  it('leaves the order awaiting settlement when settle fails, and still tells the payer where it is', async () => {
     const headers = await pay();
-    facilitator.settles = false;
+    facilitator.settlement = 'failure';
     const res = await POST(post({ url: U }, headers));
     expect(res.status).toBe(402);
     expect(start).not.toHaveBeenCalled();
-    const order = await orderOf(headers);
+    const order = (await orderOf(headers))!;
     expect(order).toMatchObject({ status: 'awaiting_settlement', settleTx: null, runId: null, steps: {} });
+    const statusUrl = `${BASE}/v1/videos/${order.id}`;
+    expect(await res.json()).toMatchObject({ orderId: order.id, statusUrl, price: { amount: '5' } });
+    expect(res.headers.get('Content-Location')).toBe(statusUrl);
+    // What the facilitator said stays there for the x402 client.
+    expect(res.headers.get('PAYMENT-RESPONSE')).not.toBeNull();
+  });
+
+  it('tells the payer where the order is when the settlement times out, an outcome nobody knows yet', async () => {
+    const headers = await pay();
+    facilitator.settlement = 'timeout';
+    const res = await POST(post({ url: U }, headers));
+    expect(res.status).toBe(502);
+    expect(start).not.toHaveBeenCalled();
+    const order = (await orderOf(headers))!;
+    expect(order.status).toBe('awaiting_settlement');
+    const statusUrl = `${BASE}/v1/videos/${order.id}`;
+    expect(await res.json()).toMatchObject({ orderId: order.id, statusUrl });
+    expect(res.headers.get('Content-Location')).toBe(statusUrl);
+  });
+
+  it('answers the plain 402 to a payment the facilitator refuses, such as one sent again after it settled', async () => {
+    const headers = await pay();
+    facilitator.verification = 'invalid';
+    const res = await POST(post({ url: U }, headers));
+    expect(res.status).toBe(402);
+    expect(res.headers.get('Content-Location')).toBeNull();
+    const body = await res.json();
+    expect(body).toMatchObject({ termsUrl: `${BASE}/terms` });
+    expect(body).not.toHaveProperty('orderId');
+    expect(body).not.toHaveProperty('statusUrl');
+    expect(await orderOf(headers)).toBeNull();
+  });
+
+  it.each([
+    ['for less than the price', { amount: '1' }],
+    ['to another address', { payTo: `0x${'9'.repeat(40)}` }],
+  ])('refuses a payment signed %s, and never settles it', async (_label, signed) => {
+    const headers = await pay({ url: U }, { signed });
+    const res = await POST(post({ url: U }, headers));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Content-Location')).toBeNull();
+    const body = await res.json();
+    expect(body).toMatchObject({ error: 'invalid_payment' });
+    expect(body).not.toHaveProperty('orderId');
+    expect(facilitator.calls.settle).toBe(0);
+    expect(start).not.toHaveBeenCalled();
+    expect(await orderOf(headers)).toBeNull();
+  });
+
+  it('logs a settled payment that has no order, without starting anything', async () => {
+    // A store that cannot find the order the request has just made: the settlement then belongs to no order.
+    const forgetful = new Proxy(store, {
+      get(target, name) {
+        if (name === 'findOrderByPayment') return async () => null;
+        const value: unknown = Reflect.get(target, name);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    setVideosDeps({ ...deps, store: forgetful });
+    try {
+      const headers = await pay();
+      expect((await POST(post({ url: U }, headers))).status).toBe(202);
+      const { from, nonce } = (decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']).payload as { authorization: { from: string; nonce: string } })
+        .authorization;
+      expect(logged).toHaveBeenCalledWith('[settled_without_order]', TOKENS.USDT.address, from, nonce);
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      setVideosDeps(deps);
+      logged.mockRestore();
+    }
   });
 
   it('never looks at the payment of a site that fails the pre-check, so it is never charged', async () => {

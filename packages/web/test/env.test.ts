@@ -144,8 +144,23 @@ describe('parseEnv', () => {
     ['CELO_RPC_URL', 'forno'],
     ['AD_AGENT_ADAPTERS', 'both'],
     ['DEV_MODE', 'yes'],
+    ['ERC8021_CODE', 'Celo_Event'],
+    ['ERC8021_CODE', 'celo-event'],
+    ['ERC8021_CODE', 'celo event'],
+    ['ERC8021_CODE', 'a'.repeat(33)],
   ])('rejects %s = %s', (name, value) => {
     expect(() => parseEnv({ ...real, [name]: value })).toThrow(name);
+  });
+
+  // The format both the x402 builder-code extension and @celo/attribution-tags accept: 1 to 32 of [a-z0-9_].
+  it('takes an ERC-8021 code in the format Celo hands out', () => {
+    expect(parseEnv({ ...real, ERC8021_CODE: 'celo_b7k3p9da' }).ERC8021_CODE).toBe('celo_b7k3p9da');
+    expect(parseEnv({ ...real, ERC8021_CODE: 'a'.repeat(32) }).ERC8021_CODE).toBe('a'.repeat(32));
+  });
+
+  it('says what an ERC-8021 code must look like, without printing the one it got', () => {
+    expect(() => parseEnv({ ...real, ERC8021_CODE: 'Celo-Event-2026' })).toThrow(/ERC8021_CODE: .*lowercase letters, digits or underscores/);
+    expect(() => parseEnv({ ...real, ERC8021_CODE: 'Celo-Event-2026' })).not.toThrow(/Celo-Event-2026/);
   });
 
   it('names the variable that is wrong and never prints what it held', () => {

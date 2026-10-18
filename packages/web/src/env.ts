@@ -67,8 +67,16 @@ const schema = z
     BUY_DAILY_CAP_USD: blank(positive.default(2)),
     REFUND_DAILY_CAP_USD: blank(positive.default(10)),
     CELO_RPC_URL: blank(httpUrl.default('https://forno.celo.org')),
-    /** The ERC-8021 tag. The hackathon assigns it, so it is optional: without it, nothing is tagged. */
-    ERC8021_CODE: blank(z.string().min(1).optional()),
+    /**
+     * The ERC-8021 tag. The hackathon assigns it, so it is optional: without it, nothing is tagged. Its format is the
+     * one the x402 builder-code extension and @celo/attribution-tags both accept.
+     */
+    ERC8021_CODE: blank(
+      z
+        .string()
+        .regex(/^[a-z0-9_]{1,32}$/, 'must be 1 to 32 lowercase letters, digits or underscores')
+        .optional(),
+    ),
     /** `real` for the service; `fake` only in tests. */
     AD_AGENT_ADAPTERS: blank(z.enum(['real', 'fake']).default('real')),
     /** The folder the fake adapters keep their files in: the tests make a temporary one. */
