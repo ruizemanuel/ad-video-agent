@@ -153,7 +153,9 @@ export type TrackChoice = { chosen: number | null; rejected: { index: number; re
 
 const MAX_BPM_DEVIATION = 0.15; // of the requested tempo: further than this and the cuts would have to move too much
 const MAX_RESIDUAL_MS = 30;
-const MAX_FIRST_BEAT_SECONDS = 1;
+// The render cuts the track from its first beat, so a short intro costs nothing; this only keeps out a track that
+// takes long to get going.
+const MAX_FIRST_BEAT_SECONDS = 2;
 const MIN_START_RMS_DB = -30;
 
 // The first check a track fails, if any.

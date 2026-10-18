@@ -203,7 +203,7 @@ describe('chooseTrack', () => {
       [
         { ...ok(-20), measuredBpm: 140 },
         { ...ok(-20), beatResidualMs: 45 },
-        { ...ok(-20), firstBeat: 1.4 },
+        { ...ok(-20), firstBeat: 2.4 },
         { ...ok(-20), startRmsDb: -40 },
         ok(-20),
         ok(-16),
@@ -234,8 +234,14 @@ describe('chooseTrack', () => {
     expect(reasons([{ ...ok(-16), measuredBpm: 114 }], 100)).toEqual([]);
   });
 
+  it('accepts a short intro: the render cuts the track from its first beat', () => {
+    // 1.4 s and 1.115 s (the cobrame track the user chose by ear) are fine; 2.1 s is not.
+    expect(reasons([{ ...ok(-16), firstBeat: 1.4 }, { ...ok(-16), firstBeat: 1.115 }])).toEqual([]);
+    expect(reasons([{ ...ok(-16), firstBeat: 2.1 }])).toEqual(['late-start']);
+  });
+
   it('keeps tracks that sit exactly on a limit', () => {
-    const onTheLimit = { ...ok(-16), beatResidualMs: 30, firstBeat: 1, startRmsDb: -30, seconds: 21 };
+    const onTheLimit = { ...ok(-16), beatResidualMs: 30, firstBeat: 2, startRmsDb: -30, seconds: 22 };
     expect(chooseTrack([onTheLimit], 112, 20)).toEqual({ chosen: 0, rejected: [] });
   });
 
