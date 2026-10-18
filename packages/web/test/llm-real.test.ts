@@ -174,3 +174,40 @@ describe('GatewayLlm.classifySite', () => {
     expect((await llm.classifySite(page)).usd).toBeCloseTo((1000 * 2 + 500 * 10) / 1e6, 9);
   });
 });
+
+// Providers reject some JSON Schema keywords in structured output (bounds, patterns, formats): no call sends them, and
+// the answer is still held to the whole zod schema.
+describe('GatewayLlm: the schema each call sends', () => {
+  const BOUND = /"(exclusiveMinimum|exclusiveMaximum|minimum|maximum|multipleOf|minLength|maxLength|minItems|maxItems|pattern|format)"/;
+  const items = judgeItems(edlShop());
+  const problem: Problem = { where: 'body[1]', rule: 'structure', detail: 'x' };
+  const calls: [string, (llm: GatewayLlm) => Promise<unknown>, unknown][] = [
+    ['writeEdl', (llm) => llm.writeEdl({ site: siteShop(), images: [] }), edlShop()],
+    ['patchEdl', (llm) => llm.patchEdl({ edl: edlShop(), problems: [problem], site: siteShop() }), { patches: [], claimFixes: [] }],
+    ['judge', (llm) => llm.judge(items), { verdicts: [], framing: [] }],
+    ['classifySite', (llm) => llm.classifySite({ url: 'https://tiendita.example/', title: 'T', text: 'x' }), { admissible: true, reason: 'ok' }],
+  ];
+
+  it.each(calls)('%s sends a schema with no bound keyword', async (_name, run, reply) => {
+    const { llm, call } = adapter(answer(JSON.stringify(reply)));
+    await run(llm);
+    const format = call().responseFormat;
+    if (format?.type !== 'json' || format.schema === undefined) throw new Error('no JSON schema was sent');
+    expect(JSON.stringify(format.schema)).not.toMatch(BOUND);
+  });
+
+  it('keeps the descriptions of the edit list in the schema the director gets', async () => {
+    const { llm, call } = adapter(answer(JSON.stringify(edlShop())));
+    await llm.writeEdl({ site: siteShop(), images: [] });
+    const format = call().responseFormat;
+    expect(JSON.stringify(format?.type === 'json' ? format.schema : undefined)).toContain('hooks[0] is the main version');
+  });
+
+  it('holds the answer to the whole edit list schema: a bpm of 0 is not an edit list', async () => {
+    const { llm } = adapter(answer(JSON.stringify({ ...edlShop(), bpm: 0 }), billed('0.17')));
+    const failure = await llm.writeEdl({ site: siteShop(), images: [] }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelOutputInvalid);
+    // The gateway's bill is not in the error the SDK throws: the call is priced from its tokens.
+    expect((failure as ModelOutputInvalid).usd).toBeCloseTo((1000 * 4 + 500 * 20) / 1e6, 9);
+  });
+});

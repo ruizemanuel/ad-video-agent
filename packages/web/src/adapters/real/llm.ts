@@ -1,6 +1,7 @@
 // The LlmPort over the Vercel AI Gateway, with the AI SDK. A model is named "provider/model" and the gateway signs in
 // with the deployment's OIDC token: there is no key here. Every call asks for structured output (generateText with
-// Output.object) and says what it cost: what the gateway billed, or, when it does not say, the price of its tokens.
+// Output.object, over a provider-safe schema) and says what it cost: what the gateway billed, or, when it does not say,
+// the price of its tokens.
 import { EdlSchema } from '@app/core';
 import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, type LanguageModel, type LanguageModelUsage, type UserContent } from 'ai';
 import type { z } from 'zod';
@@ -9,6 +10,7 @@ import { DIRECTOR_SYSTEM, directorRequest } from '../../prompts/director';
 import { JUDGE_OUTPUT, JUDGE_SYSTEM, judgePrompt } from '../../prompts/judge';
 import { PATCH_OUTPUT, PATCH_SYSTEM, patchPrompt } from '../../prompts/patch';
 import { ModelOutputInvalid, type LlmPort } from '../../ports';
+import { modelSchema } from './provider-safe-schema';
 
 /** The AI Gateway's ids of the models each call uses (checked on 17/10/2026). The corrector is the director's model. */
 export const MODELS = {
@@ -122,7 +124,8 @@ export class GatewayLlm implements LlmPort {
       model: this.model(id),
       instructions,
       messages: [{ role: 'user', content }],
-      output: Output.object({ schema, name }),
+      // Without the keywords providers reject; the answer is still held to the whole zod schema.
+      output: Output.object({ schema: modelSchema(schema), name }),
       maxOutputTokens,
     }).catch((error: unknown) => {
       if (NoObjectGeneratedError.isInstance(error)) throw invalid(priced(id, error.usage));
