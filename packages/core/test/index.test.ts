@@ -12,12 +12,16 @@ import type {
   Line,
   PieceName,
   Problem,
+  RejectReason,
   Scene,
   ScenePatch,
   Shot,
   SiteData,
   SiteFont,
   TimedScene,
+  TrackChoice,
+  TrackMeasure,
+  Wav,
 } from '../src/index';
 
 export type PublicTypes = [
@@ -31,12 +35,16 @@ export type PublicTypes = [
   Line,
   PieceName,
   Problem,
+  RejectReason,
   Scene,
   ScenePatch,
   Shot,
   SiteData,
   SiteFont,
   TimedScene,
+  TrackChoice,
+  TrackMeasure,
+  Wav,
 ];
 
 describe('@app/core public surface', () => {
@@ -57,9 +65,13 @@ describe('@app/core public surface', () => {
         'WIPE_FRAMES',
         'applyPatches',
         'beatsToFrames',
+        'chooseTrack',
         'contrast',
         'judgeItems',
         'layoutScenes',
+        'measureTrack',
+        'musicPrompt',
+        'parseWav',
         'retimeForBpm',
         'scenePaths',
         'settledFrame',

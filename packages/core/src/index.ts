@@ -2,6 +2,7 @@ export * from './banned-phrases';
 export * from './brand';
 export * from './edl';
 export * from './formats';
+export * from './music';
 export * from './site';
 export * from './timing';
 export * from './validate';
