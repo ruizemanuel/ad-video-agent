@@ -6,6 +6,8 @@ const USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e';
 const USDC = '0xcebA9300f2b948710d2653dD7B07f33A8B32118C';
 const PAYER = '0x1234567890AbcdEF1234567890aBcdef12345678';
 const NONCE = `0x${'AB'.repeat(32)}`;
+/** The wallet buy's quote says to pay. */
+const BUY_PAY_TO = '0x20faAca5F980E29639A0FCC6dcA6988E18ed333B';
 
 let counter = 0;
 const uniqueNonce = () => `0x${(++counter).toString(16).padStart(64, '0')}`;
@@ -374,6 +376,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           status: 'intent',
           asset: null,
           amount: null,
+          payTo: null,
           txHash: null,
           authorization: null,
           pollUrl: null,
@@ -389,6 +392,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         await s.updatePayment(`${order.id}:vm`, {
           asset: USDT,
           amount: 67_011n,
+          payTo: BUY_PAY_TO,
           txHash: '0xabc',
           authorization: { from: PAYER, nonce: NONCE, validAfter: '0', validBefore: '1790000000' },
           pollUrl: 'https://usebuy.ai/google/vm/abc',
@@ -400,6 +404,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           reason: '5xx',
           asset: USDT,
           amount: 67_011n,
+          payTo: BUY_PAY_TO,
           txHash: '0xabc',
           authorization: { from: PAYER, nonce: NONCE, validAfter: '0', validBefore: '1790000000' },
           pollUrl: 'https://usebuy.ai/google/vm/abc',

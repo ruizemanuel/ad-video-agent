@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createAdapters } from '../src/adapters';
+import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FileStore } from '../src/adapters/fake/store';
 import { VercelBlob } from '../src/adapters/real/blob';
+import { CeloBuy } from '../src/adapters/real/buy';
 import { DrizzleStore } from '../src/adapters/real/store';
 import { parseEnv } from '../src/env';
 
@@ -37,11 +39,12 @@ const order = {
 };
 
 describe('createAdapters on the fake adapters', () => {
-  it('gives a file-backed store and blob over FAKE_DIR', async () => {
+  it('gives a file-backed store and blob over FAKE_DIR, and the buy double', async () => {
     const dir = await tempDir();
-    const { store, blob } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
+    const { store, blob, buy } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
     expect(store).toBeInstanceOf(FileStore);
     expect(blob).toBeInstanceOf(FileBlob);
+    expect(buy).toBeInstanceOf(FakeBuy);
   });
 
   it('shares what it keeps with the next adapters over the same directory, as a test and the flow it runs do', async () => {
@@ -60,7 +63,7 @@ describe('createAdapters on the fake adapters', () => {
 });
 
 describe('createAdapters on the real adapters', () => {
-  it('gives the Postgres store and the Vercel Blob adapter, built from the settings and not yet used', async () => {
+  it('gives the Postgres store, the Vercel Blob adapter and buy on Celo, built from the settings and not yet used', async () => {
     const settings = parseEnv({
       ...common,
       DATABASE_URL: 'memory',
@@ -72,9 +75,10 @@ describe('createAdapters on the real adapters', () => {
       PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
       GITHUB_REPO: 'ruizemanuel/ad-video-agent',
     });
-    const { store, blob } = await createAdapters(settings);
+    const { store, blob, buy } = await createAdapters(settings);
     expect(store).toBeInstanceOf(DrizzleStore);
     expect(blob).toBeInstanceOf(VercelBlob);
+    expect(buy).toBeInstanceOf(CeloBuy);
     expect(await store.getOrder('ord_doesnotexist')).toBeNull();
   });
 });
@@ -93,6 +97,23 @@ describe('getAdapters', () => {
     const [first, second] = [await getAdapters(), await getAdapters()];
     expect(second).toBe(first);
     expect(await Promise.all([getAdapters(), getAdapters()])).toEqual([first, first]);
+  });
+
+  it('gives the cron routes the same adapters, buy included', async () => {
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
+    vi.stubEnv('FAKE_DIR', await tempDir());
+    for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
+    const { getAdapters } = await import('../src/adapters');
+    const { cronDeps } = await import('../src/app/api/cron/deps');
+    const { store, blob, buy } = await getAdapters();
+    const deps = await cronDeps();
+    expect(deps.store).toBe(store);
+    expect(deps.blob).toBe(blob);
+    expect(deps.buy).toBe(buy);
+    // It answers, where the cron used to get a buy that always failed.
+    vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ settled: 'settled' }));
+    const authorization = { from: order.payer, nonce: order.nonce, validAfter: '0', validBefore: '1790000000' };
+    expect(await deps.buy.authorizationSettled({ asset: order.asset, authorization, to: common.PAYTO_ADDRESS, value: order.amount })).toBe('settled');
   });
 
   it('rejects, instead of throwing, when the environment is wrong', async () => {

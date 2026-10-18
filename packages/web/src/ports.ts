@@ -1,8 +1,8 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
 // VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
-// models, as far as the tasks so far use them) and the BuyPort (what the chain says about a payment, so far); the
-// other ports arrive with the tasks that use them.
+// models, as far as the tasks so far use them) and the BuyPort (renting the VM, following it, and what the chain says
+// about a payment); the other ports arrive with the tasks that use them.
 import type { OrderRequestSchema, VmTaskKind } from '@app/core';
 import type { z } from 'zod';
 
@@ -120,8 +120,10 @@ export type PaymentRecord = {
   maxAtomic: bigint;
   status: PaymentStatus;
   asset: string | null;
-  /** What was really paid. */
+  /** What the signed authorization pays (buy's quote), in atomic units of `asset`. Written before it goes out. */
   amount: bigint | null;
+  /** Who the authorization pays: the wallet in buy's quote. With `amount`, what the chain is asked about later. */
+  payTo: string | null;
   txHash: string | null;
   authorization: PaymentAuthorization | null;
   /** The VM's tracking URL. It cannot be recovered, so it is kept as soon as it arrives. */
@@ -227,12 +229,71 @@ export interface BlobPort {
 /** What the chain says about the payment an authorization was signed for. See `BuyPort.authorizationSettled`. */
 export type AuthorizationSettlement = 'settled' | 'unsettled' | 'unknown';
 
-/** Buy, as far as the tasks so far use it: renting the VM and following it arrive with the task that pays for it. */
+/** What the service sends buy for a VM. The script is the VM's whole start-up: buy runs it as root. */
+export type VmRequest = { script: string; machineType: string };
+
+/** A payment for a VM as signed, in the moment before it goes out: the quote it pays and the authorization. */
+export type SignedVmPayment = {
+  /** The token's address. */
+  asset: string;
+  /** In atomic units of `asset`: exactly what the authorization lets buy take. */
+  amount: bigint;
+  /** The wallet the authorization pays. */
+  payTo: string;
+  authorization: PaymentAuthorization;
+};
+
+/**
+ * What became of a paid request to buy. `confirmed` is a 2xx: the VM was served. `rejected` (a 4xx, or a payment buy did
+ * not take) and `ambiguous` (a 5xx, or no answer at all) may still have settled: they are resolved on the chain, never
+ * paid again.
+ */
+export type VmPaymentOutcome = 'confirmed' | 'rejected' | 'ambiguous';
+
+export type VmPaymentInfo = {
+  asset: string;
+  amount: bigint;
+  txHash?: string;
+  authorization: PaymentAuthorization;
+  /** The VM's tracking URL, on buy's own origin. */
+  poll?: string;
+  outcome: VmPaymentOutcome;
+  /** ISO-8601: when the answer came (or did not). */
+  timestamp: string;
+};
+
+export type RentVmInput = {
+  body: VmRequest;
+  /** The most the service pays, in atomic units: a dearer quote is refused before anything is signed. */
+  maxAtomic: bigint;
+  /** Runs once the payment is signed, right before it goes out. If it throws, nothing is sent. */
+  beforePayment(payment: SignedVmPayment): Promise<void>;
+  /** Runs once after a payment went out, whatever came of it. If it throws, `rentVm` throws. */
+  onPayment(info: VmPaymentInfo): Promise<void>;
+};
+
+/** `not_paid`: nothing went out (the quote was refused, `beforePayment` threw, buy never asked to be paid). */
+export type RentVmResult = { outcome: VmPaymentOutcome | 'not_paid'; reason?: string };
+
+/** What buy says about a rented VM; `gone` when buy no longer knows it. */
+export type VmPoll = { gone: true } | { gone: false; vmStatus: string | null; scriptStatus: string | null; expiresAt: string | null };
+
+/** Buy, the x402 marketplace on Celo: the VM it rents, and what the chain says about a payment. */
 export interface BuyPort {
   /**
-   * Whether the payment an order was made for reached the service. It is not enough that the authorization's nonce was
-   * spent: a nonce belongs to the payer and says nothing of who is paid or how much, so the payer can spend it on a
-   * transfer to themselves, and the service's settlement then fails. `asset` is the token's address, `to` the address
+   * Rents a VM from buy and pays for it at most once: a paid request is never sent again, whatever its answer. It throws
+   * only when a hook does; otherwise every way it ends is in the result and in the hooks.
+   */
+  rentVm(input: RentVmInput): Promise<RentVmResult>;
+
+  /** A free look at a rented VM, by the tracking URL buy gave when it was paid. */
+  pollVm(url: string): Promise<VmPoll>;
+
+  /**
+   * Whether the payment an authorization was signed for reached who it pays: the service, for an order; buy, for a VM.
+   * It is not enough that the authorization's nonce was spent: a nonce belongs to the payer and says nothing of who is
+   * paid or how much, so the payer can spend it on a transfer to themselves (or cancel it), and the settlement then
+   * fails. `asset` is the token's address, `to` the address
    * that has to be paid (compared whatever the case of the hex) and `value` the least it has to receive, in atomic units.
    * - `settled`: the transaction that spent the nonce moved at least `value` of `asset` from `authorization.from` to `to`.
    * - `unsettled`: that payment did not happen. The nonce is not spent yet (it may still be, until `validBefore`) or it

@@ -190,6 +190,9 @@ importers:
       '@app/core':
         specifier: workspace:*
         version: link:../core
+      '@celo/buy-core':
+        specifier: 0.8.3
+        version: 0.8.3(typescript@7.0.2)(zod@4.6.7)
       '@electric-sql/pglite':
         specifier: 0.5.10
         version: 0.5.10
@@ -320,6 +323,9 @@ packages:
     resolution: {integrity: sha512-dI+9P7cfWxkTQ+oE+7Aa6onEn92PHgfWXZivjNheCRmTBDBf2fx6RyTi0cmgpYLnD1KLZK9ZYrMxaPZ4oiXhGA==}
     cpu: [x64]
     os: [win32]
+
+  '@celo/buy-core@0.8.3':
+    resolution: {integrity: sha512-auqWNYQaC4kC6mB+piX+3vcjQDDK34i3f3Q/SlCKmqVEQdivXwJSU2gl4oEczT8vhTHgaVoiU6SH5VrKqihijw==}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -3566,6 +3572,15 @@ snapshots:
 
   '@cbor-extract/cbor-extract-win32-x64@2.2.2':
     optional: true
+
+  '@celo/buy-core@0.8.3(typescript@7.0.2)(zod@4.6.7)':
+    dependencies:
+      viem: 2.57.7(typescript@7.0.2)(zod@4.6.7)
+    transitivePeerDependencies:
+      - bufferutil
+      - typescript
+      - utf-8-validate
+      - zod
 
   '@drizzle-team/brocli@0.10.2': {}
 

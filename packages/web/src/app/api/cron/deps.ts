@@ -5,14 +5,6 @@ import type { BlobPort, BuyPort, OrderStore } from '../../../ports';
 
 export type CronDeps = { store: OrderStore; blob: BlobPort; buy: BuyPort };
 
-// There is no real adapter for buy yet. Until there is, asking about a settlement fails; the reconciliation logs it
-// and leaves the order as it is, and goes on with everything else it does.
-const noBuy: BuyPort = {
-  authorizationSettled: async () => {
-    throw new Error('The buy adapter is not configured yet.');
-  },
-};
-
 let given: CronDeps | undefined;
 let built: Promise<CronDeps> | undefined;
 
@@ -23,6 +15,6 @@ export function setCronDeps(deps: CronDeps | undefined): void {
 
 export async function cronDeps(): Promise<CronDeps> {
   if (given !== undefined) return given;
-  built ??= getAdapters().then(({ store, blob }) => ({ store, blob, buy: noBuy }));
+  built ??= getAdapters().then(({ store, blob, buy }) => ({ store, blob, buy }));
   return built;
 }

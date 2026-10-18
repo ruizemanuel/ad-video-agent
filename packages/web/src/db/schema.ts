@@ -92,6 +92,7 @@ export const payments = pgTable('payments', {
   status: text('status').$type<PaymentStatus>().notNull().default('intent'),
   asset: text('asset'),
   amount: units('amount'),
+  payTo: text('pay_to'),
   txHash: text('tx_hash'),
   authorization: jsonb('authorization').$type<PaymentAuthorization>(),
   pollUrl: text('poll_url'),

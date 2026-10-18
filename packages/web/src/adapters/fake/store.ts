@@ -268,6 +268,7 @@ export class FileStore implements OrderStore {
         status: 'intent',
         asset: null,
         amount: null,
+        payTo: null,
         txHash: null,
         authorization: null,
         pollUrl: null,

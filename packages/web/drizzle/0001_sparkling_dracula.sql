@@ -1,0 +1,1 @@
+ALTER TABLE "payments" ADD COLUMN "pay_to" text;
