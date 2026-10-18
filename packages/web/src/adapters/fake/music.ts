@@ -31,15 +31,15 @@ export class FakeMusic implements MusicPort {
   readonly prompts: string[] = [];
   /** The WAV files the next calls give back, one each, in order. */
   queue: Uint8Array[] = [];
-  /** The call (counting from 1) that fails, as a provider's error does. */
-  failAt: number | undefined;
+  /** The calls (counting from 1) that fail, as a provider's error does: nothing is billed for them. */
+  failAt: number[] = [];
   /** What each call costs. */
   usd = 0.08;
 
   async generate(prompt: string): ReturnType<MusicPort['generate']> {
     this.calls += 1;
     this.prompts.push(prompt);
-    if (this.calls === this.failAt) throw new Error('Lyria is down');
+    if (this.failAt.includes(this.calls)) throw new Error('Lyria is down');
     return { wav: this.queue.shift() ?? suitedTrack(prompt), model: 'lyria-3.5', usd: this.usd };
   }
 }

@@ -15,6 +15,7 @@ import type {
   SiteData,
   VmTaskKind,
 } from '@app/core';
+import { FatalError } from 'workflow';
 import type { z } from 'zod';
 
 export type OrderRequest = z.infer<typeof OrderRequestSchema>;
@@ -368,10 +369,24 @@ export interface LlmPort {
  */
 export interface MusicPort {
   /**
-   * One track for the prompt, as a WAV file. It fails for good (a `FatalError`, which is not retried) when what came back
-   * is not a WAV; any other failure is the provider's and may be tried again.
+   * One track for the prompt, as a WAV file. When Lyria answered but not with a WAV it throws `MusicOutputInvalid`: the
+   * call was billed, and it is not retried. Any other failure is the provider's, and the call was not billed.
    */
   generate(prompt: string): Promise<{ wav: Uint8Array; model: 'lyria-3.5'; usd: number }>;
+}
+
+/**
+ * Lyria answered, but not with a WAV file (it sent nothing, or another format). The call was still billed: `usd` is what
+ * it cost, and the caller records it. It is a `FatalError`, so a workflow step does not run it again: the same call would
+ * be billed again for the same kind of answer. (It keeps the name `FatalError`, which is what the runtime looks for.)
+ */
+export class MusicOutputInvalid extends FatalError {
+  constructor(
+    message: string,
+    readonly usd: number,
+  ) {
+    super(message);
+  }
 }
 
 /**
