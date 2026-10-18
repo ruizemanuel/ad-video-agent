@@ -22,7 +22,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { parseTransaction, serializeTransaction, type TransactionSerializableCIP64 } from 'viem/celo';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CeloRefunds, DEAD_AFTER_BLOCKS, MAX_REFUND_FEE_ATOMIC, type CeloRefundsSettings } from '../src/adapters/real/refunds';
+import { CeloRefunds, MAX_REFUND_FEE_ATOMIC, NONCE_CHECK_BLOCKS_BACK, type CeloRefundsSettings } from '../src/adapters/real/refunds';
 import { FEE_ADAPTERS, TOKENS } from '../src/payments/tokens';
 import { FeeTooHigh, InsufficientBalance } from '../src/ports';
 
@@ -80,8 +80,12 @@ class FakeNode {
   /** The wallet's next nonce counting what waits in the pool, and counting only what was mined. */
   pendingNonce = 7n;
   minedNonce = 7n;
-  /** The mined transactions, by hash. */
+  /** The latest block that is safe (derived from L1 data, which will not reorg). */
+  safe = 79_999_950n;
+  /** The mined transactions, by hash; with the block they are in (below the safe head unless set) and who sent them. */
   readonly receipts = new Map<string, 'success' | 'reverted'>();
+  readonly receiptBlocks = new Map<string, bigint>();
+  readonly receiptSenders = new Map<string, Address>();
   readonly calls: { method: string; params: unknown[] }[] = [];
   readonly sent: Hex[] = [];
 
@@ -110,8 +114,10 @@ class FakeNode {
         return numberToHex(params[1] === 'pending' ? this.pendingNonce : this.minedNonce);
       case 'eth_blockNumber':
         return numberToHex(this.head);
-      case 'eth_getBlockByNumber':
-        return { number: '0x4c4b400', hash: `0x${'22'.repeat(32)}`, timestamp: '0x6700', baseFeePerGas: '0x5d21dba00', transactions: [] };
+      case 'eth_getBlockByNumber': {
+        const number = params[0] === 'safe' ? this.safe : this.head;
+        return { number: numberToHex(number), hash: `0x${'22'.repeat(32)}`, timestamp: '0x6700', baseFeePerGas: '0x5d21dba00', transactions: [] };
+      }
       // Asked without a fee currency, these would price the gas in CELO, which the wallet does not hold.
       case 'eth_gasPrice':
         return this.inFeeCurrency(params, this.gasPrice);
@@ -165,8 +171,8 @@ class FakeNode {
       transactionHash: hash,
       transactionIndex: '0x0',
       blockHash: `0x${'33'.repeat(32)}`,
-      blockNumber: '0x4c4b401',
-      from: WALLET,
+      blockNumber: numberToHex(this.receiptBlocks.get(hash.toLowerCase()) ?? this.safe - 50n),
+      from: this.receiptSenders.get(hash.toLowerCase()) ?? WALLET,
       to: TOKENS.USDT.address,
       cumulativeGasUsed: '0x1',
       gasUsed: '0x1',
@@ -248,11 +254,12 @@ describe('CeloRefunds.prepare', () => {
     expect(same(parseCip64(rawTx).feeCurrency, FEE_ADAPTERS.USDT)).toBe(true);
   });
 
-  it('is signed by the refund wallet, and its hash is the one the chain will give it', async () => {
-    const { hash, rawTx } = await adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+  it('is signed by the refund wallet, its hash is the one the chain will give it, and its nonce comes with it', async () => {
+    const { hash, rawTx, nonce } = await adapter().prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
     expect(hash).toBe(keccak256(rawTx));
     expect(await signerOf(rawTx)).toBe(WALLET);
     expect(parseCip64(rawTx).nonce).toBe(7);
+    expect(nonce).toBe(7);
   });
 
   it('estimates the gas and prices it in the fee currency, never in CELO', async () => {
@@ -398,41 +405,66 @@ describe('CeloRefunds.broadcast', () => {
     },
   );
 
-  it('throws any other refusal, with the node\'s reason', async () => {
+  it.each(['replacement transaction underpriced', 'unknown transaction type', 'insufficient funds for gas'])(
+    'throws any other refusal ("%s"), with the node\'s reason',
+    async (answer) => {
+      const refunds = adapter();
+      const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
+      node.sendRefusal = answer;
+      await expect(refunds.broadcast(rawTx)).rejects.toThrow(answer);
+    },
+  );
+});
+
+describe('CeloRefunds.nonceUsed', () => {
+  it('reads the wallet\'s nonce well behind the head, and says whether it is past the one asked about', async () => {
     const refunds = adapter();
-    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
-    node.sendRefusal = 'replacement transaction underpriced';
-    await expect(refunds.broadcast(rawTx)).rejects.toThrow('replacement transaction underpriced');
+    expect(await refunds.nonceUsed(7)).toBe(false);
+    node.minedNonce = 8n;
+    node.calls.length = 0;
+    expect(await refunds.nonceUsed(7)).toBe(true);
+    expect(await refunds.nonceUsed(8)).toBe(false);
+    expect(NONCE_CHECK_BLOCKS_BACK).toBeGreaterThanOrEqual(30n);
+    const count = node.calls.find((call) => call.method === 'eth_getTransactionCount');
+    expect(count?.params).toEqual([WALLET, numberToHex(node.head - NONCE_CHECK_BLOCKS_BACK)]);
   });
 });
 
-describe('CeloRefunds.dead', () => {
-  it('is false while the wallet has not used the transaction\'s nonce', async () => {
+describe('CeloRefunds.minedSafely', () => {
+  it('is true for a transaction of the refunds\' wallet mined at or below the safe head, whatever came of it', async () => {
     const refunds = adapter();
-    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
-    expect(await refunds.dead(rawTx)).toBe(false);
+    const hash = keccak256('0x01');
+    node.receipts.set(hash, 'success');
+    node.receiptBlocks.set(hash, node.safe);
+    expect(await refunds.minedSafely(hash)).toBe(true);
+    node.receipts.set(hash, 'reverted');
+    expect(await refunds.minedSafely(hash)).toBe(true);
   });
 
-  it('is true when the nonce was used, blocks back, by a transaction that is not this one', async () => {
+  it('is false above the safe head: that block may still be undone', async () => {
     const refunds = adapter();
-    const { rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
-    node.minedNonce = 8n;
-    node.calls.length = 0;
-    expect(await refunds.dead(rawTx)).toBe(true);
-    // The nonce first, at a block well behind the head (a node a little behind still has it), then the receipt: a
-    // transaction mined between the two reads is found by the second.
-    expect(node.methods()).toEqual(['eth_blockNumber', 'eth_getTransactionCount', 'eth_getTransactionReceipt']);
-    const count = node.calls.find((call) => call.method === 'eth_getTransactionCount');
-    expect(count?.params).toEqual([WALLET, numberToHex(node.head - DEAD_AFTER_BLOCKS)]);
-    expect(DEAD_AFTER_BLOCKS).toBeGreaterThanOrEqual(30n);
+    const hash = keccak256('0x02');
+    node.receipts.set(hash, 'success');
+    node.receiptBlocks.set(hash, node.safe + 1n);
+    expect(await refunds.minedSafely(hash)).toBe(false);
   });
 
-  it('is false when this transaction is the one that used the nonce', async () => {
+  it('is false with no receipt, and for a transaction another wallet sent', async () => {
     const refunds = adapter();
-    const { hash, rawTx } = await refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n });
-    node.minedNonce = 8n;
-    node.receipts.set(hash.toLowerCase(), 'success');
-    expect(await refunds.dead(rawTx)).toBe(false);
+    expect(await refunds.minedSafely(keccak256('0x03'))).toBe(false);
+    const hash = keccak256('0x04');
+    node.receipts.set(hash, 'success');
+    node.receiptSenders.set(hash, PAYER);
+    expect(await refunds.minedSafely(hash)).toBe(false);
+  });
+
+  it('reads the receipt first and the safe head after it', async () => {
+    const refunds = adapter();
+    const hash = keccak256('0x05');
+    node.receipts.set(hash, 'success');
+    await refunds.minedSafely(hash);
+    expect(node.methods()).toEqual(['eth_getTransactionReceipt', 'eth_getBlockByNumber']);
+    expect(node.calls[1]?.params[0]).toBe('safe');
   });
 });
 
@@ -464,7 +496,8 @@ describe('CeloRefunds keeps its key and the RPC URL to itself', () => {
       refunds.prepare({ to: PAYER, asset: TOKENS.USDT.address, amount: 50_000n }).catch((error: unknown) => error),
       refunds.broadcast(rawTx).catch((error: unknown) => error),
       refunds.receipt(hash).catch((error: unknown) => error),
-      refunds.dead(rawTx).catch((error: unknown) => error),
+      refunds.nonceUsed(7).catch((error: unknown) => error),
+      refunds.minedSafely(hash).catch((error: unknown) => error),
     ]);
     for (const error of errors) {
       expect(error).toBeInstanceOf(Error);

@@ -11,6 +11,7 @@ import {
   type Deliverable,
   type NewOrder,
   type NewPaymentIntent,
+  type NewRefund,
   type NewVmTask,
   type Order,
   type OrderStatus,
@@ -20,6 +21,7 @@ import {
   type PrecheckResult,
   type RefundPatch,
   type RefundRecord,
+  type RefundStatus,
   type StepName,
   type StepState,
   type VmTask,
@@ -83,7 +85,12 @@ const byAge = <T extends { createdAt: Date }>(a: T, b: T): number => a.createdAt
 const sameHex = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 const publicPayment = ({ createdAt: _created, updatedAt: _updated, ...payment }: StoredPayment): PaymentRecord => payment;
-const publicRefund = ({ createdAt: _created, updatedAt: _updated, ...refund }: StoredRefund): RefundRecord => refund;
+const publicRefund = ({ createdAt: _created, updatedAt: _updated, ...refund }: StoredRefund): RefundRecord => ({
+  ...refund,
+  // Files written before these were kept.
+  nonce: refund.nonce ?? null,
+  replacedTxHash: refund.replacedTxHash ?? null,
+});
 const publicTask = ({ seq: _seq, ...task }: StoredTask): VmTask => task;
 
 export class FileStore implements OrderStore {
@@ -353,10 +360,10 @@ export class FileStore implements OrderStore {
 
   // Refunds.
 
-  insertRefund(r: RefundRecord): Promise<boolean> {
+  insertRefund(r: NewRefund): Promise<boolean> {
     return this.locked(async () => {
       await this.requireOrder(r.orderId);
-      // A refund that failed moved no money: a new one takes its place. Any other stands.
+      // A refund that failed moved no money: a new one takes its place, and keeps its hash. Any other stands.
       const existing = await this.read<StoredRefund>('refunds', r.orderId);
       if (existing && existing.status !== 'failed') return false;
       const now = new Date();
@@ -369,6 +376,8 @@ export class FileStore implements OrderStore {
         reason: r.reason,
         rawTx: r.rawTx,
         txHash: r.txHash,
+        nonce: r.nonce,
+        replacedTxHash: existing?.txHash ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -377,10 +386,12 @@ export class FileStore implements OrderStore {
     });
   }
 
-  updateRefund(orderId: string, patch: RefundPatch): Promise<void> {
+  updateRefund(orderId: string, txHash: string, patch: RefundPatch, from?: readonly RefundStatus[]): Promise<boolean> {
     return this.locked(async () => {
       const refund = await this.read<StoredRefund>('refunds', orderId);
-      if (refund) await this.write('refunds', orderId, { ...refund, ...defined(patch), updatedAt: new Date() });
+      if (!refund || refund.txHash !== txHash || (from !== undefined && !from.includes(refund.status))) return false;
+      await this.write('refunds', orderId, { ...refund, ...defined(patch), updatedAt: new Date() });
+      return true;
     });
   }
 
@@ -395,6 +406,17 @@ export class FileStore implements OrderStore {
     return this.locked(async () => {
       const refunds = (await this.all<StoredRefund>('refunds')).filter((refund) => refund.status !== 'failed' && refund.createdAt >= t);
       return atomicToUsd(refunds.reduce((sum, refund) => sum + refund.amount, 0n));
+    });
+  }
+
+  refundsByNonce(nonce: number): Promise<RefundRecord[]> {
+    return this.locked(async () => (await this.all<StoredRefund>('refunds')).filter((refund) => refund.nonce === nonce).map(publicRefund));
+  }
+
+  stalledRefunds(updatedBefore: Date): Promise<Order[]> {
+    return this.locked(async () => {
+      const stalled = new Set((await this.all<StoredRefund>('refunds')).filter((refund) => refund.updatedAt < updatedBefore).map((refund) => refund.orderId));
+      return this.ordersWhere((o) => o.status === 'refunding' && stalled.has(o.id));
     });
   }
 

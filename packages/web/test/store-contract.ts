@@ -101,6 +101,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       reason: 'render',
       rawTx: '0xraw',
       txHash: '0xhash',
+      nonce: 7,
       ...over,
     });
 
@@ -566,7 +567,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.refundsSince(ago(minutes(1)))).toBe(0.05);
       });
 
-      it('gives back what it was given', async () => {
+      it('gives back what it was given, with no refund replaced', async () => {
         const order = await create();
         await s.insertRefund(refund(order.id));
         expect(await s.getRefund(order.id)).toEqual({
@@ -578,6 +579,8 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           reason: 'render',
           rawTx: '0xraw',
           txHash: '0xhash',
+          nonce: 7,
+          replacedTxHash: null,
         });
         expect(await s.getRefund('ord_norefund')).toBeNull();
       });
@@ -585,22 +588,43 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       it('updates the refund as it goes, and a failed one stops counting', async () => {
         const order = await create();
         await s.insertRefund(refund(order.id));
-        await s.updateRefund(order.id, { status: 'broadcast' });
+        expect(await s.updateRefund(order.id, '0xhash', { status: 'broadcast' })).toBe(true);
         expect(await s.getRefund(order.id)).toMatchObject({ status: 'broadcast', rawTx: '0xraw', txHash: '0xhash' });
         expect(await s.refundsSince(ago(minutes(1)))).toBe(0.05);
-        await s.updateRefund(order.id, { status: 'failed', reason: 'reverted' });
+        expect(await s.updateRefund(order.id, '0xhash', { status: 'failed', reason: 'reverted' })).toBe(true);
         expect(await s.getRefund(order.id)).toMatchObject({ status: 'failed', reason: 'reverted', amount: 50_000n });
         expect(await s.refundsSince(ago(minutes(1)))).toBe(0);
       });
 
-      it('replaces a failed refund with a new one, and only a failed one', async () => {
+      it('writes over a refund only while it has the hash the writer read, and from the statuses it names', async () => {
         const order = await create();
         await s.insertRefund(refund(order.id));
-        await s.updateRefund(order.id, { status: 'failed' });
-        expect(await s.insertRefund(refund(order.id, { rawTx: '0xraw2', txHash: '0xhash2', reason: 'vm-timeout' }))).toBe(true);
-        expect(await s.getRefund(order.id)).toMatchObject({ status: 'prepared', rawTx: '0xraw2', txHash: '0xhash2', reason: 'vm-timeout' });
+        // Another hash: the refund was replaced since the writer read it.
+        expect(await s.updateRefund(order.id, '0xother', { status: 'failed' })).toBe(false);
+        expect(await s.getRefund(order.id)).toMatchObject({ status: 'prepared' });
+        expect(await s.updateRefund(order.id, '0xhash', { status: 'confirmed' }, ['prepared', 'broadcast'])).toBe(true);
+        // No longer in one of those statuses: mined, it is never marked failed.
+        expect(await s.updateRefund(order.id, '0xhash', { status: 'failed' }, ['prepared', 'broadcast'])).toBe(false);
+        expect(await s.getRefund(order.id)).toMatchObject({ status: 'confirmed' });
+      });
+
+      it('replaces a failed refund with a new one, and only a failed one, keeping the hash it replaced', async () => {
+        const order = await create();
+        await s.insertRefund(refund(order.id));
+        await s.updateRefund(order.id, '0xhash', { status: 'failed' });
+        expect(await s.insertRefund(refund(order.id, { rawTx: '0xraw2', txHash: '0xhash2', reason: 'vm-timeout', nonce: 8 }))).toBe(true);
+        expect(await s.getRefund(order.id)).toMatchObject({
+          status: 'prepared',
+          rawTx: '0xraw2',
+          txHash: '0xhash2',
+          reason: 'vm-timeout',
+          nonce: 8,
+          replacedTxHash: '0xhash',
+        });
+        // A write keyed by the replaced hash finds nothing.
+        expect(await s.updateRefund(order.id, '0xhash', { status: 'failed' }, ['prepared', 'broadcast'])).toBe(false);
         expect(await s.insertRefund(refund(order.id, { rawTx: '0xraw3', txHash: '0xhash3' }))).toBe(false);
-        expect(await s.getRefund(order.id)).toMatchObject({ txHash: '0xhash2' });
+        expect(await s.getRefund(order.id)).toMatchObject({ txHash: '0xhash2', status: 'prepared' });
         expect(await s.refundsSince(ago(minutes(1)))).toBe(0.05);
       });
 
@@ -612,8 +636,39 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect((await s.getRefund(order.id))?.txHash).toBe(inserted[0] ? '0xb' : '0xc');
       });
 
+      it('finds the refunds signed with a nonce', async () => {
+        const a = await create(),
+          b = await create(),
+          c = await create();
+        await s.insertRefund(refund(a.id, { nonce: 4, txHash: '0xa' }));
+        await s.insertRefund(refund(b.id, { nonce: 4, txHash: '0xb' }));
+        await s.insertRefund(refund(c.id, { nonce: 5, txHash: '0xc' }));
+        expect((await s.refundsByNonce(4)).map((r) => r.txHash).sort()).toEqual(['0xa', '0xb']);
+        expect(await s.refundsByNonce(9)).toEqual([]);
+      });
+
+      it('finds the orders still refunding whose refund has not been written since a moment', async () => {
+        const stalled = await orderIn('refunding');
+        const fresh = await orderIn('refunding');
+        const done = await orderIn('refunded');
+        const unsigned = await orderIn('refunding');
+        await s.insertRefund(refund(stalled.id, { txHash: '0xs' }));
+        await s.insertRefund(refund(fresh.id, { txHash: '0xf' }));
+        await s.insertRefund(refund(done.id, { txHash: '0xd', status: 'confirmed' }));
+        const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+        await pause();
+        const cutoff = new Date();
+        await pause();
+        // Written after the cutoff: it has moved since.
+        await s.updateRefund(fresh.id, '0xf', { status: 'broadcast' });
+        expect((await s.stalledRefunds(cutoff)).map((o) => o.id)).toEqual([stalled.id]);
+        expect(await s.stalledRefunds(ago(minutes(1)))).toEqual([]);
+        // An order refunding with no refund signed yet is not one of them.
+        expect((await s.stalledRefunds(ahead(minutes(1)))).map((o) => o.id)).not.toContain(unsigned.id);
+      });
+
       it('ignores an update to a refund that does not exist', async () => {
-        await s.updateRefund('ord_norefund', { status: 'confirmed' });
+        expect(await s.updateRefund('ord_norefund', '0xhash', { status: 'confirmed' })).toBe(false);
         expect(await s.getRefund('ord_norefund')).toBeNull();
       });
 

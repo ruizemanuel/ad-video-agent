@@ -1,16 +1,16 @@
 // Refunding an order that was not delivered: the amount it paid, in the token it paid, back to the address that paid it,
 // once. The refund is signed and kept before it is broadcast, its bytes (never signed anew) are what goes to the node,
 // and its hash says whether it landed. The daily cap, a wallet without the token and a gas fee out of bounds fail it where
-// the status shows it. A refund whose nonce another transaction took can never land: it is given up on, and only then is
-// a fresh one signed. The refunds here are the double's; refund-adapter.test.ts signs real ones.
+// the status shows it. A refund is given up on only on positive evidence: another of our refunds with its nonce mined at
+// or below the safe head. Only then is a fresh one signed. The refunds here are the double's; refund-adapter.test.ts
+// signs real ones.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hexToString, type Hex } from 'viem';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeRefunds } from '../src/adapters/fake/refunds';
 import { FileStore } from '../src/adapters/fake/store';
-import { broadcastRefund, confirmRefund, prepareRefund, type RefundDeps } from '../src/payments/refunds';
+import { broadcastRefund, confirmRefund, prepareRefund, type ConfirmRefundDeps, type RefundDeps } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/tokens';
 import { FeeTooHigh, type Order, type OrderStatus, type RefundRecord } from '../src/ports';
 
@@ -67,7 +67,17 @@ async function orderIn(status: OrderStatus, p: { amount?: bigint; asset?: string
 /** Another order's refund, made now, of `amount` atomic units. */
 async function refundedElsewhere(amount: bigint): Promise<void> {
   const other = await orderIn('refunding', { amount });
-  await store.insertRefund({ orderId: other.id, to: PAYER, asset: TOKENS.USDT.address, amount, status: 'confirmed', reason: 'render', rawTx: '0x01', txHash: `0x${'ab'.repeat(32)}` });
+  await store.insertRefund({
+    orderId: other.id,
+    to: PAYER,
+    asset: TOKENS.USDT.address,
+    amount,
+    status: 'confirmed',
+    reason: 'render',
+    rawTx: '0x01',
+    txHash: `0x${'ab'.repeat(32)}`,
+    nonce: null,
+  });
 }
 
 /** prepareRefund, which has to give back a refund. */
@@ -77,8 +87,19 @@ async function prepared(orderId: string): Promise<RefundRecord> {
   return refund;
 }
 
-/** The wallet nonce the double's transaction took: its "signed" bytes are the request written out, with it. */
-const nonceOf = (rawTx: string | null): number => (JSON.parse(hexToString(rawTx as Hex)) as { nonce: number }).nonce;
+/** Two orders whose refunds were signed before either was sent, so they share the wallet's nonce; A's is mined. */
+async function collision(): Promise<{ a: Order; b: Order; first: RefundRecord; second: RefundRecord }> {
+  const a = await orderIn('running');
+  const b = await orderIn('running');
+  const first = await prepared(a.id);
+  const second = await prepared(b.id);
+  expect(second.nonce).toBe(first.nonce);
+  expect(await broadcastRefund(a.id, deps)).toBe('broadcast');
+  // The node answers "nonce too low": not an error, the hash says the rest.
+  expect(await broadcastRefund(b.id, deps)).toBe('broadcast');
+  expect(await confirmRefund(a.id, deps)).toBe('confirmed');
+  return { a, b, first, second };
+}
 
 describe('prepareRefund', () => {
   it.each([TOKENS.USDT.address, TOKENS.USDC.address])('refunds the paid amount, in the paid token (%s), to the payer', async (asset) => {
@@ -94,6 +115,8 @@ describe('prepareRefund', () => {
       reason: 'render',
       rawTx: refunds.lastPrepared?.rawTx,
       txHash: refunds.lastPrepared?.hash,
+      nonce: refunds.lastPrepared?.nonce,
+      replacedTxHash: null,
     });
   });
 
@@ -103,12 +126,13 @@ describe('prepareRefund', () => {
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'vm-timeout' });
   });
 
-  it('keeps the signed transaction and its hash before anything is broadcast', async () => {
+  it('keeps the signed transaction, its hash and its nonce before anything is broadcast', async () => {
     const order = await orderIn('running');
     const refund = await prepared(order.id);
     expect(await store.getRefund(order.id)).toEqual(refund);
     expect(refund.rawTx).toMatch(/^0x[0-9a-f]+$/);
     expect(refund.txHash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(refund.nonce).toBe(0);
     expect(refunds.broadcasts).toEqual([]);
   });
 
@@ -246,16 +270,16 @@ describe('broadcastRefund', () => {
 
   it('sends nothing for a refund given up on', async () => {
     const order = await orderIn('running');
-    await prepared(order.id);
-    await store.updateRefund(order.id, { status: 'failed' });
+    const refund = await prepared(order.id);
+    await store.updateRefund(order.id, refund.txHash!, { status: 'failed' });
     expect(await broadcastRefund(order.id, deps)).toBe('uncertain');
     expect(refunds.broadcasts).toEqual([]);
   });
 
   it('refuses to send bytes that are not the ones its hash was kept for', async () => {
     const order = await orderIn('running');
-    await prepared(order.id);
-    await store.updateRefund(order.id, { rawTx: '0x1234' });
+    const refund = await prepared(order.id);
+    await store.updateRefund(order.id, refund.txHash!, { rawTx: '0x1234' });
     await expect(broadcastRefund(order.id, deps)).rejects.toThrow('do not match');
     expect(refunds.broadcasts).toEqual([]);
   });
@@ -284,13 +308,17 @@ describe('confirmRefund', () => {
     expect(refunds.broadcasts).toEqual([refund.rawTx]);
   });
 
-  it('marks the order refunded once the transfer is mined, and says so again after', async () => {
+  it('marks the order refunded once the transfer is mined, and after that never asks the chain again', async () => {
     const order = await orderIn('running');
     await prepared(order.id);
     await broadcastRefund(order.id, deps);
     expect(await confirmRefund(order.id, deps)).toBe('confirmed');
     expect((await store.getOrder(order.id))?.status).toBe('refunded');
+    // A node behind would now say it is not mined: it is not asked.
+    refunds.receiptAnswer = 'pending';
     expect(await confirmRefund(order.id, deps)).toBe('confirmed');
+    expect(refunds.receiptQueries).toHaveLength(1);
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'confirmed' });
   });
 
   it('says when the refund was mined but the order is not refunding, and leaves the order to its caller', async () => {
@@ -302,6 +330,9 @@ describe('confirmRefund', () => {
     expect(await confirmRefund(order.id, deps)).toBe('confirmed-unapplied');
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'confirmed' });
     expect((await store.getOrder(order.id))?.status).toBe('refund_failed');
+    // Already seen mined: the chain is not asked again, and the answer stays.
+    expect(await confirmRefund(order.id, deps)).toBe('confirmed-unapplied');
+    expect(refunds.receiptQueries).toHaveLength(1);
   });
 
   it('waits while the chain has no receipt and the refund can still be mined', async () => {
@@ -325,7 +356,7 @@ describe('confirmRefund', () => {
     expect(console.error).toHaveBeenCalledWith('[refund_receipt_unread]', order.id, 'the node did not answer');
   });
 
-  it('fails the order visibly when the transfer reverted', async () => {
+  it('fails the order visibly when the transfer reverted, and says so again without asking', async () => {
     const order = await orderIn('running');
     await prepared(order.id);
     await broadcastRefund(order.id, deps);
@@ -333,6 +364,9 @@ describe('confirmRefund', () => {
     expect(await confirmRefund(order.id, deps)).toBe('reverted');
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-reverted' });
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'reverted' });
+    refunds.receiptAnswer = 'pending';
+    expect(await confirmRefund(order.id, deps)).toBe('reverted');
+    expect(refunds.receiptQueries).toHaveLength(1);
   });
 
   it('is pending while there is no signed refund to look for', async () => {
@@ -343,18 +377,9 @@ describe('confirmRefund', () => {
 });
 
 describe('a refund that can never be mined', () => {
-  it('is given up on when another refund took its nonce, and the order gets a fresh one', async () => {
+  it('is given up on when another of our refunds with its nonce is mined at or below the safe head, and the order gets a fresh one', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const a = await orderIn('running');
-    const b = await orderIn('running');
-    // Signed before either was sent, both have the wallet's next nonce: only one of them can be mined.
-    const first = await prepared(a.id);
-    const second = await prepared(b.id);
-    expect(nonceOf(second.rawTx)).toBe(nonceOf(first.rawTx));
-    expect(await broadcastRefund(a.id, deps)).toBe('broadcast');
-    // The node answers "nonce too low": not an error, the hash says the rest.
-    expect(await broadcastRefund(b.id, deps)).toBe('broadcast');
-    expect(await confirmRefund(a.id, deps)).toBe('confirmed');
+    const { b, first, second } = await collision();
 
     expect(await confirmRefund(b.id, deps)).toBe('dead');
     expect(await store.getRefund(b.id)).toMatchObject({ status: 'failed', txHash: second.txHash });
@@ -365,13 +390,47 @@ describe('a refund that can never be mined', () => {
     expect(await confirmRefund(b.id, deps)).toBe('dead');
 
     const fresh = await prepared(b.id);
-    expect(fresh).toMatchObject({ status: 'prepared', to: b.payer, amount: b.amount, reason: 'render' });
+    expect(fresh).toMatchObject({ status: 'prepared', to: b.payer, amount: b.amount, reason: 'render', replacedTxHash: second.txHash });
     expect(fresh.txHash).not.toBe(second.txHash);
-    expect(nonceOf(fresh.rawTx)).toBe(nonceOf(first.rawTx) + 1);
+    expect(fresh.nonce).toBe(first.nonce! + 1);
     expect(await broadcastRefund(b.id, deps)).toBe('broadcast');
     expect(await confirmRefund(b.id, deps)).toBe('confirmed');
     expect((await store.getOrder(b.id))?.status).toBe('refunded');
     expect(refunds.prepareCalls).toBe(3);
+  });
+
+  it('is not given up on while the refund that took its nonce is above the safe head', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    refunds.safeBehind = 5;
+    const { b } = await collision();
+    expect(await confirmRefund(b.id, deps)).toBe('pending');
+    expect(await store.getRefund(b.id)).toMatchObject({ status: 'broadcast' });
+    // The safe head reaches it.
+    refunds.safeBehind = 0;
+    expect(await confirmRefund(b.id, deps)).toBe('dead');
+  });
+
+  it('is not given up on when a node behind has no receipt for it and none of ours took its nonce', async () => {
+    const order = await orderIn('running');
+    await prepared(order.id);
+    // Mined, as the model has it, but the node asked does not have the receipt yet; its nonce is used, by itself.
+    await broadcastRefund(order.id, deps);
+    refunds.receiptAnswer = 'pending';
+    expect(await confirmRefund(order.id, deps)).toBe('pending');
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast' });
+    expect(await prepareRefund(order.id, 'render', deps)).toMatchObject({ status: 'broadcast' });
+    expect(refunds.prepareCalls).toBe(1);
+  });
+
+  it('is never given up on when something other than our refunds took its nonce: a person looks at it', async () => {
+    const order = await orderIn('running');
+    const refund = await prepared(order.id);
+    // Someone used the refunds' wallet by hand before this refund went out.
+    refunds.spendNonceElsewhere();
+    expect(await broadcastRefund(order.id, deps)).toBe('broadcast');
+    expect(await confirmRefund(order.id, deps)).toBe('pending');
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast', txHash: refund.txHash });
+    expect(refunds.prepareCalls).toBe(1);
   });
 
   it('is never signed again while the stored one can still be mined', async () => {
@@ -393,9 +452,35 @@ describe('a refund that can never be mined', () => {
     await prepared(order.id);
     refunds.broadcastError = new Error('the node did not answer');
     await broadcastRefund(order.id, deps);
-    refunds.deadError = new Error('the node did not answer either');
+    refunds.lookupError = new Error('the node did not answer either');
     expect(await confirmRefund(order.id, deps)).toBe('pending');
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast' });
     expect(console.error).toHaveBeenCalledWith('[refund_receipt_unread]', order.id, 'the node did not answer either');
+  });
+
+  it('is never written over by a call that read it before it was replaced', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { b, second } = await collision();
+    // A call that read the dead refund, and is slow to decide.
+    const stale = (await store.getRefund(b.id))!;
+    // Meanwhile another call gives it up and a fresh one is signed in its place.
+    expect(await confirmRefund(b.id, deps)).toBe('dead');
+    const fresh = await prepared(b.id);
+    const slow: ConfirmRefundDeps = {
+      refunds,
+      store: {
+        getRefund: async () => stale,
+        updateRefund: (...args) => store.updateRefund(...args),
+        transition: (...args) => store.transition(...args),
+        getOrder: (...args) => store.getOrder(...args),
+        refundsByNonce: (...args) => store.refundsByNonce(...args),
+      },
+    };
+    expect(stale.txHash).toBe(second.txHash);
+    // It finds the old one dead too, and writes nothing over the fresh one.
+    expect(await confirmRefund(b.id, slow)).toBe('pending');
+    expect(await store.getRefund(b.id)).toMatchObject({ status: 'prepared', txHash: fresh.txHash });
+    expect(await prepareRefund(b.id, 'render', deps)).toEqual(await store.getRefund(b.id));
+    expect(refunds.prepareCalls).toBe(3);
   });
 });

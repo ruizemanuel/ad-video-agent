@@ -384,12 +384,60 @@ describe('reconcile: refund failures', () => {
   it('does not look up a refund that already reverted', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const order = await givenUpOn();
-    await store.updateRefund(order.id, { status: 'reverted' });
     const { txHash } = (await store.getRefund(order.id))!;
+    await store.updateRefund(order.id, txHash!, { status: 'reverted' });
 
     expect((await reconcile(deps(), after(MINUTE))).refundFailed).toEqual([order.id]);
     expect(refunds.receiptQueries).toEqual([]);
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'reverted', txHash);
+  });
+
+  /** An order the flow left `refunding` with its refund sent: the run died, or the store failed between two writes. */
+  async function leftRefunding(): Promise<Order> {
+    const order = await paid();
+    await store.transition(order.id, 'running');
+    const refundDeps = { store, refunds, dailyCapUsd: 10 };
+    await prepareRefund(order.id, 'render', refundDeps);
+    await broadcastRefund(order.id, refundDeps);
+    return order;
+  }
+
+  it('confirms the refund of an order left refunding once it has not moved for 30 minutes, and sends nothing', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await leftRefunding();
+    const { txHash } = (await store.getRefund(order.id))!;
+
+    expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([]);
+    expect(await statusOf(order)).toBe('refunded');
+    expect(spy).toHaveBeenCalledWith('[refund_landed_late]', order.id, txHash);
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toHaveLength(1);
+  });
+
+  it('leaves alone an order whose refund moved in the last 30 minutes: its run may still be on it', async () => {
+    const order = await leftRefunding();
+
+    await reconcile(deps(), after(29 * MINUTE));
+    expect(await statusOf(order)).toBe('refunding');
+    expect(refunds.receiptQueries).toEqual([]);
+  });
+
+  it('hands to a person, as refund_failed, an order left refunding whose refund has not landed', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await leftRefunding();
+    const { txHash } = (await store.getRefund(order.id))!;
+    refunds.receiptAnswer = 'pending';
+
+    expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unconfirmed' });
+    expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toHaveLength(1);
+
+    // It lands later: the next pass finds it.
+    refunds.receiptAnswer = undefined;
+    expect((await reconcile(deps(), after(41 * MINUTE))).refundFailed).toEqual([]);
+    expect(await statusOf(order)).toBe('refunded');
   });
 
   it('stays quiet when no refund has failed', async () => {

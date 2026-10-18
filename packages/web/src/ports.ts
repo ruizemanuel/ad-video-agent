@@ -152,7 +152,8 @@ export type PaymentPatch = Partial<Omit<PaymentRecord, 'key' | 'orderId' | 'kind
  * - `prepared`: signed and kept, and never handed to the node.
  * - `broadcast`: handed to the node (marked just before), which may or may not have taken it: its hash tells.
  * - `confirmed`, `reverted`: mined, and what came of it.
- * - `failed`: given up on, having moved no money (so it does not count toward the daily cap).
+ * - `failed`: given up on, proven never to be mined (another of our refunds with its nonce was), so it moved no money
+ *   and does not count toward the daily cap. Only a failed refund is replaced by a fresh one.
  */
 export type RefundStatus = 'prepared' | 'broadcast' | 'confirmed' | 'reverted' | 'failed';
 
@@ -169,7 +170,14 @@ export type RefundRecord = {
   reason: string;
   rawTx: string | null;
   txHash: string | null;
+  /** The refunds' wallet nonce the transaction was signed with. */
+  nonce: number | null;
+  /** The hash of the refund this one replaced, given up on as dead (the store fills it in). */
+  replacedTxHash: string | null;
 };
+
+/** A refund as it is written: what it replaced, if anything, is the store's to say. */
+export type NewRefund = Omit<RefundRecord, 'replacedTxHash'>;
 
 export type RefundPatch = Partial<Omit<RefundRecord, 'orderId'>>;
 
@@ -216,13 +224,22 @@ export interface OrderStore {
 
   /**
    * False if the order already has a refund that has not failed. A failed one (it can never move money) is replaced by
-   * this one, which counts toward the daily cap from now: an order has at most one refund that has not failed.
+   * this one, which counts toward the daily cap from now and keeps the replaced one's hash: an order has at most one
+   * refund that has not failed.
    */
-  insertRefund(r: RefundRecord): Promise<boolean>;
-  updateRefund(orderId: string, patch: RefundPatch): Promise<void>;
+  insertRefund(r: NewRefund): Promise<boolean>;
+  /**
+   * Changes the order's refund only while it is the one with this hash (and, when `from` is given, in one of those
+   * statuses): a refund replaced, or moved on, since the writer read it is never written over. False when nothing matched.
+   */
+  updateRefund(orderId: string, txHash: string, patch: RefundPatch, from?: readonly RefundStatus[]): Promise<boolean>;
   getRefund(orderId: string): Promise<RefundRecord | null>;
   /** USD refunded since `t`, not counting refunds that failed. */
   refundsSince(t: Date): Promise<number>;
+  /** The kept refunds signed with this nonce of the refunds' wallet, whatever their order. */
+  refundsByNonce(nonce: number): Promise<RefundRecord[]>;
+  /** The orders still `refunding` whose refund was last written before `updatedBefore`, oldest first. */
+  stalledRefunds(updatedBefore: Date): Promise<Order[]>;
 
   getPrecheck(key: string, maxAgeMs: number): Promise<PrecheckResult | null>;
   putPrecheck(key: string, r: PrecheckResult): Promise<void>;
@@ -410,8 +427,8 @@ export interface MusicPort {
 /** A refund as the RefundPort is asked for it: `amount` (atomic units) of the token at `asset`, to `to`. */
 export type RefundRequest = { to: string; asset: string; amount: bigint };
 
-/** A refund signed and not sent: its bytes, and the hash they will have on the chain (their keccak256). */
-export type PreparedRefund = { hash: Hex; rawTx: Hex };
+/** A refund signed and not sent: its bytes, the hash they will have on the chain (their keccak256) and their nonce. */
+export type PreparedRefund = { hash: Hex; rawTx: Hex; nonce: number };
 
 /** What the chain says of a refund's transaction: mined and done, mined and reverted, or not mined (yet, or ever). */
 export type RefundReceipt = 'success' | 'reverted' | 'pending';
@@ -437,10 +454,16 @@ export interface RefundPort {
   /** What the chain says of the transaction with this hash. It only reads. */
   receipt(hash: Hex): Promise<RefundReceipt>;
   /**
-   * Whether this signed transaction can never be mined: the wallet's nonce was used, some blocks back, by another
-   * transaction, and this one has no receipt. Only then may another refund be signed in its place. It only reads.
+   * Whether the refunds' wallet had used this nonce some blocks back. A quick filter, never evidence on its own: it does
+   * not say which transaction used it. It only reads.
    */
-  dead(rawTx: Hex): Promise<boolean>;
+  nonceUsed(nonce: number): Promise<boolean>;
+  /**
+   * Whether the transaction with this hash, sent by the refunds' wallet, is mined (whatever came of it) in a block at or
+   * below the safe head, which will not be undone. Positive evidence only: no receipt, or a newer block, is false. It
+   * only reads.
+   */
+  minedSafely(hash: Hex): Promise<boolean>;
 }
 
 /** The refunds' wallet holds less of the token than a refund needs (`needed`: the amount, and its gas when known). */

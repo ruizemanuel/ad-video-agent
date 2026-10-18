@@ -10,6 +10,7 @@ import {
   type Deliverable,
   type NewOrder,
   type NewPaymentIntent,
+  type NewRefund,
   type NewVmTask,
   type Order,
   type OrderStatus,
@@ -19,6 +20,7 @@ import {
   type PrecheckResult,
   type RefundPatch,
   type RefundRecord,
+  type RefundStatus,
   type StepName,
   type StepState,
   type VmTask,
@@ -203,7 +205,7 @@ export class DrizzleStore implements OrderStore {
     return row ? toTask(row) : null;
   }
 
-  async insertRefund(r: RefundRecord): Promise<boolean> {
+  async insertRefund(r: NewRefund): Promise<boolean> {
     const now = new Date();
     const values = {
       toAddress: r.to,
@@ -213,30 +215,52 @@ export class DrizzleStore implements OrderStore {
       reason: r.reason,
       rawTx: r.rawTx,
       txHash: r.txHash,
+      nonce: r.nonce,
       createdAt: now,
       updatedAt: now,
     };
-    // A refund that failed moved no money: a new one takes its place, in the same statement, so of two only one does.
-    // Any other refund stands, and nothing is written.
+    // A refund that failed moved no money: a new one takes its place, in the same statement, so of two only one does,
+    // and keeps the replaced one's hash (in SET, the table's columns are the row being replaced). Any other refund stands,
+    // and nothing is written.
     const inserted = await this.db
       .insert(refunds)
       .values({ orderId: r.orderId, ...values })
-      .onConflictDoUpdate({ target: refunds.orderId, set: values, setWhere: eq(refunds.status, 'failed') })
+      .onConflictDoUpdate({
+        target: refunds.orderId,
+        set: { ...values, replacedTxHash: sql`${refunds.txHash}` },
+        setWhere: eq(refunds.status, 'failed'),
+      })
       .returning({ orderId: refunds.orderId });
     return inserted.length > 0;
   }
 
-  async updateRefund(orderId: string, patch: RefundPatch): Promise<void> {
+  async updateRefund(orderId: string, txHash: string, patch: RefundPatch, from?: readonly RefundStatus[]): Promise<boolean> {
     const { to, ...rest } = defined(patch);
-    await this.db
+    const updated = await this.db
       .update(refunds)
       .set({ ...rest, ...(to === undefined ? {} : { toAddress: to }), updatedAt: new Date() })
-      .where(eq(refunds.orderId, orderId));
+      .where(and(eq(refunds.orderId, orderId), eq(refunds.txHash, txHash), from === undefined ? undefined : inArray(refunds.status, [...from])))
+      .returning({ orderId: refunds.orderId });
+    return updated.length > 0;
   }
 
   async getRefund(orderId: string): Promise<RefundRecord | null> {
     const [row] = await this.db.select().from(refunds).where(eq(refunds.orderId, orderId));
     return row ? toRefund(row) : null;
+  }
+
+  async refundsByNonce(nonce: number): Promise<RefundRecord[]> {
+    return (await this.db.select().from(refunds).where(eq(refunds.nonce, nonce))).map(toRefund);
+  }
+
+  async stalledRefunds(updatedBefore: Date): Promise<Order[]> {
+    const rows = await this.db
+      .select({ order: orders })
+      .from(orders)
+      .innerJoin(refunds, eq(refunds.orderId, orders.id))
+      .where(and(eq(orders.status, 'refunding'), lt(refunds.updatedAt, updatedBefore)))
+      .orderBy(asc(orders.createdAt));
+    return rows.map((row) => row.order);
   }
 
   async refundsSince(t: Date): Promise<number> {

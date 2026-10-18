@@ -15,6 +15,13 @@
       "when": 1792336843801,
       "tag": "0001_sparkling_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792364977135,
+      "tag": "0002_careless_thor",
+      "breakpoints": true
     }
   ]
 }

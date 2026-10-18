@@ -1,9 +1,9 @@
 // The RefundPort as a double, for the tests that refund without the chain. It keeps a small chain of its own: the wallet's
-// nonce, and the transactions mined with it. It "signs" a transaction that is only the request written out with the nonce
-// it takes (the next one not mined, as a real wallet's pending nonce while nothing waits) and a random part. A transaction
-// handed to it is mined when its nonce is the next one; one whose nonce was already used is taken without a word, as a
-// node answers "nonce too low", and can then never be mined: `dead` says so. A test can make it short of the token, make
-// a call fail, or say what the chain answers.
+// nonce, and the transactions mined with it, one block each. It "signs" a transaction that is only the request written
+// out with the nonce it takes (the next one not used, as a real wallet's pending nonce while nothing waits) and a random
+// part. A transaction handed to it is mined when its nonce is the next one; one whose nonce was already used is taken
+// without a word, as a node answers "nonce too low", and is never mined. A test can make it short of the token, make a
+// call fail, say what the chain answers, hold the safe head back, or spend a nonce outside the refunds.
 import { randomBytes } from 'node:crypto';
 import { hexToString, keccak256, toHex, type Hex } from 'viem';
 import { InsufficientBalance, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRequest } from '../../ports';
@@ -31,14 +31,25 @@ export class FakeRefunds implements RefundPort {
   prepareError: Error | undefined;
   /** Makes `broadcast` throw this once it has the bytes, as a node that does not answer: nothing is mined. */
   broadcastError: Error | undefined;
-  /** What `receipt` answers (an Error makes it throw); unset, what its chain says. */
+  /** What `receipt` answers (an Error makes it throw); unset, what its chain says. A node behind answers 'pending'. */
   receiptAnswer: RefundReceipt | Error | undefined;
-  /** Makes `dead` throw this, as a chain that cannot be read. */
-  deadError: Error | undefined;
+  /** Makes `nonceUsed` and `minedSafely` throw this, as a chain that cannot be read. */
+  lookupError: Error | undefined;
+  /** How many blocks the safe head is behind the latest one. */
+  safeBehind = 0;
 
   /** How many of the wallet's nonces were used: the next transaction takes this one. */
   private used = 0;
-  private readonly mined = new Set<string>();
+  /** The latest block. */
+  private head = 0;
+  /** The block each mined transaction is in, by hash. */
+  private readonly mined = new Map<string, number>();
+
+  /** A transaction of the refunds' wallet that is not one of the refunds (a person using the wallet by hand). */
+  spendNonceElsewhere(): void {
+    this.used += 1;
+    this.head += 1;
+  }
 
   async prepare(input: RefundRequest): Promise<PreparedRefund> {
     this.prepareCalls += 1;
@@ -47,7 +58,7 @@ export class FakeRefunds implements RefundPort {
     if (this.balance < input.amount) throw new InsufficientBalance(input.asset, this.balance, input.amount);
     const tx: FakeTransaction = { to: input.to, asset: input.asset, amount: input.amount.toString(), nonce: this.used, salt: randomBytes(8).toString('hex') };
     const rawTx = toHex(JSON.stringify(tx));
-    const prepared = { hash: keccak256(rawTx), rawTx };
+    const prepared = { hash: keccak256(rawTx), rawTx, nonce: tx.nonce };
     this.lastPrepared = prepared;
     return prepared;
   }
@@ -57,7 +68,8 @@ export class FakeRefunds implements RefundPort {
     if (this.broadcastError !== undefined) throw this.broadcastError;
     const hash = keccak256(rawTx);
     if (read(rawTx).nonce === this.used && !this.mined.has(hash)) {
-      this.mined.add(hash);
+      this.head += 1;
+      this.mined.set(hash, this.head);
       this.used += 1;
     }
     return hash;
@@ -70,8 +82,14 @@ export class FakeRefunds implements RefundPort {
     return answer ?? (this.mined.has(hash) ? 'success' : 'pending');
   }
 
-  async dead(rawTx: Hex): Promise<boolean> {
-    if (this.deadError !== undefined) throw this.deadError;
-    return read(rawTx).nonce < this.used && !this.mined.has(keccak256(rawTx));
+  async nonceUsed(nonce: number): Promise<boolean> {
+    if (this.lookupError !== undefined) throw this.lookupError;
+    return nonce < this.used;
+  }
+
+  async minedSafely(hash: Hex): Promise<boolean> {
+    if (this.lookupError !== undefined) throw this.lookupError;
+    const block = this.mined.get(hash);
+    return block !== undefined && block <= this.head - this.safeBehind;
   }
 }

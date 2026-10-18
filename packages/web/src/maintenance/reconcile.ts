@@ -1,7 +1,9 @@
 // The reconciliation, run by the cron every 10 minutes. It closes what the paying request could not: a settlement
 // that landed on chain but was never reported (the facilitator timed out, or the request died), an authorization
 // that expired without settling, a paid order whose run never started, a refund that landed after the flow gave up on
-// it. It also keeps the refunds that could not be paid in the log, every run, until someone pays them by hand.
+// it or stopped watching it (the run died, or the store failed between two writes). It only reads the chain for refunds:
+// it never signs nor sends one. It also keeps the refunds that could not be paid in the log, every run, until someone
+// pays them by hand.
 import { markPaidAndStart, startRun } from '../payments/orders';
 import { confirmRefund } from '../payments/refunds';
 import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
@@ -9,15 +11,31 @@ import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore, type RefundPor
 const MINUTE_MS = 60_000;
 /** How old an order has to be before this looks at it: the request that made it has had time to finish. */
 const GRACE_MS = 5 * MINUTE_MS;
+/**
+ * How long a refund may go without a write before its order, still `refunding`, is taken as left by its run. The flow
+ * watches a refund for about 10 minutes (40 looks, 15 s apart): this leaves it well past that.
+ */
+export const REFUND_WINDOW_MS = 30 * MINUTE_MS;
 
 export type ReconcileDeps = {
   store: Pick<
     OrderStore,
-    'ordersAwaitingSettlement' | 'paidWithoutRun' | 'refundFailures' | 'findOrderByPayment' | 'getOrder' | 'transition' | 'setStep' | 'setRunId' | 'getRefund' | 'updateRefund'
+    | 'ordersAwaitingSettlement'
+    | 'paidWithoutRun'
+    | 'refundFailures'
+    | 'stalledRefunds'
+    | 'findOrderByPayment'
+    | 'getOrder'
+    | 'transition'
+    | 'setStep'
+    | 'setRunId'
+    | 'getRefund'
+    | 'updateRefund'
+    | 'refundsByNonce'
   >;
   buy: Pick<BuyPort, 'authorizationSettled'>;
   /** Only to read the chain: the reconciliation sends no refund. */
-  refunds: Pick<RefundPort, 'receipt' | 'dead'>;
+  refunds: Pick<RefundPort, 'receipt' | 'nonceUsed' | 'minedSafely'>;
   /** The wallet the payments go to (PAYTO_ADDRESS): a settlement counts only if it paid this one. */
   payTo: string;
 };
@@ -42,7 +60,7 @@ async function attempt(orderId: string, work: () => Promise<void>): Promise<void
 
 /**
  * Whether the refund of an order the flow gave up on landed after all, by its hash: then the order goes back through
- * `refunding` (the only way) to `refunded`. A refund that can never land is given up on here too, for a person to retry.
+ * `refunding` (the only way) to `refunded`. A refund proven dead is given up on here too, for a person to retry.
  */
 async function landedLate(orderId: string, deps: Pick<ReconcileDeps, 'store' | 'refunds'>): Promise<boolean> {
   const { store } = deps;
@@ -55,6 +73,23 @@ async function landedLate(orderId: string, deps: Pick<ReconcileDeps, 'store' | '
     if (landed) console.error('[refund_landed_late]', orderId, refund.txHash);
   });
   return landed;
+}
+
+/**
+ * An order its run left `refunding`: its refund is looked up by its hash, and the order moved where that says. Mined, it
+ * is `refunded` (confirmRefund moves it); reverted, `refund_failed` (confirmRefund too); not mined, or proven dead, it is
+ * handed to a person as `refund_failed`, where the pass below keeps looking it up and logging it.
+ */
+async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' | 'refunds'>): Promise<void> {
+  const { store } = deps;
+  await attempt(orderId, async () => {
+    const answer = await confirmRefund(orderId, deps);
+    if (answer === 'confirmed') {
+      console.error('[refund_landed_late]', orderId, (await store.getRefund(orderId))?.txHash ?? null);
+    } else if (answer === 'pending' || answer === 'dead') {
+      await store.transition(orderId, 'refund_failed', { failureReason: answer === 'dead' ? 'refund-dead' : 'refund-unconfirmed' });
+    }
+  });
 }
 
 export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
@@ -95,6 +130,11 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
       await startRun(order.id, store);
       result.started.push(order.id);
     });
+  }
+
+  // Before the refund failures, so an order handed to a person here is in this pass's log.
+  for (const order of await store.stalledRefunds(new Date(now.getTime() - REFUND_WINDOW_MS))) {
+    await settleStalled(order.id, { store, refunds });
   }
 
   for (const order of await store.refundFailures()) {

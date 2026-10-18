@@ -2,9 +2,11 @@
 // in the token it paid, to the address that paid it, and an order has one at most that has not failed: the transaction is
 // signed and kept before it goes out (prepareRefund); those bytes, never signed anew, are what goes to the node
 // (broadcastRefund, run with maxRetries = 0; sent again by a later call, they still pay once: one nonce, one hash); and
-// its hash says what became of it (confirmRefund). Only a refund that can never be mined (its nonce went to another
-// transaction) is given up on, and only then is another signed. A refund past the daily cap, that the wallet cannot pay,
-// or whose gas would cost too much leaves the order `refund_failed`, where its status and the cron's log show it.
+// its hash says what became of it (confirmRefund). A refund is given up on only on positive evidence that it can never
+// be mined (another of our refunds with its nonce is mined in a block that will not be undone), and only then is another
+// signed. Every write to a refund is keyed by the hash that was read, so a refund replaced meanwhile is never written
+// over. A refund past the daily cap, that the wallet cannot pay, or whose gas would cost too much leaves the order
+// `refund_failed`, where its status and the cron's log show it.
 import { keccak256, type Hex } from 'viem';
 import { FeeTooHigh, InsufficientBalance, type OrderStore, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRecord } from '../ports';
 
@@ -16,7 +18,7 @@ import { FeeTooHigh, InsufficientBalance, type OrderStore, type PreparedRefund, 
 export type RefundFailure = { failed: string };
 
 export type RefundDeps = {
-  store: Pick<OrderStore, 'getOrder' | 'transition' | 'getRefund' | 'insertRefund' | 'updateRefund' | 'refundsSince'>;
+  store: Pick<OrderStore, 'getOrder' | 'transition' | 'getRefund' | 'insertRefund' | 'updateRefund' | 'refundsSince' | 'refundsByNonce'>;
   refunds: RefundPort;
   /** REFUND_DAILY_CAP_USD: what may be refunded in a UTC day, every order together. */
   dailyCapUsd: number;
@@ -25,8 +27,8 @@ export type RefundDeps = {
 export type BroadcastRefundDeps = { store: Pick<OrderStore, 'getRefund' | 'updateRefund'>; refunds: Pick<RefundPort, 'broadcast'> };
 
 export type ConfirmRefundDeps = {
-  store: Pick<OrderStore, 'getRefund' | 'updateRefund' | 'transition' | 'getOrder'>;
-  refunds: Pick<RefundPort, 'receipt' | 'dead'>;
+  store: Pick<OrderStore, 'getRefund' | 'updateRefund' | 'transition' | 'getOrder' | 'refundsByNonce'>;
+  refunds: Pick<RefundPort, 'receipt' | 'nonceUsed' | 'minedSafely'>;
 };
 
 /**
@@ -34,10 +36,14 @@ export type ConfirmRefundDeps = {
  * - `confirmed-unapplied`: mined, but the order was not `refunding` (the flow gave up on it before it landed), so it was
  *   left as it was: its caller decides.
  * - `reverted`: mined without moving money; the order is `refund_failed`.
- * - `pending`: not mined yet (and it still can be), not signed yet, or the chain could not be read.
+ * - `pending`: not mined yet (it may still be, or nothing proves it never will), not signed yet, the chain could not be
+ *   read, or the refund changed while it was being looked at.
  * - `dead`: it can never be mined: given up on, and `prepareRefund` signs a fresh one.
  */
 export type ConfirmResult = 'confirmed' | 'confirmed-unapplied' | 'reverted' | 'pending' | 'dead';
+
+/** Not mined (yet): the only statuses a refund may be marked mined, or given up on, from. */
+const UNMINED = ['prepared', 'broadcast'] as const;
 
 /** Dollars in millionths. A 6-decimal stablecoin's atomic unit is one of them, and whole numbers compare exactly. */
 const micros = (usd: number): number => Math.round(usd * 1e6);
@@ -45,6 +51,8 @@ const micros = (usd: number): number => Math.round(usd * 1e6);
 const startOfUtcDay = (at: Date): Date => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 200);
+
+const same = (a: string | null, b: string): boolean => a?.toLowerCase() === b.toLowerCase();
 
 /**
  * Signs the order's refund and keeps it, without sending it. The order moves to `refunding` first (from `paid` or
@@ -97,10 +105,10 @@ export async function prepareRefund(orderId: string, reason: string, deps: Refun
     throw error;
   }
 
-  // In place of a refund given up on, if there is one; never next to one that can still be mined.
-  const refund: RefundRecord = { orderId, ...request, status: 'prepared', reason, rawTx: signed.rawTx, txHash: signed.hash };
-  if (await store.insertRefund(refund)) return refund;
-  // Another call kept its refund first: that one is the order's, and this one is never sent.
+  // In place of a refund given up on, if there is one; never next to one that can still be mined. When another call kept
+  // its refund first, that one is the order's, and this one is never sent. Either way the store says which refund is the
+  // order's now, and what it replaced.
+  await store.insertRefund({ orderId, ...request, status: 'prepared', reason, rawTx: signed.rawTx, txHash: signed.hash, nonce: signed.nonce });
   const kept = await store.getRefund(orderId);
   if (kept === null) throw new Error('The order has a refund that cannot be read.');
   return kept;
@@ -118,13 +126,14 @@ export async function broadcastRefund(orderId: string, deps: BroadcastRefundDeps
   const refund = await store.getRefund(orderId);
   if (refund === null || refund.rawTx === null || refund.txHash === null) throw new Error('The order has no signed refund to broadcast.');
   if (refund.status === 'confirmed' || refund.status === 'reverted') return 'broadcast';
-  // Its nonce went to another transaction: a fresh refund takes its place.
+  // Its nonce went to another of our refunds: a fresh refund takes its place.
   if (refund.status === 'failed') return 'uncertain';
 
   // The store keeps what prepare gave: hex.
   const rawTx = refund.rawTx as Hex;
   if (keccak256(rawTx).toLowerCase() !== refund.txHash.toLowerCase()) throw new Error("The kept refund's bytes do not match its hash: they are not sent.");
-  if (refund.status === 'prepared') await store.updateRefund(orderId, { status: 'broadcast' });
+  // Changed since it was read (replaced, given up on): nothing is sent, and the next call reads it again.
+  if (refund.status === 'prepared' && !(await store.updateRefund(orderId, refund.txHash, { status: 'broadcast' }, ['prepared']))) return 'uncertain';
   try {
     await refunds.broadcast(rawTx);
     return 'broadcast';
@@ -136,40 +145,70 @@ export async function broadcastRefund(orderId: string, deps: BroadcastRefundDeps
 }
 
 /**
+ * Positive evidence that the refund can never be mined: another of our kept refunds signed with its nonce is mined in a
+ * block at or below the safe head. A nonce used by anything else proves nothing here (a node behind may simply not have
+ * this refund's receipt yet), and is left to a person. The chain's nonce is only a filter, read before the store.
+ */
+async function provenDead(refund: RefundRecord, deps: ConfirmRefundDeps): Promise<boolean> {
+  const { store, refunds } = deps;
+  if (refund.nonce === null || refund.txHash === null) return false;
+  if (!(await refunds.nonceUsed(refund.nonce))) return false;
+  for (const other of await store.refundsByNonce(refund.nonce)) {
+    if (other.txHash === null || same(other.txHash, refund.txHash)) continue;
+    if (await refunds.minedSafely(other.txHash as Hex)) return true;
+  }
+  return false;
+}
+
+/** The order of a mined refund moved to `refunded`, from `refunding`; reported when it was somewhere else. */
+async function refunded(orderId: string, store: ConfirmRefundDeps['store']): Promise<'confirmed' | 'confirmed-unapplied'> {
+  if (await store.transition(orderId, 'refunded')) return 'confirmed';
+  return (await store.getOrder(orderId))?.status === 'refunded' ? 'confirmed' : 'confirmed-unapplied';
+}
+
+/**
  * Looks the order's refund up on the chain, and sends nothing. Mined, it moves the order from `refunding` to `refunded`;
- * mined and reverted (no money moved, the fee was paid), to `refund_failed`. Not mined, it is given up on (marked
- * `failed`, the order left `refunding`) only if it can never be: its nonce went to another transaction.
+ * mined and reverted (no money moved, the fee was paid), to `refund_failed`. A refund already seen mined is not looked up
+ * again: a node behind could say otherwise. Not mined, it is given up on (marked `failed`, the order left `refunding`)
+ * only on positive evidence that it can never be (see provenDead).
  */
 export async function confirmRefund(orderId: string, deps: ConfirmRefundDeps): Promise<ConfirmResult> {
   const { store, refunds } = deps;
   const refund = await store.getRefund(orderId);
   if (refund === null || refund.rawTx === null || refund.txHash === null) return 'pending';
-  if (refund.status === 'failed') return 'dead';
+  switch (refund.status) {
+    case 'failed':
+      return 'dead';
+    case 'confirmed':
+      return refunded(orderId, store);
+    case 'reverted':
+      await store.transition(orderId, 'refund_failed', { failureReason: 'refund-reverted' });
+      return 'reverted';
+  }
 
+  const hash = refund.txHash;
   let answer: RefundReceipt;
   let dead = false;
   try {
-    answer = await refunds.receipt(refund.txHash as Hex);
-    // `dead` reads the receipt again after the nonce, so one mined in between is not taken for dead.
-    if (answer === 'pending') dead = await refunds.dead(refund.rawTx as Hex);
+    answer = await refunds.receipt(hash as Hex);
+    if (answer === 'pending') dead = await provenDead(refund, deps);
   } catch (error) {
     console.error('[refund_receipt_unread]', orderId, messageOf(error));
     return 'pending';
   }
 
+  // Each write holds only while the refund is the one that was read, and not yet mined: otherwise nothing is decided.
   if (answer === 'success') {
-    await store.updateRefund(orderId, { status: 'confirmed' });
-    if (await store.transition(orderId, 'refunded')) return 'confirmed';
-    return (await store.getOrder(orderId))?.status === 'refunded' ? 'confirmed' : 'confirmed-unapplied';
+    if (!(await store.updateRefund(orderId, hash, { status: 'confirmed' }, UNMINED))) return 'pending';
+    return refunded(orderId, store);
   }
   if (answer === 'reverted') {
-    await store.updateRefund(orderId, { status: 'reverted' });
+    if (!(await store.updateRefund(orderId, hash, { status: 'reverted' }, UNMINED))) return 'pending';
     await store.transition(orderId, 'refund_failed', { failureReason: 'refund-reverted' });
     return 'reverted';
   }
-  if (!dead) return 'pending';
-  await store.updateRefund(orderId, { status: 'failed' });
-  // Its hash, kept in the log: the store keeps the refund that takes its place.
-  console.error('[refund_dead]', orderId, refund.txHash);
+  if (!dead || !(await store.updateRefund(orderId, hash, { status: 'failed' }, UNMINED))) return 'pending';
+  // Its hash, kept in the log too: the refund that takes its place keeps it as the one it replaced.
+  console.error('[refund_dead]', orderId, hash);
   return 'dead';
 }

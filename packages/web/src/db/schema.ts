@@ -116,21 +116,34 @@ export const costs = pgTable(
   (t) => [index('costs_order_idx').on(t.orderId), index('costs_kind_created_idx').on(t.kind, t.createdAt)],
 );
 
-export const refunds = pgTable('refunds', {
-  orderId: text('order_id')
-    .primaryKey()
-    .references(() => orders.id),
-  /** "to" is a keyword in SQL. */
-  toAddress: text('to_address').notNull(),
-  asset: text('asset').notNull(),
-  amount: units('amount').notNull(),
-  status: text('status').$type<RefundStatus>().notNull(),
-  reason: text('reason').notNull(),
-  rawTx: text('raw_tx'),
-  txHash: text('tx_hash'),
-  createdAt: createdAt(),
-  updatedAt: at('updated_at').notNull().defaultNow(),
-});
+export const refunds = pgTable(
+  'refunds',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => orders.id),
+    /** "to" is a keyword in SQL. */
+    toAddress: text('to_address').notNull(),
+    asset: text('asset').notNull(),
+    amount: units('amount').notNull(),
+    status: text('status').$type<RefundStatus>().notNull(),
+    reason: text('reason').notNull(),
+    rawTx: text('raw_tx'),
+    txHash: text('tx_hash'),
+    /** The refunds' wallet nonce the transaction was signed with. */
+    nonce: integer('nonce'),
+    /** The hash of the refund this one replaced, given up on as dead. */
+    replacedTxHash: text('replaced_tx_hash'),
+    createdAt: createdAt(),
+    updatedAt: at('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    // Which refunds were signed with a nonce: how one that can never land is told apart.
+    index('refunds_nonce_idx').on(t.nonce),
+    // What the cron lists: the refunds that stopped moving.
+    index('refunds_updated_idx').on(t.updatedAt),
+  ],
+);
 
 export const prechecks = pgTable('prechecks', {
   key: text('key').primaryKey(),

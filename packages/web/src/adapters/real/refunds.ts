@@ -41,14 +41,16 @@ export type CeloRefundsSettings = {
 export const MAX_REFUND_FEE_ATOMIC = 50_000n;
 
 /**
- * How far behind the head the wallet's nonce is read before a refund is given up as dead. forno spreads its calls over
- * nodes that are not all at the same block, and a node a little behind may not have a receipt yet: a nonce used this many
- * blocks back (about 30 s on Celo) was used before anything a node that answers can be missing.
+ * How far behind the head `nonceUsed` reads the wallet's nonce (about 30 s on Celo): far enough that a node a little
+ * behind agrees, and near enough that a node without archive state (it keeps about 128 blocks) still has it.
  */
-export const DEAD_AFTER_BLOCKS = 30n;
+export const NONCE_CHECK_BLOCKS_BACK = 30n;
 
-/** What a node answers when it has these bytes already, or its wallet's nonce is past theirs: the hash says the rest. */
-const ALREADY_SENT = /already known|known transaction|nonce too low/i;
+/**
+ * What a node answers when it has these bytes already, or its wallet's nonce is past theirs: the hash says the rest.
+ * Whole words only: "unknown transaction type" is a refusal.
+ */
+const ALREADY_SENT = /\b(?:already known|known transaction|nonce too low)\b/i;
 
 const chainClient = (transport: Transport) => createWalletClient({ chain: celo, transport }).extend(publicActions);
 type ChainClient = ReturnType<typeof chainClient>;
@@ -87,8 +89,11 @@ function readBack(rawTx: Hex): CeloTransactionSerializable {
   }
 }
 
-/** The signed bytes are the transfer that was asked for, with its gas in the token: or they are not given back. */
-function assertTransfer(rawTx: Hex, expected: { token: string; feeCurrency: string; data: Hex }): void {
+/**
+ * The signed bytes are the transfer that was asked for, with its gas in the token, or they are not given back. Its nonce,
+ * which RLP leaves out when it is 0.
+ */
+function checkedNonce(rawTx: Hex, expected: { token: string; feeCurrency: string; data: Hex }): number {
   const tx = readBack(rawTx);
   const isTransfer =
     tx.type === 'cip64' &&
@@ -98,6 +103,7 @@ function assertTransfer(rawTx: Hex, expected: { token: string; feeCurrency: stri
     same(tx.data, expected.data) &&
     (tx.value ?? 0n) === 0n;
   if (!isTransfer) throw new Error('The signed refund is not the transfer it was asked to be: it was not sent.');
+  return tx.nonce ?? 0;
 }
 
 export class CeloRefunds implements RefundPort {
@@ -150,9 +156,9 @@ export class CeloRefunds implements RefundPort {
       if (error instanceof InsufficientBalance || error instanceof FeeTooHigh) throw error;
       throw chainError('preparation', error);
     }
-    assertTransfer(rawTx, { token: token.address, feeCurrency, data });
+    const nonce = checkedNonce(rawTx, { token: token.address, feeCurrency, data });
     // The hash is the keccak of the signed bytes: the node reports the same one.
-    return { hash: keccak256(rawTx), rawTx };
+    return { hash: keccak256(rawTx), rawTx, nonce };
   }
 
   async broadcast(rawTx: Hex): Promise<Hex> {
@@ -160,8 +166,8 @@ export class CeloRefunds implements RefundPort {
       // viem sends a raw transaction once: it never retries this call.
       return await this.#chain.sendRawTransaction({ serializedTransaction: rawTx });
     } catch (error) {
-      // The node has them already, or a transaction with their nonce was mined (these bytes, or others): for `receipt` and
-      // `dead` to tell, not for this call.
+      // The node has them already, or a transaction with their nonce was mined (these bytes, or others): for `receipt`,
+      // and the other refunds with that nonce, to tell; not for this call.
       if (error instanceof BaseError && ALREADY_SENT.test(error.details ?? '')) return keccak256(rawTx);
       throw chainError('broadcast', error);
     }
@@ -177,27 +183,34 @@ export class CeloRefunds implements RefundPort {
     }
   }
 
-  async dead(rawTx: Hex): Promise<boolean> {
-    const { nonce } = readBack(rawTx);
-    if (nonce === undefined) throw new Error('The signed refund has no nonce to look for.');
+  async nonceUsed(nonce: number): Promise<boolean> {
     try {
       const head = await this.#chain.getBlockNumber();
-      // The nonce first, then the receipt: a transaction mined between the two reads is found by the second.
       const used = await this.#chain.getTransactionCount({
         address: this.#account().address,
-        blockNumber: head > DEAD_AFTER_BLOCKS ? head - DEAD_AFTER_BLOCKS : 0n,
+        blockNumber: head > NONCE_CHECK_BLOCKS_BACK ? head - NONCE_CHECK_BLOCKS_BACK : 0n,
       });
-      if (used <= nonce) return false;
-      try {
-        await this.#chain.getTransactionReceipt({ hash: keccak256(rawTx) });
-        return false;
-      } catch (error) {
-        // Its nonce went to another transaction: this one can never be mined.
-        if (error instanceof TransactionReceiptNotFoundError) return true;
-        throw error;
-      }
+      return used > nonce;
     } catch (error) {
       throw chainError('nonce check', error);
+    }
+  }
+
+  async minedSafely(hash: Hex): Promise<boolean> {
+    try {
+      let mined: { from: string; blockNumber: bigint };
+      try {
+        mined = await this.#chain.getTransactionReceipt({ hash });
+      } catch (error) {
+        if (error instanceof TransactionReceiptNotFoundError) return false;
+        throw error;
+      }
+      if (!same(mined.from, this.#account().address)) return false;
+      // The safe head after the receipt: a node further behind can only make the answer more careful.
+      const safe = await this.#chain.getBlock({ blockTag: 'safe' });
+      return mined.blockNumber <= safe.number;
+    } catch (error) {
+      throw chainError('safety check', error);
     }
   }
 }
