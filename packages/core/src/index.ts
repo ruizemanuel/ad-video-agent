@@ -1,5 +1,7 @@
 export * from './banned-phrases';
+export * from './blocked';
 export * from './brand';
+export * from './demo-links';
 export * from './edl';
 export * from './formats';
 export * from './music';

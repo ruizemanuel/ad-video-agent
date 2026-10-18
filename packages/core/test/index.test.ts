@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as core from '../src/index';
 // Type-only imports: `pnpm typecheck` fails here if the package stops exporting one of them.
 import type {
+  Anchor,
   BannedPhrases,
   Box,
   Check,
@@ -29,6 +30,7 @@ import type {
 } from '../src/index';
 
 export type PublicTypes = [
+  Anchor,
   BannedPhrases,
   Box,
   Check,
@@ -77,6 +79,8 @@ describe('@app/core public surface', () => {
         'checkStills',
         'chooseTrack',
         'contrast',
+        'detectBlocked',
+        'findDemoLinks',
         'judgeItems',
         'layoutScenes',
         'measureTrack',

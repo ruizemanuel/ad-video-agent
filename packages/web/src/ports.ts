@@ -1,7 +1,7 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
-// VM tasks, payment intents, costs, refunds and pre-checks) and the BlobPort (the private files); the other ports
-// arrive with the tasks that use them.
+// VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files) and the LlmPort (the
+// models, as far as the tasks so far use them); the other ports arrive with the tasks that use them.
 import type { OrderRequestSchema, VmTaskKind } from '@app/core';
 import type { z } from 'zod';
 
@@ -218,4 +218,16 @@ export interface BlobPort {
   presignGet(path: string, minutes: number): Promise<string>;
   /** Deletes every blob whose path starts with `prefix`, and says how many. An empty prefix is refused. */
   deletePrefix(prefix: string): Promise<number>;
+}
+
+/** What the model says about a site: `usd` is what the call cost. */
+export type SiteClassification = { admissible: boolean; reason: string; usd: number };
+
+/** The language models. It holds what the pre-check needs; the script and the review add their calls with their tasks. */
+export interface LlmPort {
+  /**
+   * Whether a site may be made into an ad: it is not a scam and has no illegal or adult content. `text` is the start of
+   * what the page says. `reason` is written for the person who asked, so it does not name models or protocols.
+   */
+  classifySite(input: { url: string; title: string; text: string }): Promise<SiteClassification>;
 }
