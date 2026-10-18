@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import type { CaptureInput, CaptureResult } from '@app/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
+import { pngSize } from '../../src/capture/shots';
 import { serveFixtureSite } from './support/fixture-site';
 
 let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
@@ -112,6 +113,14 @@ describe('a site with a demo page, followed once as a link and once as an extra'
     const sof = jpeg.findIndex((byte, i) => byte === 0xff && jpeg[i + 1] === 0xc0);
     expect(jpeg.readUInt16BE(sof + 7)).toBe(480);
     expect(file.site.url).toBe(fixtureUrl);
+  });
+
+  it('records the size of the logo raster, so that every render of the video decides the same about it', () => {
+    const { site, dir } = run;
+    const logo = site.brand.logo!;
+    expect(logo.png ?? logo.file).toBe('media/logo.png');
+    expect(pngSize(readFileSync(join(dir, 'media', 'logo.png')))).toEqual({ width: logo.width, height: logo.height });
+    expect(logo.width).toBeGreaterThan(0);
   });
 
   it('uses the open font that stands in for a proprietary one, with its file, and says so', () => {

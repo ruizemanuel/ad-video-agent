@@ -1,10 +1,10 @@
-import { useMemo, type FC } from 'react';
+import { Fragment, useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { alpha, TYPE } from '@app/core';
-import { brandName } from '../logo';
+import { brandName, closeLogoBox } from '../logo';
 import { BUTTON_IN, endCardSteps, pressState } from '../rhythm';
-import { layoutLines, pillSize, toWords } from '../type';
-import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, showsLogo, useAd, type PieceProps } from './common';
+import { fitAddress, layoutLines, pillSize, toWords } from '../type';
+import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, type PieceProps } from './common';
 
 // The brand comes in a few frames into the scene, under the end of the wipe that usually brings the close in.
 const MARK_AT = 3;
@@ -24,29 +24,30 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
     const type = TYPE[format];
     const column = centeredSafeBox(format);
     const measure = measureWith(theme.display);
+    const host = new URL(site.url).hostname.replace(/^www\./, '');
     const [cta, tagline] = scene.lines;
     const name = brandName(site);
-    const domain = new URL(site.url).hostname.replace(/^www\./, '');
     const fit = { width: column.width, min: type.min, maxLines: 2, measure };
     return {
       type,
       column,
-      logoBox: { width: Math.round(column.width * 0.7), height: Math.round(type.logo * 3.2) },
+      logoBox: closeLogoBox(format),
       name,
       tagline: tagline ? layoutLines([toWords(tagline)], { ...fit, max: Math.round(type.caption * 0.8) }) : null,
       cta: cta?.text ?? '',
       ctaSize: pillSize(cta?.text ?? '', column.width, format, measure),
-      domain,
-      domainSize: Math.round(type.caption * 0.62),
+      host,
+      // The address under the button, as large as fits the column, up to 62% of the caption size; a long one breaks.
+      domain: fitAddress(host, column.width * 0.96, { max: Math.round(type.caption * 0.62), min: type.min }, measureWith(theme.body)),
     };
   }, [scene, site, format, theme]);
-  const { type, column, logoBox, name, tagline, cta, ctaSize, domainSize } = layout;
+  const { type, column, logoBox, name, tagline, cta, ctaSize } = layout;
   // A name that fell back to the address, when it is the mark, is not repeated under the button.
-  const domain = !showsLogo(ad, logoBox) && layout.domain === name ? null : layout.domain;
+  const domain = !ad.logoShown && layout.host === name ? null : layout.domain;
   const { button, press } = endCardSteps(timed, edl.bpm);
   const gaps = { tagline: Math.round(type.logo * 0.45), button: Math.round(type.logo * 0.9), domain: Math.round(type.logo * 0.5) };
   const buttonHeight = ctaSize * PILL_HEIGHT_EM;
-  const domainHeight = domainSize * theme.body.lineHeight;
+  const domainHeight = domain ? domain.parts.length * domain.size * theme.body.lineHeight : 0;
   // The whole close is centered; until the button comes in, the brand is, moved down by half of what goes under it.
   const below = gaps.button + buttonHeight + (domain ? gaps.domain + domainHeight : 0);
   const moved = progress(frame, button, button + BUTTON_IN, EASE_IN_OUT);
@@ -89,8 +90,14 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
           {domain && (
             <div style={{ marginTop: gaps.domain, height: domainHeight }}>
               {domainIn > 0 && (
-                <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: domainSize, color: theme.muted, opacity: domainIn }}>
-                  {domain}
+                <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: domain.size, color: theme.muted, opacity: domainIn, whiteSpace: 'nowrap', textAlign: 'center' }}>
+                  {/* One line of the probe, the whole address, however many lines it takes. */}
+                  {domain.parts.map((part, i) => (
+                    <Fragment key={i}>
+                      {i > 0 && <br />}
+                      {part}
+                    </Fragment>
+                  ))}
                 </div>
               )}
             </div>

@@ -163,10 +163,12 @@ const textsOf = (stills: Still[], path: string): string[] => stills.filter((s) =
 /** `#rrggbb` as Chrome writes a computed color. */
 const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`;
 
-// A logo of ordinary proportions (8:3) for the close, written into the capture before the bundle copies it.
+// Logos written into the capture before the bundle copies it: one of ordinary proportions (8:3), and one so small
+// (100x60 px) that the close would enlarge it 4.5 times, while the opening, 84 px high, would not even double it.
 const MARK_FILE = 'media/test-mark.svg';
-const MARK_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="#c81e6b"/><rect x="130" y="38" width="170" height="44" rx="22" fill="#1a1614"/></svg>';
+const markSvg = (width: number, height: number): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="#c81e6b"/><rect x="130" y="38" width="170" height="44" rx="22" fill="#1a1614"/></svg>`;
+const SMALL_MARK_FILE = 'media/small-mark.svg';
 
 const jpegWidth = (base64: string): number => {
   const jpeg = Buffer.from(base64, 'base64');
@@ -187,7 +189,8 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'stills-'));
   site = await captureFixture(dir, fixture.url);
   // The bundle copies the run folder when it is made: the extra logo goes in before the first render.
-  writeFileSync(join(dir, MARK_FILE), MARK_SVG);
+  writeFileSync(join(dir, MARK_FILE), markSvg(320, 120));
+  writeFileSync(join(dir, SMALL_MARK_FILE), markSvg(100, 60));
   edl = makeFixtureEdl(site);
 });
 afterAll(async () => {
@@ -300,6 +303,28 @@ describe('the new pieces and the rhythm', () => {
     const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
     const marked = await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 2 });
     expect(textsOf(marked, 'hooks[2][0]')).toEqual(['Sell on WhatsApp', 'with no fees.']);
+  });
+
+  it('decides once whether the video shows the logo: a logo too small for the close is the name at the opening too', async () => {
+    const small: SiteData = { ...site, brand: { ...site.brand, logo: { file: SMALL_MARK_FILE, kind: 'svg', width: 100, height: 60 } } };
+    const stills = await renderKeyframes({ edl: pieces, site: small, runDir: dir, format: '9x16', hook: 2 });
+    expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
+    expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
+  });
+
+  it('fails the render, rather than closing on the name in some frames, when the logo cannot be loaded', async () => {
+    const broken: SiteData = { ...site, brand: { ...site.brand, logo: { file: 'media/missing-logo.png', kind: 'png' } } };
+    await expect(renderKeyframes({ edl: pieces, site: broken, runDir: dir, format: '9x16', hook: 0 })).rejects.toThrow(/logo/);
+  });
+
+  it.each(['distribuidoradelnorte.com.ar', 'distribuidoradelnorte-mayorista.com.ar'])('keeps the long address %s whole and inside the safe zone, typed and under the button of the close', async (host) => {
+    const long: SiteData = { ...site, url: `https://www.${host}/` };
+    const edl = makeNewPiecesEdl(long);
+    expect(validateEdl(edl, long)).toEqual([]);
+    const stills = await renderKeyframes({ edl, site: long, runDir: dir, format: '9x16', hook: 0 });
+    expect(checkStills(stills, edl, long, '9x16').filter((c) => !c.pass)).toEqual([]);
+    expect(textsOf(stills, 'hooks[0][0]')).toEqual([host]);
+    expect(textsOf(stills, 'cta')).toContain(host);
   });
 
   it('renders a typed question as hook 1 and its stills pass the code checks', async () => {

@@ -1,8 +1,8 @@
 import { useMemo, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, contrast, FORMATS, MIN_CONTRAST, mix, safeWidth, TYPE, type Format } from '@app/core';
+import { alpha, contrast, MIN_CONTRAST, mix, TYPE, type Format } from '@app/core';
 import { pressState, typedChars, TYPED_BY, typeInPressFrame } from '../rhythm';
-import { layoutLines, lineText, toWords } from '../type';
+import { fitAddress, layoutLines, lineText, toWords } from '../type';
 import { centeredSafeBox, fontStyle, measureWith, progress, useAd, type PieceProps } from './common';
 
 // The widest the bar gets: across a whole 16:9 frame it reads as a banner, not as a field.
@@ -18,16 +18,18 @@ const barUnits = (format: Format) => {
   return { unit, padX: Math.round(unit * 0.62), padY: Math.round(unit * 0.4), button: Math.round(unit * 1.6), inset: Math.round(unit * 0.2), gap: Math.round(unit * 0.4) };
 };
 
-/** The characters of each line as typed so far, and the line the caret is in. */
-const typedLines = (texts: readonly string[], typed: number): { shown: string[]; caretLine: number } => {
+/**
+ * The characters of each line as typed so far, and the line the caret is in. `joiner` is what joins a line to the next
+ * one in the text (a space between the words of a question, nothing inside an address), and it is typed too.
+ */
+const typedLines = (texts: readonly string[], typed: number, joiner: string): { shown: string[]; caretLine: number } => {
   let left = typed;
   let caretLine = -1;
   const shown = texts.map((text, i) => {
     const chars = [...text];
     if (caretLine < 0 && left <= chars.length) caretLine = i;
     const part = chars.slice(0, Math.max(0, Math.min(chars.length, left))).join('');
-    // The space that joins this line to the next one is typed too.
-    left -= chars.length + 1;
+    left -= chars.length + joiner.length;
     return part;
   });
   return { shown, caretLine: caretLine < 0 ? texts.length - 1 : caretLine };
@@ -42,7 +44,8 @@ const Arrow: FC<{ up: boolean; size: number; color: string }> = ({ up, size, col
 // A field in the site's type where its address (variant "url") or a question (variant "prompt") is typed, ending on a
 // button in the brand color that is pressed (spec 6.5): "this is a website" in two seconds, then the cut to the product.
 // The typing is done at 60% of the scene, and the button, lit up once the text is in, is pressed on the half beat
-// nearest 75% of it.
+// nearest 75% of it. An address too long for one line breaks before a dot (see fitAddress): it is always whole in the
+// field, and probed as one line, the address it is.
 export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
   const { theme, format, edl } = useAd();
   const frame = useCurrentFrame();
@@ -52,22 +55,26 @@ export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
   const bar = useMemo(() => {
     const measure = measureWith(theme.body);
     const column = centeredSafeBox(format);
-    const source = scene.lines[0] ? [toWords(scene.lines[0])] : [];
-    const setIn = (width: number) => {
-      const textWidth = width - units.padX - units.gap - units.button - units.inset;
-      const set = layoutLines(source, { width: textWidth, max: units.unit, min: TYPE[format].min, maxLines: prompt ? 3 : 1, measure });
-      return { width, overflows: set.lines.some((line) => set.size * measure(lineText(line)) > textWidth), texts: set.lines.map(lineText), size: set.size };
-    };
-    // Centered on the frame, like the close; an address too long for it at the smallest size takes the whole safe width.
-    const centered = setIn(Math.min(column.width, MAX_BAR));
-    const fitted = centered.overflows ? { ...setIn(safeWidth(format)), left: FORMATS[format].safe.left } : { ...centered, left: column.left + (column.width - centered.width) / 2 };
-    const height = Math.max(units.button + 2 * units.inset, fitted.texts.length * fitted.size * FIELD_LINE + 2 * units.padY);
-    return { ...fitted, height, top: column.top + (column.height - height) / 2 };
+    // Centered on the frame, like the close.
+    const width = Math.min(column.width, MAX_BAR);
+    const textWidth = width - units.padX - units.gap - units.button - units.inset;
+    const text = scene.lines[0]?.text ?? '';
+    const sizes = { max: units.unit, min: TYPE[format].min };
+    let set: { texts: string[]; size: number; joiner: string };
+    if (prompt) {
+      const laid = layoutLines(text ? [toWords({ text, kind: 'framing' })] : [], { ...sizes, width: textWidth, maxLines: 3, measure });
+      set = { texts: laid.lines.map(lineText), size: laid.size, joiner: ' ' };
+    } else {
+      const fitted = fitAddress(text, textWidth, sizes, measure);
+      set = { texts: fitted.parts, size: fitted.size, joiner: '' };
+    }
+    const height = Math.max(units.button + 2 * units.inset, set.texts.length * set.size * FIELD_LINE + 2 * units.padY);
+    return { ...set, width, left: column.left + (column.width - width) / 2, height, top: column.top + (column.height - height) / 2 };
   }, [scene, prompt, format, units, theme]);
 
   const typingEnd = timed.duration * TYPED_BY;
   const pressAt = typeInPressFrame(timed, edl.bpm);
-  const { shown, caretLine } = typedLines(bar.texts, typedChars(bar.texts.join(' '), frame, timed.duration));
+  const { shown, caretLine } = typedLines(bar.texts, typedChars(bar.texts.join(bar.joiner), frame, timed.duration), bar.joiner);
   const caretOn = frame < pressAt && (frame < typingEnd || Math.floor((frame - typingEnd) / BLINK) % 2 === 0);
   const enter = spring({ frame, fps, config: { damping: 200 }, durationInFrames: 16 });
   // The button lights up once the text is in, then it is pressed.
@@ -93,6 +100,8 @@ export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
         }}
       >
         <div
+          // An address is one line of the edit list, however many lines it takes in the field: it is probed whole.
+          {...(!prompt && shown.some(Boolean) ? { 'data-qa-line': true } : {})}
           style={{
             ...fontStyle(theme.body),
             fontSize: bar.size,
@@ -109,8 +118,8 @@ export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
         >
           {bar.texts.map((_, i) => (
             <div key={i} style={{ height: bar.size * FIELD_LINE, display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
-              {/* Probed only once some of it is typed: an empty line has no box to measure. */}
-              {shown[i] ? <span data-qa-line>{shown[i]}</span> : null}
+              {/* A line of a question is probed once some of it is typed: an empty line has no box to measure. */}
+              {shown[i] ? <span {...(prompt ? { 'data-qa-line': true } : {})}>{shown[i]}</span> : null}
               {caretOn && caretLine === i && (
                 <span
                   style={{

@@ -118,6 +118,53 @@ export const layoutCaptions = (captions: readonly TypeLine[][], fit: Fit & { mea
   return { lines: options.map(({ own, split }) => (own.size >= size ? own : split).lines), size };
 };
 
+// An address is set on at most this many lines before it is broken inside a name.
+const MAX_ADDRESS_LINES = 3;
+
+/** Where an address may break: before a dot, and after a hyphen. */
+const addressBreaks = (host: string): number[] => {
+  const breaks: number[] = [];
+  for (let i = 1; i < host.length; i++) if (host[i] === '.' || host[i - 1] === '-') breaks.push(i);
+  return breaks;
+};
+
+/** Every way to cut `text` at `breaks` into `count` parts. */
+const cutsOf = (text: string, breaks: readonly number[], count: number, from = 0): string[][] => {
+  if (count === 1) return [[text.slice(from)]];
+  return breaks
+    .filter((at) => at > from)
+    .flatMap((at) => cutsOf(text, breaks, count - 1, at).map((rest) => [text.slice(from, at), ...rest]));
+};
+
+/**
+ * A site address set as large as fits `width`, up to `max`: on one line, else broken before a dot or after a hyphen
+ * into up to 3 parts, the widest as narrow as it can be, else (a name too long for a line at `min`) in pieces that each
+ * fit at `min`. The parts, put back together, are the address: it is always on screen whole.
+ */
+export const fitAddress = (host: string, width: number, { max, min }: { max: number; min: number }, measure: Measure): { parts: string[]; size: number } => {
+  const room = width * FILL;
+  const sizeOf = (parts: readonly string[]): number => Math.min(max, ...parts.map((part) => room / measure(part)));
+  const breaks = addressBreaks(host);
+  for (let count = 1; count <= MAX_ADDRESS_LINES; count++) {
+    let best: { parts: string[]; size: number } | undefined;
+    for (const parts of cutsOf(host, breaks, count)) {
+      const size = sizeOf(parts);
+      if (!best || size > best.size) best = { parts, size };
+    }
+    if (best && best.size >= min) return { parts: best.parts, size: Math.floor(best.size) };
+  }
+  const parts: string[] = [];
+  let part = '';
+  for (const char of host) {
+    if (part && measure(part + char) * min > room) {
+      parts.push(part);
+      part = '';
+    }
+    part += char;
+  }
+  return { parts: [...parts, part], size: min };
+};
+
 /**
  * The size of the call to action in the EndCard's pill: the caption size, or less so that the pill takes at most 96% of
  * the column it is centered in. The room for its padding (1.1 em on each side) is reserved at the caption size. Never

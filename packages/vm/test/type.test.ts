@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitHeadline, glyphOverhang, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
+import { fitAddress, fitHeadline, glyphOverhang, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -106,6 +106,32 @@ describe('captions that replace one another', () => {
   it('never sets them below the smallest size of the format', () => {
     const long = words('A caption far too long to be set at any readable size in this block');
     expect(layoutCaptions([words('Pro plan'), long], caption).size).toBe(TYPE['9x16'].min);
+  });
+});
+
+describe('a site address', () => {
+  const sizes = { max: 80, min: 44 };
+
+  it('stays on one line, as large as fits up to its largest size', () => {
+    expect(fitAddress('cobrame.ar', 534, sizes, perChar)).toEqual({ parts: ['cobrame.ar'], size: 80 });
+    // 16 characters, 9.6 em: 534 * 0.98 / 9.6 = 54.5.
+    expect(fitAddress('tiendita.example', 534, sizes, perChar)).toEqual({ parts: ['tiendita.example'], size: 54 });
+  });
+
+  it('breaks before a dot when one line would be set below the smallest size, the parts as even as they can be', () => {
+    expect(fitAddress('distribuidoradelnorte.com.ar', 700, sizes, perChar)).toEqual({ parts: ['distribuidoradelnorte', '.com.ar'], size: 54 });
+  });
+
+  it('breaks after a hyphen too', () => {
+    expect(fitAddress('distribuidoradelnorte-mayorista.com.ar', 700, sizes, perChar)).toEqual({ parts: ['distribuidoradelnorte-', 'mayorista.com.ar'], size: 51 });
+  });
+
+  it('breaks inside a name too long for any line at the smallest size, so the whole address is always on screen', () => {
+    const host = 'superlongbrandnamewithoutanydotsatall.com';
+    const set = fitAddress(host, 534, sizes, perChar);
+    expect(set.size).toBe(44);
+    expect(set.parts.join('')).toBe(host);
+    for (const part of set.parts) expect(44 * perChar(part)).toBeLessThanOrEqual(534 * 0.98);
   });
 });
 

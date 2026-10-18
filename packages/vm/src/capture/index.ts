@@ -10,7 +10,7 @@ import { uploadToPresigned } from '../upload';
 import { inPageAnchors, inPageBrand, inPageExtractText, inPageFindLogo, pickColors, type PageText } from './extract';
 import { download, firstFamily, resolveFont } from './fonts';
 import { addNote, launchBrowser, openPage, sleep, UnreachableError, VIEWPORTS } from './page';
-import { makeDirectorJpegs, shoot } from './shots';
+import { makeDirectorJpegs, pngSize, shoot } from './shots';
 
 /** What `capture` writes to `site.json`: the site, plus the sections of the extra pages and the log of the capture. */
 export type CapturedSite = SiteData & Required<Pick<SiteData, 'extraSections' | 'log'>>;
@@ -97,6 +97,9 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
       await element.screenshot({ path: join(mediaDir, 'logo.png'), omitBackground: true });
       if (site.brand.logo) site.brand.logo.png = 'media/logo.png';
       else site.brand.logo = { file: 'media/logo.png', kind: 'png' };
+      // The video decides from this size whether the logo reads (see video/logo.ts), the same in every render.
+      const size = pngSize(readFileSync(join(mediaDir, 'logo.png')));
+      if (size) Object.assign(site.brand.logo, size);
     }
     await page.evaluate(() => {
       for (const p of document.querySelectorAll<HTMLElement>('[data-capbg]')) p.style.background = p.dataset.capbg ?? '';

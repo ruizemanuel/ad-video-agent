@@ -10,6 +10,13 @@ import { childEnv } from '../child-env';
 import { inPageBoxes, MAX_FULL_PAGE_CSS_PX, type RawSection } from './extract';
 import { addNote, DPR, removeOverlays, sleep, VIEWPORTS, type ViewportName } from './page';
 
+/** The size of a PNG, from its header (the IHDR chunk comes first), or null when the bytes are not a PNG. */
+export const pngSize = (bytes: Buffer): { width: number; height: number } | null => {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < 24 || signature.some((byte, i) => bytes[i] !== byte) || bytes.toString('ascii', 12, 16) !== 'IHDR') return null;
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+};
+
 /**
  * Shoots each of `sections` (the page scrolled so its heading is near the top) and then the whole page, up to
  * 8000 CSS pixels, and adds the shots and their boxes to `site`. Two sections that frame the page the same way give one

@@ -1,6 +1,6 @@
 import type { Shot } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { buildDirectorJpegArgs, shotsForDirector } from '../src/capture/shots';
+import { buildDirectorJpegArgs, pngSize, shotsForDirector } from '../src/capture/shots';
 
 const shot = (id: string, viewport: Shot['viewport'], sectionId?: string): Shot => ({
   id,
@@ -32,5 +32,28 @@ describe('the pictures for the director', () => {
     expect(buildDirectorJpegArgs('run/media/m-s2.png', 'run/director/m-s2.jpg')).toEqual([
       '-v', 'error', '-y', '-i', 'run/media/m-s2.png', '-vf', 'scale=480:-1', '-q:v', '4', 'run/director/m-s2.jpg',
     ]);
+  });
+});
+
+describe('the size of a PNG', () => {
+  /** The signature and the start of the IHDR chunk of a PNG of this size. */
+  const header = (width: number, height: number): Buffer => {
+    const png = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.writeUInt32BE(13, 8);
+    png.write('IHDR', 12, 'ascii');
+    png.writeUInt32BE(width, 16);
+    png.writeUInt32BE(height, 20);
+    return png;
+  };
+
+  it('reads the width and height from the header', () => {
+    expect(pngSize(header(5760, 264))).toEqual({ width: 5760, height: 264 });
+    expect(pngSize(header(480, 160))).toEqual({ width: 480, height: 160 });
+  });
+
+  it('reads nothing from what is not a PNG', () => {
+    expect(pngSize(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBeNull();
+    expect(pngSize(Buffer.alloc(10))).toBeNull();
   });
 });

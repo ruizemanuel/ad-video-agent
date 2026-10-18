@@ -1,7 +1,8 @@
 // Whether the site's logo can close the video, as plain math. The capture keeps a DPR 4 raster of whatever the header
 // marks as the logo; some sites mark a whole text header (a strip many times wider than tall) or a small icon. Shown in
-// the EndCard's box, the first is a sliver and the second a blur, so the close sets the brand's name instead.
-import type { SiteData } from '@app/core';
+// the EndCard's box, the first is a sliver and the second a blur, so the video sets the brand's name instead: at the
+// close and at the opening alike, decided once per video against the close's box.
+import { FORMATS, TYPE, type Format, type SiteData } from '@app/core';
 
 export type Size = { width: number; height: number };
 
@@ -22,6 +23,22 @@ export const logoReads = (natural: Size | null, box: Size): boolean => {
   if (natural.width / natural.height > MAX_ASPECT) return false;
   return fitLogo(natural, box).width / natural.width <= MAX_ENLARGE;
 };
+
+/** The box the EndCard gives the logo: 70% of its centered column wide (see centeredSafeBox), 3.2 times the logo size high. */
+export const closeLogoBox = (format: Format): Size => {
+  const { width, safe } = FORMATS[format];
+  return { width: Math.round((width - 2 * Math.max(safe.left, safe.right)) * 0.7), height: Math.round(TYPE[format].logo * 3.2) };
+};
+
+/**
+ * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once,
+ * against the close's box, the larger one. A logo that reads there reads at the opening's height too.
+ */
+export const videoShowsLogo = (natural: Size | null, format: Format): boolean => logoReads(natural, closeLogoBox(format));
+
+/** The natural size of the logo as the capture recorded it, or null when it did not. */
+export const recordedLogoSize = (logo: SiteData['brand']['logo']): Size | null =>
+  logo?.width && logo.height && logo.width > 0 && logo.height > 0 ? { width: logo.width, height: logo.height } : null;
 
 // What separates the parts of a title: bars, dots and dashes, a hyphen only between spaces (not the one in "Coca-Cola"),
 // and a colon before a space.

@@ -5,12 +5,15 @@ import { measureText } from '@remotion/layout-utils';
 import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { alpha, FORMATS, mix, safeWidth, TYPE, type Edl, type FontSpec, type Format, type Scene, type Shot, type SiteData, type Theme, type TimedScene } from '@app/core';
 import { stageLayout } from '../camera';
-import { brandName, fitLogo, logoReads, type Size } from '../logo';
+import { brandName, fitLogo, type Size } from '../logo';
 import { captionSwapFrame } from '../rhythm';
 import { glyphOverhang, layoutCaptions, layoutLines, toWords, type Measure, type TypeLine } from '../type';
 
-/** `logoSize`: the natural size of the site's logo, null when it has none or it did not load. */
-export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl; logoSize: Size | null };
+/**
+ * `logoShown`: the natural size of the site's logo when the video shows it, at the opening and the close alike; null when
+ * the video shows the brand's name instead (see videoShowsLogo).
+ */
+export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl; logoShown: Size | null };
 export const Ctx = createContext<AdContext | null>(null);
 
 export const useAd = (): AdContext => {
@@ -85,18 +88,14 @@ export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; st
 
 // ---------- the brand ----------
 
-/** Whether the brand mark in `box` is the site's logo (see logoReads) rather than its name. */
-export const showsLogo = ({ site, logoSize }: AdContext, box: Size): boolean => Boolean(site.brand.logo && logoSize && logoReads(logoSize, box));
-
 /**
- * The brand: the site's logo fitted in `box` when it reads there (see logoReads), else its name (see brandName) in the
- * site's heading font and brand color, set as large as `name.max` in `name.width`, on up to 2 lines, with room above and
+ * The brand: the site's logo fitted in `box` when the video shows it (decided once per video, see videoShowsLogo), else
+ * its name (see brandName) in the site's heading font and brand color, set as large as `name.max` in `name.width`, on up to 2 lines, with room above and
  * below for its glyphs (a mark flush with the edge of the safe zone keeps them inside it). A whole text header marked
  * as the logo would be a sliver in the box, or run off the frame at the box's height.
  */
 export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; align: 'left' | 'center'; delay?: number }> = ({ box, name, align, delay = 0 }) => {
-  const ad = useAd();
-  const { site, theme, format, logoSize } = ad;
+  const { site, theme, format, logoShown } = useAd();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const set = useMemo(
@@ -104,7 +103,7 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
     [site, name.width, name.max, format, theme],
   );
   const logo = site.brand.logo;
-  if (!logo || !logoSize || !showsLogo(ad, box))
+  if (!logo || !logoShown)
     return (
       <div style={{ padding: `${glyphOverhang(theme.display.lineHeight) * set.size}px 0` }}>
         <RevealLines lines={set.lines} size={set.size} font={theme.display} color={theme.accentText} accent={theme.accentText} delay={delay} align={align} />
@@ -114,7 +113,7 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
   return (
     <Img
       src={staticFile(logo.png ?? logo.file)}
-      style={{ ...fitLogo(logoSize, box), display: 'block', opacity: p, transform: `scale(${0.96 + 0.04 * p})`, transformOrigin: align === 'center' ? 'center' : 'left center' }}
+      style={{ ...fitLogo(logoShown, box), display: 'block', opacity: p, transform: `scale(${0.96 + 0.04 * p})`, transformOrigin: align === 'center' ? 'center' : 'left center' }}
     />
   );
 };
