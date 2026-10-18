@@ -1,7 +1,7 @@
 // The rhythm of the pieces, as plain math: what a piece shows at a frame, counted from the start of its scene (the
 // frame a piece reads with useCurrentFrame). Every change of text lands on a beat of the whole video's grid, so a
 // scene keeps the pulse wherever it falls; the key frames read the same changes (render/keyframes.ts).
-import { beatsToFrames, settledFrame, type Line, type TimedScene } from '@app/core';
+import { beatsToFrames, type Line, type TimedScene } from '@app/core';
 
 /** The frame of the scene on which its beat `beat` (a half beat too) falls, on the beat grid of the whole video. */
 export const beatFrame = (timed: TimedScene, beat: number, bpm: number): number => beatsToFrames(timed.startBeat + beat, bpm) - timed.from;
@@ -92,21 +92,22 @@ export const lineEnterFrame = (i: number, bpm: number): number => beatsToFrames(
 
 // ---------- EndCard ----------
 
-// What a 6-beat close does on its beats: the button comes in on beat 3 and is pressed on beat 4.5.
+// What a close of 6 beats or more does on its beats: the button comes in on beat 3 and is pressed on beat 4.5.
 const BUTTON_BEAT = 3;
 const PRESS_BEAT = 4.5;
-const CLOSE_BEATS = 6;
-/** The frames the button takes to come in: it is in, and still, this long before the scene's settled frame. */
+// A shorter close keeps the press this many beats before its end (and the button a beat before the press), so the press
+// is over by the settled frame. On half beats: 2.5 and 3.5 in 5 beats, 1.5 and 2.5 in 4 (the shortest validateEdl takes).
+const AFTER_PRESS = 1.5;
+const BUTTON_TO_PRESS = 1;
+/** The frames the button takes to come in: it is in, and still, before it is pressed. */
 export const BUTTON_IN = 14;
 
 /**
  * The two steps of the EndCard, in frames of the scene: first the logo (and the tagline), then the button, which is
- * pressed. A close of 6 beats or more brings the button in on beat 3 and presses it on beat 4.5; a shorter one keeps
- * the proportions (half and three quarters of it), and the button is always in by the scene's settled frame.
+ * pressed. On beat 3 and beat 4.5 in a close of 6 beats or more; earlier, on half beats, in a shorter one.
  */
 export const endCardSteps = (timed: TimedScene, bpm: number): { button: number; press: number } => {
-  const beats = Math.min(timed.scene.beats, CLOSE_BEATS);
-  const settled = settledFrame(timed) - timed.from;
-  const button = Math.max(0, Math.min(beatFrame(timed, (BUTTON_BEAT * beats) / CLOSE_BEATS, bpm), settled - BUTTON_IN));
-  return { button, press: Math.max(beatFrame(timed, (PRESS_BEAT * beats) / CLOSE_BEATS, bpm), button + 1) };
+  const pressBeat = Math.min(PRESS_BEAT, timed.scene.beats - AFTER_PRESS);
+  const buttonBeat = Math.min(BUTTON_BEAT, pressBeat - BUTTON_TO_PRESS);
+  return { button: Math.max(0, beatFrame(timed, buttonBeat, bpm)), press: Math.max(0, beatFrame(timed, pressBeat, bpm)) };
 };

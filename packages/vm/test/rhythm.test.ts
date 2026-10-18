@@ -1,6 +1,6 @@
 import { beatsToFrames, settledFrame, type Line, type Scene, type TimedScene } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { captionIndex, captionSwapFrame, cycleIndex, endCardSteps, lineEnterFrame, pressState, textChanges, typedChars, typeInPressFrame, wordEnterFrame } from '../src/video/rhythm';
+import { BUTTON_IN, captionIndex, captionSwapFrame, cycleIndex, endCardSteps, lineEnterFrame, PRESS_FRAMES, pressState, textChanges, typedChars, typeInPressFrame, wordEnterFrame } from '../src/video/rhythm';
 
 const framing = (text: string, atBeat?: number): Line => ({ text, kind: 'framing', ...(atBeat === undefined ? {} : { atBeat }) });
 const scene = (piece: Scene['piece'], beats: number, lines: Line[]): Scene => ({ piece, beats, lines });
@@ -137,18 +137,21 @@ describe('the two steps of the EndCard', () => {
     expect(endCardSteps(timed, 112)).toEqual({ button: beatsToFrames(3, 112), press: beatsToFrames(4.5, 112) });
   });
 
-  it('keeps the proportions in a shorter close, with the button in and pressed before the settled frame', () => {
-    const four = placed(close(4), 112);
-    expect(endCardSteps(four, 112)).toEqual({ button: beatsToFrames(2, 112), press: beatsToFrames(3, 112) });
-    for (const bpm of [90, 112, 128])
-      for (const beats of [2, 3, 4, 5, 6]) {
-        const timed = placed(close(beats), bpm);
-        const { button, press } = endCardSteps(timed, bpm);
-        const settled = settledFrame(timed) - timed.from;
-        expect(button, `${beats} beats at ${bpm}`).toBeLessThanOrEqual(settled - 14);
-        expect(press, `${beats} beats at ${bpm}`).toBeGreaterThan(button);
-        expect(press, `${beats} beats at ${bpm}`).toBeLessThan(timed.duration);
-      }
+  it('moves both earlier, on half beats, in a shorter close: 2.5 and 3.5 in 5 beats, 1.5 and 2.5 in 4', () => {
+    expect(endCardSteps(placed(close(5), 112), 112)).toEqual({ button: beatsToFrames(2.5, 112), press: beatsToFrames(3.5, 112) });
+    expect(endCardSteps(placed(close(4), 112), 112)).toEqual({ button: beatsToFrames(1.5, 112), press: beatsToFrames(2.5, 112) });
+  });
+
+  it('has the button in before the press and the press over by the settled frame, from 4 to 8 beats at 90 to 128 bpm', () => {
+    for (const bpm of [90, 100, 112, 113.19, 120, 128])
+      for (const beats of [4, 5, 6, 7, 8])
+        for (const startBeat of [0, 5, 13, 22]) {
+          const timed = placed(close(beats), bpm, startBeat);
+          const { button, press } = endCardSteps(timed, bpm);
+          const at = `${beats} beats at ${bpm} bpm from beat ${startBeat}`;
+          expect(button + BUTTON_IN, at).toBeLessThanOrEqual(press);
+          expect(press + PRESS_FRAMES, at).toBeLessThanOrEqual(settledFrame(timed) - timed.from);
+        }
   });
 });
 
