@@ -7,6 +7,7 @@ import {
   judgeItems,
   layoutScenes,
   scenePaths,
+  timedScenePath,
   validateEdl,
   type Claim,
   type Edl,
@@ -415,6 +416,29 @@ describe('scenePaths', () => {
     expect(byPath.get('hooks[2][1]')).toBe(get(get(edlShop.hooks, 2), 1));
     expect(byPath.get('body[2]')).toBe(get(edlShop.body, 2));
     expect(byPath.get('cta')).toBe(edlShop.cta);
+  });
+});
+
+describe('timedScenePath', () => {
+  it('names the scenes of the video of a hook as scenePaths does: that hook, the body, the cta', () => {
+    const all = scenePaths(edlShop).map((p) => p.path);
+    edlShop.hooks.forEach((_hook, h) => {
+      const paths = layoutScenes(edlShop, h).scenes.map((timed) => timedScenePath(edlShop, h, timed));
+      expect(paths).toEqual(all.filter((path) => !path.startsWith('hooks[') || path.startsWith(`hooks[${h}][`)));
+    });
+  });
+
+  it('points at the scene that was laid out', () => {
+    const byPath = new Map(scenePaths(edlShop).map((p) => [p.path, p.scene]));
+    for (const timed of layoutScenes(edlShop, 2).scenes) expect(byPath.get(timedScenePath(edlShop, 2, timed))).toBe(timed.scene);
+  });
+
+  it('gives paths that applyPatches accepts', () => {
+    const [timed] = layoutScenes(edlShop, 2).scenes.slice(-2);
+    if (!timed) throw new Error('no scene');
+    const scene = { ...timed.scene, beats: timed.scene.beats + 1 };
+    const patched = applyPatches(edlShop, [{ path: timedScenePath(edlShop, 2, timed), scene }], []);
+    expect(layoutScenes(patched, 2).scenes.map((t) => t.scene)).toContain(scene);
   });
 });
 

@@ -5,8 +5,9 @@ type Color = SiteData['brand']['colors'][number];
 type Rgb = [number, number, number];
 
 export const MIN_CONTRAST = 4.5; // WCAG AA for normal text
-const WHITE = '#ffffff';
-const NEAR_BLACK = '#111111';
+// The two colors a theme may use besides the site's own.
+export const WHITE = '#ffffff';
+export const NEAR_BLACK = '#111111';
 
 // Channels in 0..1. Colors are `#rrggbb`.
 const rgb = (hex: string): Rgb => {

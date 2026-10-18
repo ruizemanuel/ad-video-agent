@@ -4,7 +4,7 @@
 import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
 import type { Claim, Edl, Scene } from './edl';
 import type { SiteData } from './site';
-import { FPS, layoutScenes } from './timing';
+import { FPS, layoutScenes, type TimedScene } from './timing';
 
 export type Problem = {
   /**
@@ -60,6 +60,16 @@ export const scenePaths = (edl: Edl): { path: string; scene: Scene }[] => [
   ...edl.body.map((scene, j) => ({ path: `body[${j}]`, scene })),
   { path: 'cta', scene: edl.cta },
 ];
+
+// The scene path of a scene of the video of `hook`, as layoutScenes laid it out (that hook, the body, the cta).
+// The VM labels each key frame with it and the code checks report it, so both name a scene the way validateEdl does.
+export const timedScenePath = (edl: Edl, hook: number, timed: TimedScene): string => {
+  if (timed.role === 'cta') return 'cta';
+  if (timed.role === 'hook') return `hooks[${hook}][${timed.index}]`;
+  const hookScenes = edl.hooks[hook];
+  if (!hookScenes) throw new RangeError(`There is no hook ${hook}; the edit list has ${edl.hooks.length}.`);
+  return `body[${timed.index - hookScenes.length}]`;
+};
 
 // ---------- validateEdl ----------
 
