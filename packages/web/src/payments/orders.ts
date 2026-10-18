@@ -4,31 +4,38 @@
 import { start } from 'workflow/api';
 import type { Env } from '../env';
 import { signFileLink } from '../links';
-import { STEP_NAMES, type Order, type OrderStatus, type OrderStore, type RefundRecord, type RefundStatus, type StepName, type StepState } from '../ports';
+import { ORDER_DAYS, STEP_NAMES, type Order, type OrderStatus, type OrderStore, type RefundRecord, type RefundStatus, type StepName, type StepState } from '../ports';
 import { orderWorkflow } from '../workflows/order';
 import type { SettledPayment } from './x402';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** How long the delivery links work, from the delivery; and how long an order is kept, from when it was made. */
+/** How long the delivery links work, from the delivery. */
 const LINK_DAYS = 30;
-const ORDER_DAYS = 30;
 
 export type MarkPaidDeps = { store: Pick<OrderStore, 'findOrderByPayment' | 'transition' | 'setStep' | 'setRunId'> };
+
+/** A payment that was found settled. `txHash` is null when it was found on the chain, which does not say which transaction. */
+export type FoundPayment = Pick<SettledPayment, 'asset' | 'payer' | 'nonce'> & { txHash: string | null };
+
+/** Starts the run of a paid order and keeps its id. The caller has the right to start it: nothing here checks. */
+export async function startRun(orderId: string, store: Pick<OrderStore, 'setRunId'>): Promise<void> {
+  const run = await start(orderWorkflow, [orderId]);
+  await store.setRunId(orderId, run.runId);
+}
 
 /**
  * `started` when this call moved the order to `paid` and started its run. `already` when the order is past waiting
  * for its settlement (another call got there first, or it was given up as unpaid): nothing is started twice.
  * `unknown` when no order has this payment.
  */
-export async function markPaidAndStart(payment: SettledPayment, deps: MarkPaidDeps): Promise<'started' | 'already' | 'unknown'> {
+export async function markPaidAndStart(payment: FoundPayment, deps: MarkPaidDeps): Promise<'started' | 'already' | 'unknown'> {
   const { store } = deps;
   const order = await store.findOrderByPayment(payment.asset, payment.payer, payment.nonce);
   if (order === null) return 'unknown';
   // The store sets `paidAt`. Only one caller can win this move, so only one starts a run.
   if (!(await store.transition(order.id, 'paid', { settleTx: payment.txHash }))) return 'already';
   await store.setStep(order.id, 'payment', 'done');
-  const run = await start(orderWorkflow, [order.id]);
-  await store.setRunId(order.id, run.runId);
+  await startRun(order.id, store);
   return 'started';
 }
 

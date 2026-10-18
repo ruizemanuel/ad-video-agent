@@ -1,7 +1,8 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
-// VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files) and the LlmPort (the
-// models, as far as the tasks so far use them); the other ports arrive with the tasks that use them.
+// VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
+// models, as far as the tasks so far use them) and the BuyPort (what the chain says about a payment, so far); the
+// other ports arrive with the tasks that use them.
 import type { OrderRequestSchema, VmTaskKind } from '@app/core';
 import type { z } from 'zod';
 
@@ -34,6 +35,9 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   unpaid: ['expired'],
   expired: [],
 };
+
+/** How long an order is kept, from when it was made: then it expires and its files are deleted. */
+export const ORDER_DAYS = 30;
 
 export const canTransition = (from: OrderStatus, to: OrderStatus): boolean => ORDER_TRANSITIONS[from].includes(to);
 
@@ -218,6 +222,18 @@ export interface BlobPort {
   presignGet(path: string, minutes: number): Promise<string>;
   /** Deletes every blob whose path starts with `prefix`, and says how many. An empty prefix is refused. */
   deletePrefix(prefix: string): Promise<number>;
+}
+
+/** What the chain says about a payment authorization: `unknown` when it could not be asked (or did not answer). */
+export type AuthorizationSettlement = 'settled' | 'unsettled' | 'unknown';
+
+/** Buy, as far as the tasks so far use it: renting the VM and following it arrive with the task that pays for it. */
+export interface BuyPort {
+  /**
+   * Whether an EIP-3009 authorization has been used on chain. `unsettled` is only a fact for now: until `validBefore`
+   * it may still settle, and after it, never. `asset` is the token's address.
+   */
+  authorizationSettled(input: { asset: string; authorization: PaymentAuthorization }): Promise<AuthorizationSettlement>;
 }
 
 /** What the model says about a site: `usd` is what the call cost. */
