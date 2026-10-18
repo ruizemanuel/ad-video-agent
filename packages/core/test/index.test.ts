@@ -1,14 +1,49 @@
 import { describe, expect, it } from 'vitest';
 import * as core from '../src/index';
 // Type-only imports: `pnpm typecheck` fails here if the package stops exporting one of them.
-import type { Box, Claim, Edl, Format, Line, PieceName, Scene, Shot, SiteData, SiteFont, TimedScene } from '../src/index';
+import type {
+  BannedPhrases,
+  Box,
+  Claim,
+  Edl,
+  Format,
+  FramingItem,
+  JudgeItem,
+  Line,
+  PieceName,
+  Problem,
+  Scene,
+  ScenePatch,
+  Shot,
+  SiteData,
+  SiteFont,
+  TimedScene,
+} from '../src/index';
 
-export type PublicTypes = [Box, Claim, Edl, Format, Line, PieceName, Scene, Shot, SiteData, SiteFont, TimedScene];
+export type PublicTypes = [
+  BannedPhrases,
+  Box,
+  Claim,
+  Edl,
+  Format,
+  FramingItem,
+  JudgeItem,
+  Line,
+  PieceName,
+  Problem,
+  Scene,
+  ScenePatch,
+  Shot,
+  SiteData,
+  SiteFont,
+  TimedScene,
+];
 
 describe('@app/core public surface', () => {
   it('exports what the other packages build on', () => {
     expect(Object.keys(core)).toEqual(
       expect.arrayContaining([
+        'BANNED_PHRASES',
         'ClaimSchema',
         'EdlSchema',
         'FORMATS',
@@ -20,12 +55,16 @@ describe('@app/core public surface', () => {
         'SceneSchema',
         'TYPE',
         'WIPE_FRAMES',
+        'applyPatches',
         'beatsToFrames',
         'contrast',
+        'judgeItems',
         'layoutScenes',
         'retimeForBpm',
+        'scenePaths',
         'settledFrame',
         'theme',
+        'validateEdl',
       ]),
     );
   });
