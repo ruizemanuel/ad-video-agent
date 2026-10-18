@@ -6,28 +6,25 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { beatsToFrames, layoutScenes, settledFrame, timedScenePath, type Edl, type Format, type ProbeItem, type Scene, type SiteData, type Still, type TimedScene } from '@app/core';
+import { layoutScenes, settledFrame, timedScenePath, type Edl, type Format, type ProbeItem, type SiteData, type Still, type TimedScene } from '@app/core';
 import { childEnv } from '../child-env';
 import { readProbe } from '../video/probe';
+import { textChanges } from '../video/rhythm';
 import { getServeUrl } from './bundle';
 
-// A still of a text that is about to be replaced is taken this many frames before the change: clear of a crossfade of up
-// to 6 frames centered on it, and well after the text came in (a beat is at least 14 frames at 128 bpm).
+// A still of a text that is about to be replaced is taken this many frames before the change...
 const BEFORE_CHANGE = 4;
+// ...but not before the scene has come in (its caption, its card), unless the change comes first: then the frame before it.
+const ENTRANCES = 20;
 
-/** The beats of a scene at which its text is replaced. A WordCycle shows word k (lines[k + 1]) from beat k + 1. */
-const changeBeats = (scene: Scene): number[] => {
-  if (scene.piece === 'WordCycle') return scene.lines.slice(2).map((_, k) => k + 2);
-  const at = scene.lines[1]?.atBeat;
-  return at === undefined ? [] : [at];
-};
+/** The frame of the scene to take the text replaced at `change` in: whole, and never once the change has started. */
+const stillBefore = (change: number): number => Math.min(Math.max(change - BEFORE_CHANGE, ENTRANCES), change - 1);
 
 /** The frames of the video of `hook` to take stills of: the settled frame of each scene, and one before each change of its text. */
 export function keyframePlan(edl: Edl, hook: number): { timed: TimedScene; frame: number }[] {
   return layoutScenes(edl, hook).scenes.flatMap((timed) => {
-    const beatFrame = (beat: number): number => beatsToFrames(timed.startBeat + beat, edl.bpm);
-    const changes = changeBeats(timed.scene).filter((beat) => beat < timed.scene.beats);
-    return [...changes.map((beat) => beatFrame(beat) - BEFORE_CHANGE), settledFrame(timed)].map((frame) => ({ timed, frame }));
+    const before = textChanges(timed, edl.bpm).map((change) => timed.from + stillBefore(change));
+    return [...before, settledFrame(timed)].map((frame) => ({ timed, frame }));
   });
 }
 

@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitHeadline, layoutLines, lineText, pillSize, toWords, type Measure } from '../src/video/type';
+import { fitHeadline, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -70,6 +70,42 @@ describe('setting lines', () => {
 
   it('leaves out empty lines', () => {
     expect(layoutLines([[], ...words('Cobrás todo.')], headline).lines.map(lineText)).toEqual(['Cobrás todo.']);
+  });
+
+  it('tells which line of the edit list each set line starts in, through splits and empty lines', () => {
+    const source = words('Your shop', 'in one link for your whole catalog');
+    const split = layoutLines(source, headline);
+    expect(split.lines.map(lineText)).toEqual(['Your shop', 'in one link for', 'your whole catalog']);
+    expect(lineSources(split.lines, source)).toEqual([0, 1, 1]);
+    const withEmpty = [[], ...words('One', 'Two')];
+    expect(lineSources(layoutLines(withEmpty, headline).lines, withEmpty)).toEqual([1, 2]);
+  });
+});
+
+describe('captions that replace one another', () => {
+  // The caption of a 9:16 UI scene: as wide as the safe zone, in a block 300 px high.
+  const caption = { width: safeWidth('9x16'), max: TYPE['9x16'].caption, min: TYPE['9x16'].min, maxLines: 2, measure: perChar, box: { height: 300, lineHeight: 1.12 } };
+
+  it('sets them at one size, splitting a caption that would otherwise hold the other one down', () => {
+    // On its own, "Everything included" stays on one line at 73 px; split, it is set as large as the first caption.
+    expect(layoutLines(words('Everything included'), caption)).toMatchObject({ size: 73 });
+    const set = layoutCaptions([words('Sell on WhatsApp with no fees'), words('Everything included')], caption);
+    expect(set.lines.map((lines) => lines.map(lineText))).toEqual([
+      ['Sell on WhatsApp', 'with no fees'],
+      ['Everything', 'included'],
+    ]);
+    expect(set.size).toBe(layoutLines(words('Sell on WhatsApp with no fees'), caption).size);
+  });
+
+  it('splits nothing when every caption fits on one line at the full size', () => {
+    const set = layoutCaptions([words('Pro plan'), words('All included')], caption);
+    expect(set.lines.map((lines) => lines.map(lineText))).toEqual([['Pro plan'], ['All included']]);
+    expect(set.size).toBe(TYPE['9x16'].caption);
+  });
+
+  it('never sets them below the smallest size of the format', () => {
+    const long = words('A caption far too long to be set at any readable size in this block');
+    expect(layoutCaptions([words('Pro plan'), long], caption).size).toBe(TYPE['9x16'].min);
   });
 });
 

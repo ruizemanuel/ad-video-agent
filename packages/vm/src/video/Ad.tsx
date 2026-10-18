@@ -1,17 +1,21 @@
 // The video of one hook: its scenes back to back on the beat, the brand wipe on the cuts that ask for it, the brand's
-// fonts loaded before anything is measured, and, for the key frames, the probe that measures the text of each frame.
+// fonts (and the size of its logo) loaded before anything is measured, and, for the key frames, the probe that measures
+// the text of each frame.
 import { useEffect, useLayoutEffect, useMemo, useState, type FC } from 'react';
 import { loadFont } from '@remotion/fonts';
 import { Audio } from '@remotion/media';
 import { AbsoluteFill, cancelRender, continueRender, delayRender, Sequence, staticFile, useCurrentFrame } from 'remotion';
 import { fontFaces, layoutScenes, theme as makeTheme, WIPE_FRAMES, type Edl, type Format, type PieceName, type ProbeItem, type SiteData } from '@app/core';
+import type { Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
 import { KineticHeadline } from './pieces/KineticHeadline';
+import { TypeIn } from './pieces/TypeIn';
 import { UiFocus } from './pieces/UiFocus';
 import { UiScroll } from './pieces/UiScroll';
 import { Wipe } from './pieces/Wipe';
+import { WordCycle } from './pieces/WordCycle';
 import { probeMessage } from './probe';
 
 /**
@@ -20,13 +24,7 @@ import { probeMessage } from './probe';
  */
 export type AdProps = { edl: Edl | null; site: SiteData | null; format: Format; hook: number; probe?: boolean; music?: string };
 
-const PIECES: Partial<Record<PieceName, FC<PieceProps>>> = { KineticHeadline, UiFocus, UiScroll, ClaimStack, EndCard };
-
-const pieceFor = (name: PieceName): FC<PieceProps> => {
-  const piece = PIECES[name];
-  if (!piece) throw new Error(`The video has no piece ${name} yet.`);
-  return piece;
-};
+const PIECES: Record<PieceName, FC<PieceProps>> = { KineticHeadline, UiFocus, UiScroll, ClaimStack, WordCycle, TypeIn, EndCard };
 
 /** Measures every `[data-qa-line]` of the frame once it is laid out: its box, size, font, colors, opacity and background. */
 const Probe: FC = () => {
@@ -66,34 +64,48 @@ const Probe: FC = () => {
   return null;
 };
 
+/** The natural size of the site's logo, or null when it has none or it does not load. */
+const loadLogoSize = (site: SiteData): Promise<Size | null> => {
+  const logo = site.brand.logo;
+  if (!logo) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => resolve(null);
+    image.src = staticFile(logo.png ?? logo.file);
+  });
+};
+
 /**
- * Text is measured while the pieces render, so nothing renders until the brand's fonts are in. The render is held until
- * the tree with the pieces is laid out: their own holds (images, the probe) start before this one ends.
+ * Text is measured while the pieces render, and what the close sets depends on the logo's size (see logoReads), so
+ * nothing renders until the brand's fonts are in and that size is known. The render is held until the tree with the
+ * pieces is laid out: their own holds (images, the probe) start before this one ends.
  */
-const useBrandFonts = (site: SiteData): boolean => {
-  const [handle] = useState(() => delayRender('brand fonts'));
-  const [ready, setReady] = useState(false);
+const useBrand = (site: SiteData): { logoSize: Size | null } | null => {
+  const [handle] = useState(() => delayRender('brand fonts and logo'));
+  const [brand, setBrand] = useState<{ logoSize: Size | null } | null>(null);
   useEffect(() => {
-    Promise.all(fontFaces(site).map((face) => loadFont({ family: face.family, url: staticFile(face.file), weight: face.weight, stretch: face.stretch })))
-      .then(() => setReady(true))
+    const fonts = Promise.all(fontFaces(site).map((face) => loadFont({ family: face.family, url: staticFile(face.file), weight: face.weight, stretch: face.stretch })));
+    Promise.all([fonts, loadLogoSize(site)])
+      .then(([, logoSize]) => setBrand({ logoSize }))
       .catch((error: unknown) => cancelRender(error));
   }, [site]);
   useLayoutEffect(() => {
-    if (ready) continueRender(handle);
-  }, [ready, handle]);
-  return ready;
+    if (brand) continueRender(handle);
+  }, [brand, handle]);
+  return brand;
 };
 
 const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> = ({ edl, site, format, hook, probe, music }) => {
-  const ready = useBrandFonts(site);
+  const brand = useBrand(site);
   const theme = useMemo(() => makeTheme(site), [site]);
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
-  if (!ready) return <AbsoluteFill style={{ background: theme.bg }} />;
+  if (!brand) return <AbsoluteFill style={{ background: theme.bg }} />;
   return (
-    <Ctx.Provider value={{ theme, format, site, edl }}>
+    <Ctx.Provider value={{ theme, format, site, edl, logoSize: brand.logoSize }}>
       <AbsoluteFill style={{ background: theme.bg }}>
         {scenes.map((timed) => {
-          const Piece = pieceFor(timed.scene.piece);
+          const Piece = PIECES[timed.scene.piece];
           return (
             <Sequence key={timed.index} from={timed.from} durationInFrames={timed.duration} name={`${timed.role}-${timed.index}-${timed.scene.piece}`}>
               <Piece scene={timed.scene} timed={timed} showLogo={timed.index === 0 && timed.scene.piece === 'KineticHeadline'} />

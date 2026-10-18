@@ -33,6 +33,20 @@ export const toWords = (line: Line): TypeLine => {
 
 export const lineText = (line: TypeLine): string => line.map((w) => w.text).join(' ');
 
+/**
+ * For each line as set (see layoutLines, which only splits lines and leaves out empty ones), the index of the line of
+ * `source` it starts in.
+ */
+export const lineSources = (set: readonly TypeLine[], source: readonly TypeLine[]): number[] => {
+  const owner = source.flatMap((line, i) => line.map(() => i));
+  let at = 0;
+  return set.map((line) => {
+    const index = owner[at] ?? 0;
+    at += line.length;
+    return index;
+  });
+};
+
 /** One or two lines get the full size, three a step less and four or more another. */
 const lineScale = (count: number): number => (count <= 2 ? 1 : count === 3 ? 0.88 : 0.74);
 
@@ -43,6 +57,8 @@ type Fit = {
   measure?: Measure;
   /** A block of fixed height the lines must stay inside, glyphs included, and the line height of their font. */
   box?: { height: number; lineHeight: number };
+  /** The share of `max` under which the widest line is split (SPLIT_BELOW unless given). */
+  splitBelow?: number;
 };
 
 /** The largest size, up to `max` scaled by the line count, at which every line fits `width` and the block its `box`; not floored. */
@@ -76,7 +92,7 @@ export const layoutLines = (input: readonly TypeLine[], fit: Fit & { measure: Me
     const size = fittedSize(texts, fit);
     const widths = texts.map(fit.measure);
     const widest = lines[widths.indexOf(Math.max(...widths))];
-    if (!widest || size >= fit.max * SPLIT_BELOW || lines.length >= fit.maxLines || widest.length < 2) return { lines, size: settle(size, fit.min) };
+    if (!widest || size >= fit.max * (fit.splitBelow ?? SPLIT_BELOW) || lines.length >= fit.maxLines || widest.length < 2) return { lines, size: settle(size, fit.min) };
     let best = 1;
     let bestDiff = Infinity;
     for (let k = 1; k < widest.length; k++) {
@@ -86,6 +102,17 @@ export const layoutLines = (input: readonly TypeLine[], fit: Fit & { measure: Me
     const at = lines.indexOf(widest);
     lines = [...lines.slice(0, at), widest.slice(0, best), widest.slice(best), ...lines.slice(at + 1)];
   }
+};
+
+/**
+ * Captions that replace one another, set at one size (a caption that changes size as it is replaced reads as a jump):
+ * the largest that every one of them reaches, each as layoutLines sets it or, when that holds the others down, split
+ * further.
+ */
+export const layoutCaptions = (captions: readonly TypeLine[][], fit: Fit & { measure: Measure; maxLines: number }): { lines: TypeLine[][]; size: number } => {
+  const options = captions.map((caption) => ({ own: layoutLines(caption, fit), split: layoutLines(caption, { ...fit, splitBelow: 1 }) }));
+  const size = Math.min(...options.map(({ own, split }) => Math.max(own.size, split.size)));
+  return { lines: options.map(({ own, split }) => (own.size >= size ? own : split).lines), size };
 };
 
 /**

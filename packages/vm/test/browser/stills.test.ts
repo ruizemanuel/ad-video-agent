@@ -1,10 +1,10 @@
 // Opt-in (`pnpm --filter @app/vm test:browser`): captures the fixture site, bundles the video with the capture as its
 // public dir and renders the key frames of a fixture edit list in a real Chrome, with ffmpeg making the JPEGs.
 // It needs the network (Google Fonts for the capture) and ffmpeg on the PATH.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkStills, FORMATS, layoutScenes, timedScenePath, validateEdl, type Edl, type Format, type SiteData, type Still } from '@app/core';
+import { checkStills, FORMATS, layoutScenes, theme, timedScenePath, validateEdl, type Edl, type Format, type SiteData, type Still } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { capture, type CapturedSite } from '../../src/capture';
 import { getServeUrl } from '../../src/render/bundle';
@@ -18,21 +18,25 @@ async function captureFixture(dir: string, url: string): Promise<CapturedSite> {
   return JSON.parse(readFileSync(join(dir, 'site.json'), 'utf8')) as CapturedSite;
 }
 
-/** An edit list of the fixture site with the five pieces of this task, its claims quoted from the site. */
+const sectionIdOf = (site: SiteData, heading: string): string => {
+  const section = site.sections.find((s) => s.heading === heading);
+  if (!section) throw new Error(`The capture has no section "${heading}".`);
+  return section.id;
+};
+
+/** A phone shot of a section and the index of one of its boxes, found by kind and text. */
+const pickBox = (site: SiteData, kind: 'heading' | 'price', text: string): { shotId: string; boxIndex: number } => {
+  for (const shot of site.shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'))) {
+    const boxIndex = site.boxes.filter((b) => b.shotId === shot.id).findIndex((b) => b.kind === kind && b.text === text);
+    if (boxIndex >= 0) return { shotId: shot.id, boxIndex };
+  }
+  throw new Error(`No phone shot shows the ${kind} "${text}".`);
+};
+
+/** An edit list of the fixture site with the five pieces tested first, its claims quoted from the site. */
 function makeFixtureEdl(site: SiteData): Edl {
-  const sectionId = (heading: string): string => {
-    const section = site.sections.find((s) => s.heading === heading);
-    if (!section) throw new Error(`The capture has no section "${heading}".`);
-    return section.id;
-  };
-  /** A phone shot of a section and the index of one of its boxes, found by kind and text. */
-  const pick = (kind: 'heading' | 'price', text: string): { shotId: string; boxIndex: number } => {
-    for (const shot of site.shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'))) {
-      const boxIndex = site.boxes.filter((b) => b.shotId === shot.id).findIndex((b) => b.kind === kind && b.text === text);
-      if (boxIndex >= 0) return { shotId: shot.id, boxIndex };
-    }
-    throw new Error(`No phone shot shows the ${kind} "${text}".`);
-  };
+  const sectionId = (heading: string): string => sectionIdOf(site, heading);
+  const pick = (kind: 'heading' | 'price', text: string) => pickBox(site, kind, text);
   return {
     lang: 'en',
     bpm: 112,
@@ -86,6 +90,83 @@ function makeFixtureEdl(site: SiteData): Edl {
   };
 }
 
+/**
+ * An edit list of the fixture site with the new pieces: a typed address (and, as hook 1, a typed question), a word
+ * cycle, a UI scene whose caption is replaced on a beat, a headline whose lines come in on the beat, and the close in two
+ * steps with a tagline.
+ */
+function makeNewPiecesEdl(site: SiteData): Edl {
+  const host = new URL(site.url).hostname.replace(/^www\./, '');
+  const hero = sectionIdOf(site, 'Sell on WhatsApp with no fees');
+  return {
+    lang: 'en',
+    bpm: 112,
+    style: { energy: 'bold', density: 'airy' },
+    hooks: [
+      [{ piece: 'TypeIn', beats: 4, variant: 'url', lines: [{ text: host, kind: 'framing' }] }],
+      [{ piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [{ text: 'Where do my customers pay me?', kind: 'framing' }] }],
+    ],
+    body: [
+      {
+        piece: 'WordCycle',
+        beats: 6,
+        lines: [
+          { text: 'Get paid with', kind: 'framing' },
+          { text: 'cards', kind: 'claim', claimId: 'c4' },
+          { text: 'transfers', kind: 'claim', claimId: 'c4' },
+          { text: 'cash', kind: 'claim', claimId: 'c4' },
+        ],
+        transitionIn: 'wipe',
+      },
+      {
+        piece: 'UiFocus',
+        beats: 8,
+        lines: [
+          { text: 'Sell on WhatsApp with no fees', kind: 'claim', claimId: 'c1', accent: 'no fees' },
+          { text: 'Customers pay you directly', kind: 'claim', claimId: 'c5', atBeat: 4 },
+        ],
+        ...pickBox(site, 'heading', 'Sell on WhatsApp with no fees'),
+      },
+      {
+        piece: 'KineticHeadline',
+        beats: 6,
+        lines: [
+          { text: 'Your shop', kind: 'framing' },
+          { text: 'in one link.', kind: 'framing', accent: 'one link' },
+          { text: 'Today.', kind: 'framing' },
+        ],
+      },
+    ],
+    cta: {
+      piece: 'EndCard',
+      beats: 6,
+      lines: [
+        { text: 'Start free', kind: 'framing' },
+        { text: 'Your shop in one link.', kind: 'claim', claimId: 'c6' },
+      ],
+      transitionIn: 'wipe',
+    },
+    claims: [
+      { id: 'c1', text: 'Tiendita sells on WhatsApp with no fees.', sectionId: hero, quote: 'Sell on WhatsApp with no fees' },
+      { id: 'c4', text: 'It takes cards, transfers and cash.', sectionId: sectionIdOf(site, 'Every payment method'), quote: 'Cards, transfers and cash on delivery' },
+      { id: 'c5', text: 'Customers pay the shop directly.', sectionId: hero, quote: 'Your customers pay you directly.' },
+      { id: 'c6', text: 'The shop is one link.', sectionId: hero, quote: 'Your shop in one link.' },
+    ],
+    musicPrompt: 'Upbeat electronic pop, bright synths, steady four-on-the-floor drums.',
+  };
+}
+
+/** The texts the probe measured in the stills of a scene. */
+const textsOf = (stills: Still[], path: string): string[] => stills.filter((s) => s.path === path).flatMap((s) => s.text.map((t) => t.text));
+
+/** `#rrggbb` as Chrome writes a computed color. */
+const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`;
+
+// A logo of ordinary proportions (8:3) for the close, written into the capture before the bundle copies it.
+const MARK_FILE = 'media/test-mark.svg';
+const MARK_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="#c81e6b"/><rect x="130" y="38" width="170" height="44" rx="22" fill="#1a1614"/></svg>';
+
 const jpegWidth = (base64: string): number => {
   const jpeg = Buffer.from(base64, 'base64');
   // The width is in the start-of-frame segment (marker, length, precision, height, width).
@@ -104,6 +185,8 @@ beforeAll(async () => {
   fixture = await serveFixtureSite();
   dir = mkdtempSync(join(tmpdir(), 'stills-'));
   site = await captureFixture(dir, fixture.url);
+  // The bundle copies the run folder when it is made: the extra logo goes in before the first render.
+  writeFileSync(join(dir, MARK_FILE), MARK_SVG);
   edl = makeFixtureEdl(site);
 });
 afterAll(async () => {
@@ -163,5 +246,55 @@ describe('the other formats', () => {
       const composition = await selectComposition({ serveUrl, id: `ad-${format}`, inputProps: { edl, site, format, hook: 0 } });
       expect(composition).toMatchObject({ width: FORMATS[format].width, height: FORMATS[format].height, fps: 30, durationInFrames: layoutScenes(edl, 0).total });
     }
+  });
+});
+
+describe('the new pieces and the rhythm', () => {
+  let pieces: Edl;
+  let stills: Still[];
+  beforeAll(async () => {
+    pieces = makeNewPiecesEdl(site);
+    stills = await renderKeyframes({ edl: pieces, site, runDir: dir, format: '9x16', hook: 0 });
+  });
+
+  it('starts from an edit list the site backs', () => {
+    expect(validateEdl(pieces, site)).toEqual([]);
+  });
+
+  it('renders a typed address, a word cycle, a caption replaced on its beat and the close in two steps in 9x16, and the stills pass the code checks', () => {
+    expect(checkStills(stills, pieces, site, '9x16').filter((c) => !c.pass)).toEqual([]);
+    // One still per text a scene shows: three words, two captions.
+    expect(stills.map((s) => s.path)).toEqual(['hooks[0][0]', 'body[0]', 'body[0]', 'body[0]', 'body[1]', 'body[1]', 'body[2]', 'cta']);
+    expect(textsOf(stills, 'body[0]')).toEqual(['Get paid with', 'cards', 'Get paid with', 'transfers', 'Get paid with', 'cash']);
+    expect(stills.filter((s) => s.path === 'body[1]').map((s) => s.text.map((t) => t.text).join(' / '))).toEqual([
+      'Sell on WhatsApp / with no fees',
+      'Customers pay / you directly',
+    ]);
+    expect(textsOf(stills, 'body[2]')).toEqual(['Your shop', 'in one link.', 'Today.']);
+  });
+
+  it('types the whole address by the settled frame', () => {
+    expect(textsOf(stills, 'hooks[0][0]')).toEqual([new URL(site.url).hostname]);
+  });
+
+  it('closes on the brand name, in the heading font and the brand color, when the logo is a whole text header', () => {
+    const close = stills.find((s) => s.path === 'cta')!;
+    expect(close.text.map((t) => t.text)).toEqual(['Tiendita', 'Your shop in one link.', 'Start free', new URL(site.url).hostname]);
+    const { display, accentText } = theme(site);
+    const name = close.text[0]!;
+    expect(name.font.startsWith(display.family)).toBe(true);
+    expect(name.colors).toEqual([cssRgb(accentText)]);
+  });
+
+  it('closes on the logo when it reads', async () => {
+    const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
+    const close = (await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 0 })).find((s) => s.path === 'cta')!;
+    expect(close.text.map((t) => t.text)).toEqual(['Your shop in one link.', 'Start free', new URL(site.url).hostname]);
+  });
+
+  it('renders a typed question as hook 1 and its stills pass the code checks', async () => {
+    const hook1 = await renderKeyframes({ edl: pieces, site, runDir: dir, format: '9x16', hook: 1 });
+    expect(checkStills(hook1, pieces, site, '9x16', 1).filter((c) => !c.pass)).toEqual([]);
+    expect(textsOf(hook1, 'hooks[1][0]').join(' ')).toBe('Where do my customers pay me?');
   });
 });

@@ -1,13 +1,16 @@
 // What the pieces share: the context of the Ad, easing, the brand's type set and revealed line by line, the logo, the safe
 // boxes of each format, and the stage of the UI scenes (a caption over a card with the real UI).
-import { createContext, useContext, useMemo, type CSSProperties, type FC } from 'react';
+import { createContext, useContext, useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
 import { measureText } from '@remotion/layout-utils';
 import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { alpha, FORMATS, mix, safeWidth, TYPE, type Edl, type FontSpec, type Format, type Scene, type Shot, type SiteData, type Theme, type TimedScene } from '@app/core';
 import { stageLayout } from '../camera';
-import { layoutLines, toWords, type Measure, type TypeLine } from '../type';
+import type { Size } from '../logo';
+import { captionSwapFrame } from '../rhythm';
+import { layoutCaptions, layoutLines, toWords, type Measure, type TypeLine } from '../type';
 
-export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl };
+/** `logoSize`: the natural size of the site's logo, null when it has none or it did not load. */
+export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl; logoSize: Size | null };
 export const Ctx = createContext<AdContext | null>(null);
 
 export const useAd = (): AdContext => {
@@ -49,38 +52,35 @@ export const measureWith =
       validateFontIsLoaded: true,
     }).width / 100;
 
-/** Lines revealed by a mask, each rising from below its own clip, one after the other. Each is a probed `[data-qa-line]`. */
-export const RevealLines: FC<{
-  lines: TypeLine[];
-  size: number;
-  font: FontSpec;
-  color: string;
-  accent: string;
-  delay?: number;
-  stagger?: number;
-  align?: 'left' | 'center';
-}> = ({ lines, size, font, color, accent, delay = 0, stagger = 5, align = 'left' }) => {
+type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center' };
+
+/**
+ * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: just
+ * hidden under its clip).
+ */
+export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [] }) => (
+  <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align }}>
+    {lines.map((line, i) => (
+      <div key={i} style={{ overflow: 'hidden', padding: '0.14em 0 0.16em', margin: '-0.14em 0 -0.16em' }}>
+        <div data-qa-line style={{ transform: `translateY(${(drop[i] ?? 0) * 110}%)` }}>
+          {line.map((word, j) => (
+            <span key={j} style={word.accent ? { color: accent } : undefined}>
+              {word.text}
+              {j < line.length - 1 ? ' ' : ''}
+            </span>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+/** Lines revealed by a mask, each rising from below its own clip: line i from frame `starts[i]`, or one after the other from `delay`. */
+export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; starts?: readonly number[] }> = ({ delay = 0, stagger = 5, starts, ...set }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  return (
-    <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align }}>
-      {lines.map((line, i) => {
-        const p = spring({ frame: frame - delay - i * stagger, fps, config: { damping: 200 }, durationInFrames: 16 });
-        return (
-          <div key={i} style={{ overflow: 'hidden', padding: '0.14em 0 0.16em', margin: '-0.14em 0 -0.16em' }}>
-            <div data-qa-line style={{ transform: `translateY(${(1 - p) * 110}%)` }}>
-              {line.map((word, j) => (
-                <span key={j} style={word.accent ? { color: accent } : undefined}>
-                  {word.text}
-                  {j < line.length - 1 ? ' ' : ''}
-                </span>
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const drop = set.lines.map((_, i) => 1 - spring({ frame: frame - (starts?.[i] ?? delay + i * stagger), fps, config: { damping: 200 }, durationInFrames: 16 }));
+  return <TypeLines {...set} drop={drop} />;
 };
 
 // ---------- the brand ----------
@@ -138,12 +138,20 @@ export const ShotImage: FC<{ shot: Shot; placed: { x: number; y: number; scale: 
   </div>
 );
 
+// A caption replaced at its atBeat fades into the next one over 6 frames from the beat: the one that goes is out in
+// the first 3, the one that comes is in by the 6th, so the two never read on top of each other.
+const CAPTION_OUT = 3;
+const CAPTION_IN = { from: 1, to: 6 };
+// While they fade, the caption that goes rises this share of its size and the one that comes rises into place.
+const CAPTION_DRIFT = 0.12;
+
 /**
  * The caption on top, in a block of fixed height so that captions of one or two lines never move the card, and the real
- * UI below it in a large card that rises in and bleeds off the bottom edge.
+ * UI below it in a large card that rises in and bleeds off the bottom edge. A second line with an atBeat is a caption
+ * of its own: it replaces the first on that beat, with a short fade, and both are set at one size.
  */
-export const UiStage: FC<{ scene: Scene; shot: Shot; placed: { x: number; y: number; scale: number } }> = ({ scene, shot, placed }) => {
-  const { theme, format } = useAd();
+export const UiStage: FC<{ scene: Scene; timed: TimedScene; shot: Shot; placed: { x: number; y: number; scale: number } }> = ({ scene, timed, shot, placed }) => {
+  const { theme, format, edl } = useAd();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const type = TYPE[format];
@@ -152,33 +160,35 @@ export const UiStage: FC<{ scene: Scene; shot: Shot; placed: { x: number; y: num
   // The caption lines up with the card's left edge, never outside the safe zone.
   const captionLeft = Math.max(safe.left, stage.cardLeft);
   const captionWidth = Math.min(safeWidth(format), stage.cardW);
-  const { lines, size } = useMemo(
-    () =>
-      layoutLines(scene.lines.map(toWords), {
-        width: captionWidth,
-        max: type.caption,
-        min: type.min,
-        maxLines: 2,
-        measure: measureWith(theme.display),
-        box: { height: stage.captionHeight, lineHeight: theme.display.lineHeight },
-      }),
-    [scene, captionWidth, type, theme, stage.captionHeight],
-  );
+  const swap = captionSwapFrame(scene.lines, timed, edl.bpm);
+  const captions = useMemo(() => {
+    const fit = {
+      width: captionWidth,
+      max: type.caption,
+      min: type.min,
+      maxLines: 2,
+      measure: measureWith(theme.display),
+      box: { height: stage.captionHeight, lineHeight: theme.display.lineHeight },
+    };
+    if (swap === undefined) return [layoutLines(scene.lines.map(toWords), fit)];
+    const { lines, size } = layoutCaptions([scene.lines.slice(0, 1).map(toWords), scene.lines.slice(1).map(toWords)], fit);
+    return lines.map((caption) => ({ lines: caption, size }));
+  }, [scene, swap, captionWidth, type, theme, stage.captionHeight]);
   const rise = spring({ frame, fps, config: { damping: 200 }, durationInFrames: 18 });
+  const out = swap === undefined ? 0 : progress(frame, swap, swap + CAPTION_OUT);
+  const come = swap === undefined ? 0 : progress(frame, swap + CAPTION_IN.from, swap + CAPTION_IN.to);
+  const [first, second] = captions;
+  const drift = (first?.size ?? 0) * CAPTION_DRIFT;
+  const caption = (children: ReactNode, opacity: number, y: number) => (
+    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, opacity, transform: `translateY(${y}px)` }}>{children}</div>
+  );
+  const text = { font: theme.display, color: theme.fg, accent: theme.accentText };
   return (
     <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(theme.bg, theme.primary, 0.1)} 0%, ${theme.bg} 70%)` }}>
-      <div
-        style={{
-          position: 'absolute',
-          left: captionLeft,
-          top: stage.captionTop,
-          width: captionWidth,
-          height: stage.captionHeight,
-          display: 'flex',
-          alignItems: 'flex-end',
-        }}
-      >
-        <RevealLines lines={lines} size={size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={2} />
+      <div style={{ position: 'absolute', left: captionLeft, top: stage.captionTop, width: captionWidth, height: stage.captionHeight }}>
+        {/* Each caption is on screen, and probed, only while it can be seen. */}
+        {first && out < 1 && caption(<RevealLines lines={first.lines} size={first.size} {...text} delay={2} />, 1 - out, -out * drift)}
+        {second && come > 0 && caption(<TypeLines lines={second.lines} size={second.size} {...text} />, come, (1 - come) * drift)}
       </div>
       <div
         style={{

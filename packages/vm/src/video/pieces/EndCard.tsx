@@ -1,46 +1,109 @@
 import { useMemo, type FC } from 'react';
-import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Img, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { alpha, TYPE } from '@app/core';
-import { pillSize } from '../type';
-import { centeredSafeBox, fontStyle, Logo, measureWith, useAd, type PieceProps } from './common';
+import { brandName, fitLogo, logoReads } from '../logo';
+import { BUTTON_IN, endCardSteps, pressState } from '../rhythm';
+import { layoutLines, pillSize, toWords } from '../type';
+import { centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, type PieceProps } from './common';
 
-// The close: the logo, the site's own call to action as a button in the brand color, and the domain. Centered on the
-// frame's center line, not in the safe zone (which is lopsided in 9:16).
-export const EndCard: FC<PieceProps> = ({ scene }) => {
-  const { theme, format, site } = useAd();
+// The brand comes in a few frames into the scene, under the end of the wipe that usually brings the close in.
+const MARK_AT = 3;
+// The pill of the call to action: 0.62 em of padding above and below a line 1 em tall.
+const PILL_HEIGHT_EM = 2.24;
+
+// The close, in two steps (spec 6.5). First the brand: its logo, or its name in the site's heading font and brand color
+// when the logo does not read (see logoReads), with the optional tagline (lines[1]) under it. Then, on beat 3, the
+// brand moves up as the site's call to action (lines[0]) comes in under it as a button in the brand color, over the
+// domain; on beat 4.5 the button is pressed. Centered on the frame's center line, not in the safe zone (which is
+// lopsided in 9:16).
+export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
+  const { theme, format, site, edl, logoSize } = useAd();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const type = TYPE[format];
-  const cta = scene.lines[0]?.text ?? '';
-  const domain = new URL(site.url).hostname.replace(/^www\./, '');
-  const column = centeredSafeBox(format);
-  const ctaSize = useMemo(() => pillSize(cta, column.width, format, measureWith(theme.display)), [cta, column.width, format, theme]);
-  const pill = spring({ frame: frame - 6, fps, config: { damping: 200 }, durationInFrames: 16 });
-  const address = spring({ frame: frame - 11, fps, config: { damping: 200 }, durationInFrames: 16 });
+  const logo = site.brand.logo;
+  const layout = useMemo(() => {
+    const type = TYPE[format];
+    const column = centeredSafeBox(format);
+    const measure = measureWith(theme.display);
+    const [cta, tagline] = scene.lines;
+    const name = brandName(site);
+    const domain = new URL(site.url).hostname.replace(/^www\./, '');
+    const fit = { width: column.width, min: type.min, maxLines: 2, measure };
+    return {
+      type,
+      column,
+      logoBox: { width: Math.round(column.width * 0.7), height: Math.round(type.logo * 3.2) },
+      name: layoutLines([toWords({ text: name, kind: 'framing' })], { ...fit, max: Math.round(type.headline * 0.8) }),
+      tagline: tagline ? layoutLines([toWords(tagline)], { ...fit, max: Math.round(type.caption * 0.8) }) : null,
+      cta: cta?.text ?? '',
+      ctaSize: pillSize(cta?.text ?? '', column.width, format, measure),
+      // A name that fell back to the address is not repeated under the button.
+      domain: domain === name ? null : domain,
+      domainSize: Math.round(type.caption * 0.62),
+    };
+  }, [scene, site, format, theme]);
+  const { type, column, logoBox, name, tagline, cta, ctaSize, domain, domainSize } = layout;
+  const image = logo && logoSize && logoReads(logoSize, logoBox) ? { file: logo.png ?? logo.file, ...fitLogo(logoSize, logoBox) } : null;
+  const { button, press } = endCardSteps(timed, edl.bpm);
+  const gaps = { tagline: Math.round(type.logo * 0.45), button: Math.round(type.logo * 0.9), domain: Math.round(type.logo * 0.5) };
+  const buttonHeight = ctaSize * PILL_HEIGHT_EM;
+  const domainHeight = domainSize * theme.body.lineHeight;
+  // The whole close is centered; until the button comes in, the brand is, moved down by half of what goes under it.
+  const below = gaps.button + buttonHeight + (domain ? gaps.domain + domainHeight : 0);
+  const moved = progress(frame, button, button + BUTTON_IN, EASE_IN_OUT);
+  const markIn = spring({ frame: frame - MARK_AT, fps, config: { damping: 200 }, durationInFrames: 14 });
+  const pillIn = progress(frame, button + 2, button + BUTTON_IN);
+  const domainIn = progress(frame, button + 5, button + BUTTON_IN);
+  const pressed = pressState(frame, press);
   return (
     <AbsoluteFill style={{ background: theme.bg }}>
-      <div style={{ ...column, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: type.logo * 0.8 }}>
-        <Logo height={Math.round(type.logo * 3.2)} width={Math.round(column.width * 0.7)} align="center" />
-        <div
-          data-qa-line
-          style={{
-            ...fontStyle(theme.display),
-            fontSize: ctaSize,
-            lineHeight: 1,
-            color: theme.onPrimary,
-            background: theme.primary,
-            padding: '0.62em 1.1em',
-            borderRadius: 999,
-            whiteSpace: 'nowrap',
-            boxShadow: `0 24px 60px ${alpha(theme.primary, 0.3)}`,
-            opacity: pill,
-            transform: `translateY(${(1 - pill) * 40}px)`,
-          }}
-        >
-          {cta}
-        </div>
-        <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: Math.round(type.caption * 0.62), color: theme.muted, opacity: address }}>
-          {domain}
+      <div style={{ ...column, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: `translateY(${((1 - moved) * below) / 2}px)` }}>
+          {image ? (
+            <Img
+              src={staticFile(image.file)}
+              style={{ width: image.width, height: image.height, display: 'block', opacity: markIn, transform: `scale(${0.96 + 0.04 * markIn})` }}
+            />
+          ) : (
+            <RevealLines lines={name.lines} size={name.size} font={theme.display} color={theme.accentText} accent={theme.accentText} delay={MARK_AT} align="center" />
+          )}
+          {tagline && (
+            <div style={{ marginTop: gaps.tagline }}>
+              <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={MARK_AT + 6} align="center" />
+            </div>
+          )}
+          <div style={{ marginTop: gaps.button, height: buttonHeight, display: 'flex', alignItems: 'center' }}>
+            {/* On screen, and probed, from when it starts to come in. */}
+            {pillIn > 0 && (
+              <div
+                data-qa-line
+                style={{
+                  ...fontStyle(theme.display),
+                  fontSize: ctaSize,
+                  lineHeight: 1,
+                  color: theme.onPrimary,
+                  background: theme.primary,
+                  padding: '0.62em 1.1em',
+                  borderRadius: 999,
+                  whiteSpace: 'nowrap',
+                  boxShadow: `0 0 0 ${Math.round(ctaSize * (0.06 + 0.24 * (1 - pressed.glow)))}px ${alpha(theme.primary, 0.3 * pressed.glow)}, 0 24px 60px ${alpha(theme.primary, 0.3)}`,
+                  opacity: pillIn,
+                  transform: `translateY(${(1 - pillIn) * 40}px) scale(${pressed.scale})`,
+                }}
+              >
+                {cta}
+              </div>
+            )}
+          </div>
+          {domain && (
+            <div style={{ marginTop: gaps.domain, height: domainHeight }}>
+              {domainIn > 0 && (
+                <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: domainSize, color: theme.muted, opacity: domainIn }}>
+                  {domain}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </AbsoluteFill>
