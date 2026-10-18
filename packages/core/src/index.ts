@@ -3,6 +3,7 @@ export * from './brand';
 export * from './edl';
 export * from './formats';
 export * from './music';
+export * from './order';
 export * from './qa';
 export * from './site';
 export * from './timing';

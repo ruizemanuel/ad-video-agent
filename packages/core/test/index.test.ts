@@ -24,6 +24,7 @@ import type {
   TimedScene,
   TrackChoice,
   TrackMeasure,
+  VmTaskKind,
   Wav,
 } from '../src/index';
 
@@ -50,6 +51,7 @@ export type PublicTypes = [
   TimedScene,
   TrackChoice,
   TrackMeasure,
+  VmTaskKind,
   Wav,
 ];
 
@@ -64,6 +66,7 @@ describe('@app/core public surface', () => {
         'FPS',
         'LineSchema',
         'MIN_CONTRAST',
+        'OrderRequestSchema',
         'PIECES',
         'PREFERRED_VIEWPORT',
         'SceneSchema',
