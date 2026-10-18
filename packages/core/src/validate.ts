@@ -4,7 +4,7 @@
 import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
 import type { Claim, Edl, Scene } from './edl';
 import type { SiteData } from './site';
-import { FPS, layoutScenes, type TimedScene } from './timing';
+import { FPS, layoutScenes, MIN_AT_BEAT, MIN_ENDCARD_BEATS, type TimedScene } from './timing';
 
 export type Problem = {
   /**
@@ -140,7 +140,7 @@ const checkAtBeat = (path: string, scene: Scene, report: Report): void => {
     if (line.atBeat === undefined) return;
     const at = `${path}.lines[${k}]`;
     if (!allowed || k !== 1) report(at, 'structure', 'atBeat belongs only on the second line of a UiFocus or UiScroll scene');
-    else if (line.atBeat < 1 || line.atBeat >= scene.beats) report(at, 'structure', `atBeat ${line.atBeat} outside 1-${scene.beats - 1}`);
+    else if (line.atBeat < MIN_AT_BEAT || line.atBeat >= scene.beats) report(at, 'structure', `atBeat ${line.atBeat} outside ${MIN_AT_BEAT}-${scene.beats - 1}`);
   });
 };
 
@@ -154,6 +154,8 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
     const [prefix, ...words] = scene.lines;
     if (prefix?.kind !== 'framing') report(path, 'structure', 'WordCycle needs a framing line first');
     if (words.length < 2 || words.length > 5) report(path, 'structure', `WordCycle needs 2 to 5 words after its framing line, got ${words.length}`);
+    // Word k comes in on beat k + 1: every word needs its beat inside the scene.
+    if (scene.beats < words.length + 1) report(path, 'structure', `WordCycle needs a beat per word plus one (${words.length + 1}), got ${scene.beats}`);
   }
   if (scene.piece === 'TypeIn') checkTypeIn(path, scene, site, report);
   checkAtBeat(path, scene, report);
@@ -164,8 +166,10 @@ const checkEdl = (edl: Edl, report: Report): void => {
   if (edl.hooks.length < HOOKS.min || edl.hooks.length > HOOKS.max)
     report('edl', 'structure', `expected ${HOOKS.min} to ${HOOKS.max} hooks, got ${edl.hooks.length}`);
   if (edl.cta.piece !== 'EndCard') report('cta', 'structure', `cta must be an EndCard, got ${edl.cta.piece}`);
-  else if (edl.cta.lines.length < 1 || edl.cta.lines.length > 2)
-    report('cta', 'structure', `an EndCard needs 1 or 2 lines, got ${edl.cta.lines.length}`);
+  else {
+    if (edl.cta.lines.length < 1 || edl.cta.lines.length > 2) report('cta', 'structure', `an EndCard needs 1 or 2 lines, got ${edl.cta.lines.length}`);
+    if (edl.cta.beats < MIN_ENDCARD_BEATS) report('cta', 'structure', `an EndCard needs ${MIN_ENDCARD_BEATS} beats or more for its two steps, got ${edl.cta.beats}`);
+  }
   if (!(edl.bpm >= BPM.min && edl.bpm <= BPM.max)) report('edl', 'structure', `bpm ${edl.bpm} outside ${BPM.min}-${BPM.max}`);
   // The main video is the one built with hook 0: that hook, the body and the cta.
   if (edl.hooks[0] && Number.isFinite(edl.bpm) && edl.bpm > 0) {

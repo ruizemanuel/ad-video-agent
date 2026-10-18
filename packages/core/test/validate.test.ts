@@ -59,8 +59,8 @@ const uiFocus = (extra: Partial<Scene> = {}): Scene => ({
   lines: [claimLine('Tu tienda, lista en minutos.', 'c2')],
   ...extra,
 });
-const wordCycle = (words: string[], prefix: Line = framing('Pagá con')): Case =>
-  inBody({ piece: 'WordCycle', beats: 6, lines: [prefix, ...words.map((w) => claimLine(w, 'c5'))] });
+const wordCycle = (words: string[], prefix: Line = framing('Pagá con'), beats = 6): Case =>
+  inBody({ piece: 'WordCycle', beats, lines: [prefix, ...words.map((w) => claimLine(w, 'c5'))] });
 const typeIn = (lines: Line[], variant?: 'url' | 'prompt', site: SiteData = siteShop): Case =>
   inBody({ piece: 'TypeIn', beats: 4, variant, lines }, site);
 const atBeat = (value: number, beats: number): Case =>
@@ -180,6 +180,12 @@ describe('validateEdl: structure', () => {
     clean(shop({ ...edlShop, hooks: edlShop.hooks.slice(0, 2) }));
   });
 
+  it('requires the EndCard to last 4 beats or more, so that its two steps have room', () => {
+    structure(shop({ ...edlShop, cta: { ...edlShop.cta, beats: 3 } }));
+    clean(shop({ ...edlShop, cta: { ...edlShop.cta, beats: 4 } }));
+    expect(problemsOf(shop({ ...edlShop, cta: { ...edlShop.cta, beats: 3 } })).map((p) => p.where)).toEqual(['cta']);
+  });
+
   it('requires the cta to be an EndCard with 1 or 2 lines', () => {
     structure(shop({ ...edlShop, cta: { ...edlShop.cta, piece: 'KineticHeadline' } }));
     structure(shop({ ...edlShop, cta: { ...edlShop.cta, lines: [] } }));
@@ -218,12 +224,20 @@ describe('validateEdl: structure', () => {
   describe('WordCycle', () => {
     it('requires WordCycle to have a framing prefix plus 2 to 5 words', () => {
       structure(wordCycle(['MP']));
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito', 'Cheque']));
+      // Six words, given the 7 beats they would need.
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito', 'Cheque'], framing('Pagá con'), 7));
       structure(wordCycle(['MP', 'Transferencia'], claimLine('Pagá con', 'c5')));
       clean(wordCycle(['MP', 'Transferencia']));
       clean(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito']));
     });
     it('flags a WordCycle without lines', () => expect(rules(inBody({ piece: 'WordCycle', beats: 6, lines: [] }))).toEqual(['structure', 'structure']));
+    it('requires a beat per word plus one, so that every word comes in on its beat within the scene', () => {
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 3));
+      clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 4));
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 5));
+      clean(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 6));
+      expect(problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 3)).map((p) => p.where)).toEqual(['body[0]']);
+    });
   });
 
   describe('TypeIn', () => {
@@ -279,11 +293,13 @@ describe('validateEdl: structure', () => {
   });
 
   describe('atBeat', () => {
-    it('requires atBeat between 1 and beats-1, only on UiFocus/UiScroll', () => {
+    it('requires atBeat between 2 and beats-1, only on UiFocus/UiScroll, so that the first caption stays about a second', () => {
       structure(atBeat(4, 4));
       structure(atBeat(0, 4));
-      clean(atBeat(1, 4));
+      structure(atBeat(1, 4));
+      clean(atBeat(2, 4));
       clean(atBeat(3, 4));
+      expect(problemsOf(atBeat(1, 4)).map((p) => p.where)).toEqual(['body[0].lines[1]']);
     });
 
     it('allows atBeat on the second line of a UiScroll', () =>
@@ -299,8 +315,8 @@ describe('validateEdl: structure', () => {
 
   describe('length of the main video', () => {
     it('requires hook 0 to last 15-30 s', () => {
-      // 2 scenes of 2 beats and a cta of 2 beats at 128 bpm: 6 beats in all, 2.8 s.
-      structure(shop({ ...edlShop, bpm: 128, hooks: [[headline([framing('Uno')], 2), headline([framing('Dos')], 2)]], body: [], cta: { ...edlShop.cta, beats: 2 } }));
+      // 2 scenes of 2 beats and a cta of 4 beats at 128 bpm: 8 beats in all, 3.75 s.
+      structure(shop({ ...edlShop, bpm: 128, hooks: [[headline([framing('Uno')], 2), headline([framing('Dos')], 2)]], body: [], cta: { ...edlShop.cta, beats: 4 } }));
     });
 
     it.each([

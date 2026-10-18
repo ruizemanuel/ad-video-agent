@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, FPS, WIPE_FRAMES, beatsToFrames, layoutScenes, retimeForBpm, settledFrame, type Edl, type Scene } from '../src/index';
+import { EdlSchema, FPS, WIPE_FRAMES, beatsToFrames, layoutScenes, retimeForBpm, settledFrame, validateEdl, type Edl, type Scene, type SiteData } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
+import siteShopJson from './fixtures/site-shop.json';
 
 const edlShop = EdlSchema.parse(edlShopJson);
 const first = <T>(items: T[]): T => {
@@ -108,7 +109,7 @@ describe('retimeForBpm', () => {
     expect(retimed.lines.map((l) => l.atBeat)).toEqual([undefined, 6]);
   });
 
-  it.each([45, 224])('never moves atBeat out of [1, beats - 1] at %i bpm', (measured) => {
+  it.each([45, 224])('never moves atBeat out of [2, beats - 1] at %i bpm', (measured) => {
     const scenes: Scene[] = [3, 4, 5, 8].map((beats) => ({
       piece: 'UiScroll',
       beats,
@@ -117,9 +118,52 @@ describe('retimeForBpm', () => {
     }));
     for (const scene of retimeForBpm({ ...edlShop, body: scenes }, measured).body)
       for (const line of scene.lines) {
-        expect(line.atBeat).toBeGreaterThanOrEqual(1);
+        expect(line.atBeat).toBeGreaterThanOrEqual(2);
         expect(line.atBeat).toBeLessThanOrEqual(scene.beats - 1);
       }
+  });
+
+  describe("keeps the rules that the director's edit list met, at a slower track", () => {
+    const site = siteShopJson as SiteData;
+    const ui = (beats: number, at: number): Scene => ({
+      piece: 'UiFocus',
+      beats,
+      shotId: 's1-mobile',
+      boxIndex: 0,
+      lines: [
+        { text: 'Tu tienda, lista en minutos.', kind: 'claim', claimId: 'c2' },
+        { text: 'Sin comisiones.', kind: 'claim', claimId: 'c1', atBeat: at },
+      ],
+    });
+    const cycle = (beats: number): Scene => ({
+      piece: 'WordCycle',
+      beats,
+      lines: [{ text: 'Pagá con', kind: 'framing' }, ...['MP', 'Transferencia', 'Efectivo'].map((text) => ({ text, kind: 'claim' as const, claimId: 'c5' }))],
+    });
+    // Planned at 112 bpm and retimed to 90, each of these scenes would round to a beat less than it needs.
+    const swapFirst: Edl = { ...edlShop, body: [ui(3, 2), ...edlShop.body] };
+    const cycleFirst: Edl = { ...edlShop, body: [cycle(4), ...edlShop.body] };
+    const shortClose: Edl = { ...edlShop, body: edlShop.body.map((s, i) => (i === 0 ? { ...s, beats: 7 } : s)), cta: { ...edlShop.cta, beats: 4 } };
+    const cases: [string, Edl][] = [
+      ['a replaced caption', swapFirst],
+      ['a WordCycle', cycleFirst],
+      ['the EndCard', shortClose],
+    ];
+
+    it.each(cases)('%s: the planned edit list and the retimed ones pass validateEdl', (_, edl) => {
+      expect(validateEdl(edl, site)).toEqual([]);
+      for (const measured of [90, 96, 100.5]) expect(validateEdl(retimeForBpm(edl, measured), site), `${measured} bpm`).toEqual([]);
+    });
+
+    it('keeps a replaced caption 3 beats long, its atBeat at 2', () => {
+      const swap = first(retimeForBpm(swapFirst, 90).body);
+      expect(swap.beats).toBe(3);
+      expect(swap.lines[1]?.atBeat).toBe(2);
+    });
+
+    it('keeps a beat per word plus one in a WordCycle', () => expect(first(retimeForBpm(cycleFirst, 90).body).beats).toBe(4));
+
+    it('keeps the EndCard 4 beats long', () => expect(retimeForBpm(shortClose, 90).cta.beats).toBe(4));
   });
 
   it('returns the same edit list at the same bpm', () => expect(retimeForBpm(edlShop, edlShop.bpm)).toEqual(edlShop));

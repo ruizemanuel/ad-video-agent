@@ -8,6 +8,22 @@ export const FPS = 30;
 export const WIPE_FRAMES = 12;
 
 const MIN_SCENE_BEATS = 2;
+/** The earliest beat a caption may be replaced at: the first one stays on screen about a second. */
+export const MIN_AT_BEAT = 2;
+/** The shortest EndCard: its two steps (the brand, then the button that is pressed) need the room. */
+export const MIN_ENDCARD_BEATS = 4;
+
+/**
+ * The fewest beats a scene may last under the rules of validateEdl: 2, 3 when a caption is replaced (at beat 2 at the
+ * earliest), a beat per word plus one for a WordCycle (word k comes in on beat k + 1) and 4 for the EndCard.
+ */
+export const minSceneBeats = (scene: Scene): number =>
+  Math.max(
+    MIN_SCENE_BEATS,
+    scene.lines.some((line) => line.atBeat !== undefined) ? MIN_AT_BEAT + 1 : 0,
+    scene.piece === 'WordCycle' ? scene.lines.length : 0,
+    scene.piece === 'EndCard' ? MIN_ENDCARD_BEATS : 0,
+  );
 
 export const beatsToFrames = (beats: number, bpm: number, fps: number = FPS): number => Math.round((beats * 60 * fps) / bpm);
 
@@ -38,19 +54,20 @@ export const layoutScenes = (edl: Edl, hook: number): { scenes: TimedScene[]; to
 // every scene to its beats: a scene of N beats at the planned tempo becomes N * measured / planned.
 // Rounding scene by scene would let the error pile up; instead each cut is the scaled cumulative beat
 // count, rounded once, so a sequence ends within half a beat of where it should. A cut is never pushed
-// closer than 2 beats to the one before it.
+// closer to the one before it than the scene's minimum (minSceneBeats), and an atBeat stays in
+// [MIN_AT_BEAT, beats - 1], so a retimed edit list keeps the rules the planned one met.
 const sequenceRetimer = (plannedBpm: number, measuredBpm: number) => {
   let planned = 0;
   let cut = 0;
   return (scene: Scene): Scene => {
     planned += scene.beats;
-    const next = Math.max(Math.round((planned * measuredBpm) / plannedBpm), cut + MIN_SCENE_BEATS);
+    const next = Math.max(Math.round((planned * measuredBpm) / plannedBpm), cut + minSceneBeats(scene));
     const beats = next - cut;
     cut = next;
     const retimeLine = (line: Line): Line =>
       line.atBeat === undefined
         ? line
-        : { ...line, atBeat: Math.min(Math.max(Math.round((line.atBeat * measuredBpm) / plannedBpm), 1), beats - 1) };
+        : { ...line, atBeat: Math.min(Math.max(Math.round((line.atBeat * measuredBpm) / plannedBpm), MIN_AT_BEAT), beats - 1) };
     return { ...scene, beats, lines: scene.lines.map(retimeLine) };
   };
 };
