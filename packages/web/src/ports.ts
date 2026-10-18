@@ -339,9 +339,22 @@ export type ClaimVerdict = { id: string; equivalent: boolean; reason: string };
 /** The judge on a framing item (`id` is `${scenePath}:framing:${k}`): whether the line asserts a fact about the product. */
 export type FramingVerdict = { id: string; assertsProductFact: boolean; reason: string };
 
+/** A key frame as the visual review is shown it: the label that starts with its number, and its picture as a base64 JPEG. */
+export type ReviewFrame = { label: string; jpeg: string };
+
 /**
- * The language models. Every call says what it cost in `usd`, which the caller records on the order. The review adds
- * its call with its task.
+ * What the vision model says of the key frames. `frame` is the number in a frame's label (the first is 1). `legible`
+ * is false when a phone could not read the frame's text, and `cutMidLetter` is true when an edge or a mask cuts a
+ * letter: these two, and `logoSwap.generic` (the ad would do as well for any other brand), are what the gate blocks on.
+ * `issues` are the rest of what it saw.
+ */
+export type VisualReview = {
+  frames: { frame: number; legible: boolean; cutMidLetter: boolean; issues: string[] }[];
+  logoSwap: { generic: boolean; reason: string };
+};
+
+/**
+ * The language models. Every call says what it cost in `usd`, which the caller records on the order.
  */
 export interface LlmPort {
   /**
@@ -361,6 +374,13 @@ export interface LlmPort {
 
   /** The judge, on the items judgeItems builds: a verdict per item, which may leave some out. */
   judge(input: { claims: JudgeItem[]; framing: FramingItem[] }): Promise<{ verdicts: ClaimVerdict[]; framing: FramingVerdict[]; usd: number }>;
+
+  /**
+   * The visual review: a model with vision looks at the key frames of the main video, in playing order, and says for each
+   * whether it can be read and whether a letter is cut, and whether the whole ad would do for any other brand. `siteUrl`
+   * is the site the ad is made from.
+   */
+  review(input: { frames: ReviewFrame[]; siteUrl: string }): Promise<{ review: VisualReview; usd: number }>;
 }
 
 /**

@@ -9,14 +9,16 @@ import { CLASSIFY_OUTPUT, CLASSIFY_SYSTEM, classifyPrompt } from '../../prompts/
 import { DIRECTOR_SYSTEM, directorRequest } from '../../prompts/director';
 import { JUDGE_OUTPUT, JUDGE_SYSTEM, judgePrompt } from '../../prompts/judge';
 import { PATCH_OUTPUT, PATCH_SYSTEM, patchPrompt } from '../../prompts/patch';
+import { REVIEW_OUTPUT, REVIEW_SYSTEM, reviewIntro } from '../../prompts/review';
 import { ModelCallFailed, ModelOutputInvalid, type LlmPort } from '../../ports';
 import { modelSchema } from './provider-safe-schema';
 
-/** The AI Gateway's ids of the models each call uses (checked on 17/10/2026). The corrector is the director's model. */
+/** The AI Gateway's ids of the models each call uses (checked on 17/10/2026). The corrector and the visual review use the director's model. */
 export const MODELS = {
   director: 'anthropic/claude-opus-5.5',
   patch: 'anthropic/claude-opus-5.5',
   judge: 'anthropic/claude-sonnet-5.5',
+  review: 'anthropic/claude-opus-5.5',
   classify: 'anthropic/claude-haiku-5.5',
 } as const;
 
@@ -122,6 +124,26 @@ export class GatewayLlm implements LlmPort {
       maxOutputTokens: 6_000,
     });
     return { ...output, usd };
+  }
+
+  async review({ frames, siteUrl }: Parameters<LlmPort['review']>[0]): ReturnType<LlmPort['review']> {
+    // The site, then each key frame as its label and its picture.
+    const content: UserContent = [
+      { type: 'text', text: reviewIntro(siteUrl) },
+      ...frames.flatMap(({ label, jpeg }) => [
+        { type: 'text' as const, text: label },
+        { type: 'file' as const, data: jpeg, mediaType: 'image/jpeg' },
+      ]),
+    ];
+    const { output, usd } = await this.ask({
+      role: 'review',
+      instructions: REVIEW_SYSTEM,
+      content,
+      schema: REVIEW_OUTPUT,
+      name: 'review',
+      maxOutputTokens: 4_000,
+    });
+    return { review: output, usd };
   }
 
   // One call for structured output. An answer that does not fit the schema is a ModelOutputInvalid with what the call

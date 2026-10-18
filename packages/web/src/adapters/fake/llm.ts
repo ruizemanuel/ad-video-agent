@@ -8,13 +8,14 @@ type ClassifySite = LlmPort['classifySite'];
 type WriteEdl = LlmPort['writeEdl'];
 type PatchEdl = LlmPort['patchEdl'];
 type Judge = LlmPort['judge'];
+type Review = LlmPort['review'];
 
 // A claim problem says which claim it is about at the start of its detail ("claim c3: ...").
 const CLAIM_DETAIL = /^claim (\S+):/;
 
 export class FakeLlm implements LlmPort {
   /** How many times each call was made, whatever it answered. */
-  readonly calls = { classifySite: 0, writeEdl: 0, patchEdl: 0, judge: 0 };
+  readonly calls = { classifySite: 0, writeEdl: 0, patchEdl: 0, judge: 0, review: 0 };
 
   /** What `writeEdl` answers. */
   edl: Edl | undefined;
@@ -30,11 +31,12 @@ export class FakeLlm implements LlmPort {
   /** The judge finds no claim equivalent to its quote, whatever the patches did. */
   alwaysBad = false;
   /** What each call costs. */
-  usd = { writeEdl: 0.2, patchEdl: 0.05, judge: 0.01 };
+  usd = { writeEdl: 0.2, patchEdl: 0.05, judge: 0.01, review: 0.2 };
 
   lastWriteInput: Parameters<WriteEdl>[0] | undefined;
   lastPatchInput: Parameters<PatchEdl>[0] | undefined;
   lastJudgeInput: Parameters<Judge>[0] | undefined;
+  lastReviewInput: Parameters<Review>[0] | undefined;
 
   private classifyAnswer: ClassifySite = async () => ({ admissible: true, reason: 'The site is a normal business site.', usd: 0.0004 });
 
@@ -69,6 +71,15 @@ export class FakeLlm implements LlmPort {
       return { id, assertsProductFact, reason: assertsProductFact ? 'The line asserts something about the product.' : 'The line asserts nothing.' };
     }),
     usd: this.usd.judge,
+  });
+
+  // The reviewer finds nothing wrong: every frame legible and whole, no remarks, and an ad that is specific to its product.
+  private reviewAnswer: Review = async ({ frames }) => ({
+    review: {
+      frames: frames.map((_, k) => ({ frame: k + 1, legible: true, cutMidLetter: false, issues: [] })),
+      logoSwap: { generic: false, reason: 'The ad leans on what only this product has.' },
+    },
+    usd: this.usd.review,
   });
 
   /** Counts the call and answers as the test said: a test sets the answer with `llm.classifySite = async (input) => ...`. */
@@ -117,5 +128,17 @@ export class FakeLlm implements LlmPort {
 
   set judge(answer: Judge) {
     this.judgeAnswer = answer;
+  }
+
+  get review(): Review {
+    return async (input) => {
+      this.calls.review += 1;
+      this.lastReviewInput = input;
+      return this.reviewAnswer(input);
+    };
+  }
+
+  set review(answer: Review) {
+    this.reviewAnswer = answer;
   }
 }

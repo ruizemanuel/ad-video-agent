@@ -8,6 +8,7 @@ import { GatewayLlm, MODELS } from '../src/adapters/real/llm';
 import { DIRECTOR_SYSTEM } from '../src/prompts/director';
 import { JUDGE_SYSTEM } from '../src/prompts/judge';
 import { PATCH_SYSTEM, patchPrompt } from '../src/prompts/patch';
+import { REVIEW_SYSTEM, reviewIntro } from '../src/prompts/review';
 import { CLASSIFY_SYSTEM } from '../src/prompts/classify';
 import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop, siteShop } from './support/shop';
@@ -236,6 +237,76 @@ describe('GatewayLlm.classifySite', () => {
   });
 });
 
+describe('GatewayLlm.review', () => {
+  const frames = [
+    { label: 'Frame 1: hooks[0][0], hook scene, KineticHeadline', jpeg: '/9j/AAAA' },
+    { label: 'Frame 2: body[0], body scene, UiFocus', jpeg: '/9j/BBBB' },
+  ];
+  const input = { frames, siteUrl: 'https://tiendita.example/' };
+  const review = {
+    frames: [
+      { frame: 1, legible: true, cutMidLetter: false, issues: ['weak hook'] },
+      { frame: 2, legible: false, cutMidLetter: true, issues: [] },
+    ],
+    logoSwap: { generic: false, reason: 'The ad leans on the shop builder.' },
+  };
+
+  it('asks the visual model with the review prompt', async () => {
+    const { llm, asked, call } = adapter(answer(JSON.stringify(review)));
+    await llm.review(input);
+    expect(asked).toEqual([MODELS.review]);
+    expect(MODELS.review).toBe('anthropic/claude-opus-5.5');
+    expect(systemText(call())).toBe(REVIEW_SYSTEM);
+    expect(call().responseFormat).toMatchObject({ type: 'json', name: 'review' });
+  });
+
+  it('sends the site, then each key frame as its label and a JPEG file', async () => {
+    const { llm, call } = adapter(answer(JSON.stringify(review)));
+    await llm.review(input);
+    const parts = userParts(call());
+    expect(parts[0]).toEqual({ type: 'text', text: reviewIntro('https://tiendita.example/') });
+    expect(parts.slice(1).map((p) => (p.type === 'text' ? p.text : p.mediaType))).toEqual([frames[0]?.label, 'image/jpeg', frames[1]?.label, 'image/jpeg']);
+    // The pictures go as they are: base64 JPEG, in the order of the frames.
+    expect(parts.flatMap((p) => (p.type === 'file' ? [p.data] : []))).toEqual([
+      { type: 'data', data: '/9j/AAAA' },
+      { type: 'data', data: '/9j/BBBB' },
+    ]);
+  });
+
+  it('returns the review and what the gateway billed for it', async () => {
+    const { llm } = adapter(answer(JSON.stringify(review), billed('0.2113')));
+    expect(await llm.review(input)).toEqual({ review, usd: 0.2113 });
+  });
+
+  it('prices the call from its tokens, with the pictures in, when the gateway does not say what it billed', async () => {
+    const { llm } = adapter(answer(JSON.stringify(review)));
+    expect((await llm.review(input)).usd).toBeCloseTo((1000 * 4 + 500 * 20) / 1e6, 9);
+  });
+
+  it('throws ModelOutputInvalid, with what the call cost, when the answer is not a review', async () => {
+    const { llm } = adapter(answer('The ad looks great to me.'));
+    const failure = await llm.review(input).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelOutputInvalid);
+    expect((failure as ModelOutputInvalid).usd).toBeCloseTo((1000 * 4 + 500 * 20) / 1e6, 9);
+    expect((failure as Error).message).not.toContain('looks great');
+  });
+
+  it('throws a ModelCallFailed that names the call, and carries nothing of the pictures', async () => {
+    const failing = new GatewayLlm(
+      () =>
+        new MockLanguageModelV4({
+          doGenerate: async () => {
+            throw new APICallError({ message: 'Bad request /9j/AAAA', url: 'https://ai-gateway.vercel.sh/v1', requestBodyValues: { jpeg: '/9j/AAAA' }, statusCode: 400, isRetryable: false });
+          },
+        }),
+    );
+    const failure = await failing.review(input).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelCallFailed);
+    expect(failure).toMatchObject({ call: 'review', kind: 'AI_APICallError', status: 400 });
+    expect(JSON.stringify({ message: (failure as Error).message, stack: (failure as Error).stack })).not.toContain('9j');
+  });
+});
+
 // Providers reject some JSON Schema keywords in structured output (bounds, patterns, formats): no call sends them, and
 // the answer is still held to the whole zod schema.
 describe('GatewayLlm: the schema each call sends', () => {
@@ -247,6 +318,11 @@ describe('GatewayLlm: the schema each call sends', () => {
     ['patchEdl', (llm) => llm.patchEdl({ edl: edlShop(), problems: [problem], site: siteShop() }), { patches: [], claimFixes: [] }],
     ['judge', (llm) => llm.judge(items), { verdicts: [], framing: [] }],
     ['classifySite', (llm) => llm.classifySite({ url: 'https://tiendita.example/', title: 'T', text: 'x' }), { admissible: true, reason: 'ok' }],
+    [
+      'review',
+      (llm) => llm.review({ frames: [{ label: 'Frame 1: cta', jpeg: '/9j/AAAA' }], siteUrl: 'https://tiendita.example/' }),
+      { frames: [], logoSwap: { generic: false, reason: 'ok' } },
+    ],
   ];
 
   it.each(calls)('%s sends a schema with no bound keyword', async (_name, run, reply) => {
