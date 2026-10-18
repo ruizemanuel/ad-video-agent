@@ -1,8 +1,9 @@
 // The script step: the director writes the edit list, and nothing it says goes on unless the site backs it. Each round
 // the code checks run first (quotes, numbers, framing, filler, structure); when they find nothing, the judge reads
-// every claim against its quote and every framing line for a fact about the product. Whatever fails goes to the
-// corrector, scene by scene, for at most two rounds and only while the order's spending cap allows. Every model call is
-// recorded on the order as it is made.
+// every claim against its quote and every framing line, with its scene, for a fact about the product. The judge reads
+// each text once: what it said stands while the text is the same. Whatever fails goes to the corrector, scene by scene,
+// for at most two rounds and only while the order's spending cap allows. Every model call is recorded on the order as
+// it is made.
 import {
   applyPatches,
   judgeItems,
@@ -41,27 +42,62 @@ const failure = <V extends { id: string; reason: string }>(id: string, verdicts:
   return mine.find(fails)?.reason;
 };
 
-/** What the judge failed, as problems whose `where` starts with the scene path. */
-const judgeProblems = (
-  items: { claims: JudgeItem[]; framing: FramingItem[] },
-  verdict: { verdicts: ClaimVerdict[]; framing: FramingVerdict[] },
-): Problem[] => {
-  const problems: Problem[] = [];
-  for (const item of items.claims) {
-    const why = failure(item.id, verdict.verdicts, (v) => !v.equivalent);
-    if (why === undefined) continue;
-    const { path, rest: claimId } = sceneOf(item.id);
-    problems.push({ where: path, rule: 'not-equivalent', detail: `claim ${claimId}: "${item.onScreen}" against its quote "${item.quote}": ${why}` });
-  }
-  for (const item of items.framing) {
-    const why = failure(item.id, verdict.framing, (v) => v.assertsProductFact);
-    if (why === undefined) continue;
-    const { path, rest } = sceneOf(item.id);
-    const line = rest.slice('framing:'.length);
-    problems.push({ where: `${path}.lines[${line}]`, rule: 'framing-asserts', detail: `framing line "${item.text}" asserts something about the product: ${why}` });
-  }
-  return problems;
+const claimProblem = (item: JudgeItem, why: string): Problem => {
+  const { path, rest: claimId } = sceneOf(item.id);
+  return { where: path, rule: 'not-equivalent', detail: `claim ${claimId}: "${item.onScreen}" against its quote "${item.quote}": ${why}` };
 };
+
+const framingProblem = (item: FramingItem, why: string): Problem => {
+  const { path, rest } = sceneOf(item.id);
+  const line = rest.slice('framing:'.length);
+  return { where: `${path}.lines[${line}]`, rule: 'framing-asserts', detail: `framing line "${item.text}" asserts something about the product: ${why}` };
+};
+
+// An item as the judge read it: its id and everything it was shown. The same key is the same text, in the same place.
+const claimKey = (item: JudgeItem): string => JSON.stringify(['claim', item.id, item.onScreen, item.quote]);
+const framingKey = (item: FramingItem): string => JSON.stringify(['framing', item.id, item.text, item.context]);
+
+const PASSED = Symbol('passed');
+
+type Items = { claims: JudgeItem[]; framing: FramingItem[] };
+
+/**
+ * What the judge said about each item it read, for the life of one script: why it failed, or `passed`. An item that
+ * reads the same is never asked about again, so a verdict that failed it cannot be turned by asking until it passes.
+ */
+class Verdicts {
+  private readonly said = new Map<string, string | typeof PASSED>();
+
+  /** The items there is no verdict on yet. */
+  unread(items: Items): Items {
+    return { claims: items.claims.filter((i) => !this.said.has(claimKey(i))), framing: items.framing.filter((i) => !this.said.has(framingKey(i))) };
+  }
+
+  /** Keeps what the judge said about the items it was asked about. */
+  keep(asked: Items, verdict: { verdicts: ClaimVerdict[]; framing: FramingVerdict[] }): void {
+    for (const item of asked.claims) this.said.set(claimKey(item), failure(item.id, verdict.verdicts, (v) => !v.equivalent) ?? PASSED);
+    for (const item of asked.framing) this.said.set(framingKey(item), failure(item.id, verdict.framing, (v) => v.assertsProductFact) ?? PASSED);
+  }
+
+  /** What failed, as problems whose `where` starts with the scene path. Every item has to have been read. */
+  problems(items: Items): Problem[] {
+    const why = (key: string): string | undefined => {
+      const said = this.said.get(key);
+      if (said === undefined) throw new Error('The judge has not read this item.');
+      return said === PASSED ? undefined : said;
+    };
+    return [
+      ...items.claims.flatMap((item) => {
+        const reason = why(claimKey(item));
+        return reason === undefined ? [] : [claimProblem(item, reason)];
+      }),
+      ...items.framing.flatMap((item) => {
+        const reason = why(framingKey(item));
+        return reason === undefined ? [] : [framingProblem(item, reason)];
+      }),
+    ];
+  }
+}
 
 export async function runScript({
   orderId,
@@ -89,12 +125,16 @@ export async function runScript({
     }
   };
 
-  // The code checks; the judge only when they find nothing, since the edit list changes anyway.
+  // The code checks; the judge only when they find nothing, since the edit list changes anyway, and only about the
+  // items it has not read: the rest keep what it said about them.
+  const verdicts = new Verdicts();
   const problemsOf = async (edl: Edl): Promise<Problem[]> => {
     const found = validateEdl(edl, site);
     if (found.length > 0) return found;
     const items = judgeItems(edl);
-    return judgeProblems(items, await paid('llm:judge', () => llm.judge(items)));
+    const unread = verdicts.unread(items);
+    if (unread.claims.length + unread.framing.length > 0) verdicts.keep(unread, await paid('llm:judge', () => llm.judge(unread)));
+    return verdicts.problems(items);
   };
 
   // The edit list with the corrector's fix, or undefined when the fix cannot be used: an answer that does not fit, or a
@@ -122,8 +162,8 @@ export async function runScript({
     // A patch is only worth it if the judge that checks it fits too.
     if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge, spendCap)) return { ok: false, reason: 'budget' };
     const next = await patched(edl, problems);
-    // A round whose fix cannot be used is spent, and what was found stands: the same text is never judged twice, so a
-    // verdict that fails it cannot be turned by asking again.
+    // A round whose fix cannot be used is spent, and what was found stands. A fix that leaves a failing item as it was
+    // does not help either: the judge is not asked about it again, and it fails the same way.
     if (next === undefined) continue;
     edl = next;
     problems = await problemsOf(edl);

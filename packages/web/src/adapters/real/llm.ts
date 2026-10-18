@@ -9,7 +9,7 @@ import { CLASSIFY_OUTPUT, CLASSIFY_SYSTEM, classifyPrompt } from '../../prompts/
 import { DIRECTOR_SYSTEM, directorRequest } from '../../prompts/director';
 import { JUDGE_OUTPUT, JUDGE_SYSTEM, judgePrompt } from '../../prompts/judge';
 import { PATCH_OUTPUT, PATCH_SYSTEM, patchPrompt } from '../../prompts/patch';
-import { ModelOutputInvalid, type LlmPort } from '../../ports';
+import { ModelCallFailed, ModelOutputInvalid, type LlmPort } from '../../ports';
 import { modelSchema } from './provider-safe-schema';
 
 /** The AI Gateway's ids of the models each call uses (checked on 17/10/2026). The corrector is the director's model. */
@@ -48,11 +48,11 @@ const billed = (providerMetadata: unknown): number | undefined => {
 
 // A failed call, said without what it sent or got back: the SDK's errors carry the whole request (the site's text, the
 // brief, the pictures) and the provider's answer. Only the kind of error and its HTTP status (of the last try) remain.
-const failed = (role: Role, error: unknown): Error => {
+const failed = (role: Role, error: unknown): ModelCallFailed => {
   const last = RetryError.isInstance(error) ? error.lastError : error;
   const status = (last as { statusCode?: unknown } | null | undefined)?.statusCode;
   const kind = error instanceof Error ? error.name : 'unknown error';
-  return new Error(`The ${role} model call failed (${kind}${typeof status === 'number' ? `, HTTP ${status}` : ''}).`);
+  return new ModelCallFailed(role, kind, typeof status === 'number' ? status : undefined);
 };
 
 type Ask<T> = {
@@ -125,7 +125,7 @@ export class GatewayLlm implements LlmPort {
   }
 
   // One call for structured output. An answer that does not fit the schema is a ModelOutputInvalid with what the call
-  // cost; any other failure is a plain Error with its kind and status. Neither says what was sent or written (it can
+  // cost; any other failure is a ModelCallFailed with its kind and status. Neither says what was sent or written (it can
   // hold the site's text).
   private async ask<T>({ role, instructions, content, schema, name, maxOutputTokens }: Ask<T>): Promise<{ output: T; usd: number }> {
     const id = MODELS[role];

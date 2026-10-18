@@ -375,3 +375,20 @@ export class ModelOutputInvalid extends Error {
     this.name = 'ModelOutputInvalid';
   }
 }
+
+/**
+ * A model call that failed without an answer: the gateway or the provider refused it, or it never came back. It says
+ * which call it was, the kind of error (its name, e.g. `AI_APICallError`) and the HTTP status of the last try when
+ * there was one, so the flow can tell a call worth retrying (429, 5xx, no status) from one that is not (another 4xx).
+ * It carries nothing else: the SDK's errors hold the whole request (the site's text, the brief, the pictures).
+ */
+export class ModelCallFailed extends Error {
+  constructor(
+    readonly call: string,
+    readonly kind: string,
+    readonly status?: number,
+  ) {
+    super(`The ${call} model call failed (${kind}${status === undefined ? '' : `, HTTP ${status}`}).`);
+    this.name = 'ModelCallFailed';
+  }
+}

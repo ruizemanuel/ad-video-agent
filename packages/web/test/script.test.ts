@@ -179,7 +179,62 @@ describe('runScript', () => {
     llm.alwaysBad = true;
     expect(await runScript(args)).toEqual({ ok: false, reason: 'validation' });
     expect(llm.calls.patchEdl).toBe(2);
-    expect(llm.calls.judge).toBe(3);
+    // The corrector of the fake hands back the same scenes: there is nothing new to ask the judge about.
+    expect(llm.calls.judge).toBe(1);
+  });
+
+  // A judge that fails a claim and would pass it on a second look must not get that second look at the same text: what
+  // it said about an item stands for as long as the item reads the same.
+  describe('the judge is asked about each text once', () => {
+    // The judge fails `failing` the first time it is asked, and passes everything after.
+    const judgeFailsOnce = (failing: string) => {
+      llm.judge = async ({ claims, framing }) => ({
+        verdicts: claims.map(({ id: itemId }) => ({ id: itemId, equivalent: !(llm.calls.judge === 1 && itemId === failing), reason: 'x' })),
+        framing: framing.map(({ id: itemId }) => ({ id: itemId, assertsProductFact: llm.calls.judge === 1 && itemId === failing, reason: 'x' })),
+        usd: 0.01,
+      });
+    };
+    const reworded = (path: string, text: string): Edl => withScene(edlShop, path, (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 0 ? { ...line, text } : line)) }));
+
+    it('keeps failing a claim the corrector left as it was, without asking again', async () => {
+      judgeFailsOnce('body[1]:c3');
+      llm.patchEdl = async () => ({ patches: [], claimFixes: [], usd: 0.05 });
+      expect(await runScript(args)).toEqual({ ok: false, reason: 'validation' });
+      expect(llm.calls).toMatchObject({ judge: 1, patchEdl: 2 });
+      expect(patchProblems()).toEqual([{ where: 'body[1]', rule: 'not-equivalent', detail: expect.stringContaining('c3') }]);
+    });
+
+    it('keeps failing a framing line when the corrector only touched other scenes, asking only about what changed', async () => {
+      judgeFailsOnce('hooks[0][0]:framing:0');
+      const other = reworded('body[0]', 'Tus clientes te piden por WhatsApp.');
+      llm.patchEdl = async () => ({ patches: [{ path: 'body[0]', scene: other.body[0] ?? edlShop.cta }], claimFixes: [], usd: 0.05 });
+      expect(await runScript(args)).toEqual({ ok: false, reason: 'validation' });
+      expect(llm.calls.judge).toBe(2);
+      expect(llm.lastJudgeInput).toEqual({ claims: judgeItems(other).claims.filter((i) => i.id === 'body[0]:c6'), framing: [] });
+      expect(patchProblems().map((p) => [p.where, p.rule])).toEqual([['hooks[0][0].lines[0]', 'framing-asserts']]);
+    });
+
+    it('asks the judge only about the item the corrector changed, and reuses what it passed', async () => {
+      judgeFailsOnce('body[1]:c3');
+      const fixed = reworded('body[1]', '0% de comisión en tus ventas.');
+      llm.patchEdl = async () => ({ patches: [{ path: 'body[1]', scene: fixed.body[1] ?? edlShop.cta }], claimFixes: [], usd: 0.05 });
+      expect(await runScript(args)).toEqual({ ok: true, edl: fixed });
+      expect(llm.calls.judge).toBe(2);
+      expect(llm.lastJudgeInput).toEqual({ claims: judgeItems(fixed).claims.filter((i) => i.id === 'body[1]:c3'), framing: [] });
+    });
+
+    it('reads a framing line again when the rest of its scene changed', async () => {
+      const edl = withScene(edlShop, 'body[1]', (scene) => ({ ...scene, lines: [{ text: 'Nadie más te da', kind: 'framing' }, ...scene.lines] }));
+      llm.edl = edl;
+      judgeFailsOnce('body[1]:framing:0');
+      const changed = withScene(edl, 'body[1]', (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 1 ? { ...line, text: '0% de comisión en tus ventas.' } : line)) }));
+      llm.patchEdl = async () => ({ patches: [{ path: 'body[1]', scene: changed.body[1] ?? edlShop.cta }], claimFixes: [], usd: 0.05 });
+      expect(await runScript(args)).toEqual({ ok: true, edl: changed });
+      expect(llm.lastJudgeInput).toEqual({
+        claims: judgeItems(changed).claims.filter((i) => i.id === 'body[1]:c3'),
+        framing: judgeItems(changed).framing.filter((i) => i.id === 'body[1]:framing:0'),
+      });
+    });
   });
 
   it('counts a patch for a scene that does not exist as a failed round', async () => {

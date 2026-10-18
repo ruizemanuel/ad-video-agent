@@ -9,7 +9,7 @@ import { DIRECTOR_SYSTEM } from '../src/prompts/director';
 import { JUDGE_SYSTEM } from '../src/prompts/judge';
 import { PATCH_SYSTEM, patchPrompt } from '../src/prompts/patch';
 import { CLASSIFY_SYSTEM } from '../src/prompts/classify';
-import { ModelOutputInvalid } from '../src/ports';
+import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop, siteShop } from './support/shop';
 
 type Generated = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>;
@@ -150,6 +150,18 @@ describe('GatewayLlm.writeEdl', () => {
       const error = await caught(failingWith(new RetryError({ message: 'Failed after 3 attempts. Last error: Vendé', reason: 'maxRetriesExceeded', errors: [apiError(503), apiError(529)] })));
       clean(error);
       expect(error.message).toBe('The director model call failed (AI_RetryError, HTTP 529).');
+    });
+
+    it('is a ModelCallFailed that says the call, the kind of error and the status, for the flow to tell retry from fatal', async () => {
+      const api = await caught(failingWith(apiError(400)));
+      expect(api).toBeInstanceOf(ModelCallFailed);
+      expect(api).toMatchObject({ name: 'ModelCallFailed', call: 'director', kind: 'AI_APICallError', status: 400 });
+      const retried = await caught(failingWith(new RetryError({ message: 'x', reason: 'maxRetriesExceeded', errors: [apiError(529)] })));
+      expect(retried).toMatchObject({ kind: 'AI_RetryError', status: 529 });
+      const other = await caught(failingWith(new TypeError('fetch failed')));
+      expect(other).toBeInstanceOf(ModelCallFailed);
+      expect(other).toMatchObject({ kind: 'TypeError' });
+      expect((other as ModelCallFailed).status).toBeUndefined();
     });
 
     it('keeps only the name of any other error', async () => {
