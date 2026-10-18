@@ -6,8 +6,8 @@ import { authorizationSettlement, isBuyError, x402, type PaymentRequirements, ty
 import { createPublicClient, decodeEventLog, erc20Abi, http, parseAbi, type Address, type Hex, type Log, type Transport } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { celo } from 'viem/chains';
+import { TOKENS } from '../../payments/tokens';
 import { VM_URL } from '../../payments/vm-payment';
-import { TOKENS } from '../../payments/x402';
 import type { AuthorizationSettlement, BuyPort, RentVmInput, RentVmResult, SignedVmPayment, VmPaymentOutcome, VmPoll } from '../../ports';
 
 /** A GET to buy's tracking URL is free; this is how long it may take. */

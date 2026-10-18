@@ -7,11 +7,13 @@ import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FakeMusic } from '../src/adapters/fake/music';
+import { FakeRefunds } from '../src/adapters/fake/refunds';
 import { FileStore } from '../src/adapters/fake/store';
 import { VercelBlob } from '../src/adapters/real/blob';
 import { CeloBuy } from '../src/adapters/real/buy';
 import { GatewayLlm } from '../src/adapters/real/llm';
 import { LyriaMusic } from '../src/adapters/real/music';
+import { CeloRefunds } from '../src/adapters/real/refunds';
 import { DrizzleStore } from '../src/adapters/real/store';
 import { parseEnv } from '../src/env';
 
@@ -43,14 +45,15 @@ const order = {
 };
 
 describe('createAdapters on the fake adapters', () => {
-  it('gives a file-backed store and blob over FAKE_DIR, and the buy, model and music doubles', async () => {
+  it('gives a file-backed store and blob over FAKE_DIR, and the buy, model, music and refund doubles', async () => {
     const dir = await tempDir();
-    const { store, blob, buy, llm, music } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
+    const { store, blob, buy, llm, music, refunds } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
     expect(store).toBeInstanceOf(FileStore);
     expect(blob).toBeInstanceOf(FileBlob);
     expect(buy).toBeInstanceOf(FakeBuy);
     expect(llm).toBeInstanceOf(FakeLlm);
     expect(music).toBeInstanceOf(FakeMusic);
+    expect(refunds).toBeInstanceOf(FakeRefunds);
   });
 
   it('shares what it keeps with the next adapters over the same directory, as a test and the flow it runs do', async () => {
@@ -69,7 +72,7 @@ describe('createAdapters on the fake adapters', () => {
 });
 
 describe('createAdapters on the real adapters', () => {
-  it('gives the Postgres store, the Vercel Blob adapter, buy on Celo, the models over the AI Gateway and Lyria over the Gemini API, built from the settings and not yet used', async () => {
+  it('gives the Postgres store, the Vercel Blob adapter, buy on Celo, the models over the AI Gateway, Lyria over the Gemini API and the refunds on Celo, built from the settings and not yet used', async () => {
     const settings = parseEnv({
       ...common,
       DATABASE_URL: 'memory',
@@ -81,12 +84,13 @@ describe('createAdapters on the real adapters', () => {
       PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
       GITHUB_REPO: 'ruizemanuel/ad-video-agent',
     });
-    const { store, blob, buy, llm, music } = await createAdapters(settings);
+    const { store, blob, buy, llm, music, refunds } = await createAdapters(settings);
     expect(store).toBeInstanceOf(DrizzleStore);
     expect(blob).toBeInstanceOf(VercelBlob);
     expect(buy).toBeInstanceOf(CeloBuy);
     expect(llm).toBeInstanceOf(GatewayLlm);
     expect(music).toBeInstanceOf(LyriaMusic);
+    expect(refunds).toBeInstanceOf(CeloRefunds);
     expect(await store.getOrder('ord_doesnotexist')).toBeNull();
   });
 });

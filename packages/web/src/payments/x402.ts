@@ -7,22 +7,15 @@ import { ExactEvmScheme } from '@x402/evm/exact/server';
 import { BUILDER_CODE, declareBuilderCodeExtension } from '@x402/extensions/builder-code';
 import { z } from 'zod';
 import type { Env } from '../env';
+import { TOKENS, type TokenSymbol } from './tokens';
 
 /** Celo mainnet. */
 export const CELO = 'eip155:42220';
 export const FACILITATOR_URL = 'https://api.x402.celo.org';
 
-/**
- * The tokens the service takes, both with 6 decimals. `extra` is the EIP-712 domain each one signs with: USDT signs
- * as "Tether USD", not as its symbol. Never quote against USDT's fee-currency adapter (0x0E2A…6f72): it answers with
- * the same name and symbol but has 18 decimals, so a price there is off by 10^12.
- */
-export const TOKENS = {
-  USDT: { address: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e', decimals: 6, extra: { name: 'Tether USD', version: '1' } },
-  USDC: { address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6, extra: { name: 'USDC', version: '2' } },
-} as const;
+// The tokens live in tokens.ts, which loads nothing of x402; they are named here too, where the payments are.
+export { TOKENS, type TokenSymbol } from './tokens';
 
-export type TokenSymbol = keyof typeof TOKENS;
 const SYMBOLS = Object.keys(TOKENS) as TokenSymbol[];
 
 /** How long a signed payment may wait to be settled. */

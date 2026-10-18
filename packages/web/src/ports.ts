@@ -2,7 +2,7 @@
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
 // VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
 // models, as far as the tasks so far use them), the BuyPort (renting the VM, following it, and what the chain says
-// about a payment) and the MusicPort (Lyria); the other ports arrive with the tasks that use them.
+// about a payment), the MusicPort (Lyria) and the RefundPort (the refunds' wallet on Celo).
 import type {
   CaptureFile,
   Claim,
@@ -15,6 +15,7 @@ import type {
   SiteData,
   VmTaskKind,
 } from '@app/core';
+import type { Hex } from 'viem';
 import { FatalError } from 'workflow';
 import type { z } from 'zod';
 
@@ -147,6 +148,12 @@ export type PaymentRecord = {
 export type NewPaymentIntent = Pick<PaymentRecord, 'key' | 'orderId' | 'kind' | 'maxAtomic'>;
 export type PaymentPatch = Partial<Omit<PaymentRecord, 'key' | 'orderId' | 'kind' | 'maxAtomic'>>;
 
+/**
+ * - `prepared`: signed and kept, and never handed to the node.
+ * - `broadcast`: handed to the node (marked just before), which may or may not have taken it: its hash tells.
+ * - `confirmed`, `reverted`: mined, and what came of it.
+ * - `failed`: given up on, having moved no money (so it does not count toward the daily cap).
+ */
 export type RefundStatus = 'prepared' | 'broadcast' | 'confirmed' | 'reverted' | 'failed';
 
 /** The refund of an order: one at most. The transaction is signed and kept before it is broadcast. */
@@ -393,6 +400,47 @@ export interface MusicPort {
    * call was billed, and it is not retried. Any other failure is the provider's, and the call was not billed.
    */
   generate(prompt: string): Promise<{ wav: Uint8Array; model: 'lyria-3.5'; usd: number }>;
+}
+
+/** A refund as the RefundPort is asked for it: `amount` (atomic units) of the token at `asset`, to `to`. */
+export type RefundRequest = { to: string; asset: string; amount: bigint };
+
+/** A refund signed and not sent: its bytes, and the hash they will have on the chain (their keccak256). */
+export type PreparedRefund = { hash: Hex; rawTx: Hex };
+
+/** What the chain says of a refund's transaction: mined and done, mined and reverted, or not mined (yet, or ever). */
+export type RefundReceipt = 'success' | 'reverted' | 'pending';
+
+/**
+ * The refunds' wallet: a small balance that signs with no person in the loop. A refund is the transfer of the paid
+ * token back to the payer, with its gas paid in that same token. It is signed first and sent after, so its hash can be
+ * kept before anything leaves.
+ */
+export interface RefundPort {
+  /**
+   * Signs the transfer and sends nothing. It throws InsufficientBalance, before signing, when the wallet holds less of
+   * the token than the amount and the most its gas can cost. Anything it throws was not sent.
+   */
+  prepare(input: RefundRequest): Promise<PreparedRefund>;
+  /**
+   * Hands the signed bytes to the node once, and never again on its own. A throw does not say the node did not take
+   * them: the hash does.
+   */
+  broadcast(rawTx: Hex): Promise<Hex>;
+  /** What the chain says of the transaction with this hash. It only reads. */
+  receipt(hash: Hex): Promise<RefundReceipt>;
+}
+
+/** The refunds' wallet holds less of the token than a refund needs (`needed`: the amount, and its gas when known). */
+export class InsufficientBalance extends Error {
+  constructor(
+    readonly asset: string,
+    readonly balance: bigint,
+    readonly needed: bigint,
+  ) {
+    super(`The refunds' wallet holds ${balance} atomic units of the token at ${asset}, and the refund needs ${needed}.`);
+    this.name = 'InsufficientBalance';
+  }
 }
 
 /**
