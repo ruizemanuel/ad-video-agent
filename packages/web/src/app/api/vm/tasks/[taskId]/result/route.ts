@@ -2,9 +2,8 @@
 // and whatever else the kind of task reports. The result is kept (only the first one counts) and the task's hook is
 // resumed, which wakes the order's flow. The VM may say it again if it did not hear the answer, so a repeat is harmless:
 // it wakes the flow once more with the first result, or finds nobody waiting.
-import { HookNotFoundError } from 'workflow/errors';
-import { resumeHook } from 'workflow/api';
 import { getAdapters } from '../../../../../../adapters';
+import { wakeFlow } from '../../../../../../vm/wake';
 import { authenticate, NO_STORE, refuse } from '../../../auth';
 
 // A result is a few fields; the files it talks about went to the blob store.
@@ -59,10 +58,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ taskId: string
   if (settled === null || (settled.status !== 'done' && settled.status !== 'failed')) return refuse(409, 'This task was never handed out.');
 
   try {
-    await resumeHook(settled.hookToken, settled.result);
+    // `gone`: the flow is not waiting any more (it gave up, or it already has this result), and there is nothing left to do.
+    if ((await wakeFlow(settled.hookToken, settled.result)) === 'gone') return Response.json({ duplicate: true }, { headers: NO_STORE });
   } catch (error) {
-    // The flow is not waiting any more (it gave up, or it already has this result): nothing left to do.
-    if (HookNotFoundError.is(error)) return Response.json({ duplicate: true }, { headers: NO_STORE });
     // The result is kept; the VM only has to say it again. The message may quote the payload, so only the kind of error is logged.
     console.error('[vm_result_not_delivered]', task.id, error instanceof Error ? error.name : typeof error);
     return refuse(502, 'The result was kept, but the order could not be woken. Send it again.');

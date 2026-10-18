@@ -248,6 +248,54 @@ describe('GET /api/vm/tasks/next', () => {
     expect(fakeBlob.lastPresignGet).toEqual({ path: `orders/${order.id}/music/cand-1.wav`, minutes: 30 });
   });
 
+  // A task that cannot be prepared (here, a render that names a track of another order) must not stay claimed for
+  // ever: the flow is told that it failed at once, instead of waiting out its timeout.
+  describe('a task whose URLs cannot be made', () => {
+    const badRender = (order: Order) => queue(order, 'render', 0, { edl: {}, hook: 0, format: '9x16', music: { firstBeat: 0, seconds: 20, path: 'orders/ord_other/music/cand-1.wav' } });
+
+    it('is marked failed, the flow is woken with the failure, and the VM gets a 500 that says nothing of the task', async () => {
+      const order = await runningOrder();
+      const tok = await permitFor(order);
+      const bad = await badRender(order);
+      const next = await queue(order, 'keyframes', 1);
+
+      const res = await NEXT(bearer(tok));
+      expect(res.status).toBe(500);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(JSON.stringify(await json(res))).not.toMatch(/ord_other|music|render/);
+
+      const stored = await store.getTask(bad.id);
+      expect(stored?.status).toBe('failed');
+      expect(stored?.result).toEqual({ ok: false, code: 'error', message: expect.any(String) });
+      expect(JSON.stringify(stored?.result)).not.toContain('ord_other');
+      expect(resumeHook).toHaveBeenCalledWith(bad.hookToken, stored?.result);
+
+      // It is not offered again, and the VM is not stuck behind it.
+      const after = (await json(await NEXT(bearer(tok)))) as { id: string };
+      expect(after.id).toBe(next.id);
+    });
+
+    it('is failed all the same when nobody waits for it any more', async () => {
+      const order = await runningOrder();
+      const tok = await permitFor(order);
+      const bad = await badRender(order);
+      vi.mocked(resumeHook).mockRejectedValueOnce(new HookNotFoundError('x'));
+      expect((await NEXT(bearer(tok))).status).toBe(500);
+      expect((await store.getTask(bad.id))?.status).toBe('failed');
+    });
+
+    it('is failed all the same when the flow cannot be woken', async () => {
+      const order = await runningOrder();
+      const tok = await permitFor(order);
+      const bad = await badRender(order);
+      vi.mocked(resumeHook).mockRejectedValueOnce(new Error('world unavailable'));
+      const res = await NEXT(bearer(tok));
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(await json(res))).not.toContain('world unavailable');
+      expect((await store.getTask(bad.id))?.status).toBe('failed');
+    });
+  });
+
   it('shows a token only the tasks of its own order', async () => {
     const [a, b] = [await runningOrder(), await runningOrder()];
     const tokenB = await permitFor(b);

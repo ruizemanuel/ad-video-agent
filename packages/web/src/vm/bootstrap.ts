@@ -34,19 +34,23 @@ const SHAPES = {
 } as const;
 
 // The script, with @NAME@ where an input goes. Every `s` is a step: it times it, logs it and, on the first failure,
-// keeps its name and the last line it printed (filtered, and without the token). `R` runs a command as the worker,
-// with the environment it needs and nothing of root's. `N` makes the worker and its rules, and tries them. In the apt
-// line are the libraries Chrome needs, plus ffmpeg for the video. The rules go to the top of the chain (-I) so nothing
-// already there can let the worker through. The metadata server is closed on port 80 only: its port 53 is the VM's
-// resolver. The self-test in `N` fails the step if the worker still reaches the metadata server, and then nothing
-// else runs.
+// keeps its name and the last line it printed (the token taken out before the line is cut, and the rest filtered).
+// `R` runs a command as the worker with an empty environment of its own: nothing of root's gets to it. `N` makes the
+// worker and its rules, and tries them. The rules go to the top of the chain (-I) so nothing already there can let the
+// worker through. The metadata server is closed on port 80 only: its port 53 is the VM's resolver. The self-test in
+// `N` fails the step if the worker still reaches the metadata server, and then nothing else runs.
+//
+// Root keeps running commands after the worker has run code, so none may come from a place the worker can write to:
+// root's PATH has system folders only, and Node is unpacked without the archive's owner (the tarball says uid 1001,
+// which the worker may well get). In the apt line are the libraries Chrome needs, plus ffmpeg for the video.
 const TEMPLATE = String.raw`#!/bin/bash
 # Order VM start-up, run as root. Out: ports 53/80/443/123 only, and a blocked call hangs: everything has a timeout.
 # The only secret here is the order token (75 min). stdout is ONE JSON line: the failed step and the seconds each took.
 set -u
 cd /
 S=$(date +%s);W=/home/worker;L=/root/b.log;T=/root/t;K='@TOKEN@';F=;M=
-export DEBIAN_FRONTEND=noninteractive PATH=/opt/node/bin:$PATH
+# Root's PATH has system folders only: Node's folder (and anything the worker may write to) is never searched for root's commands.
+export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 : >$T
 s(){
   local n=$1 a=$(date +%s) r;shift
@@ -54,12 +58,13 @@ s(){
   "$@">>$L 2>&1;r=$?
   echo "\"$n\":$(($(date +%s)-a))">>$T
   [ $r = 0 ]||{
-    [ "$F" ]||{ F=$n;M=$(tail -n1 $L|tr -cd '[:alnum:] ._:/=-'|head -c 120|sed "s/$K//g");}
+    [ "$F" ]||{ F=$n;M=$(tail -n1 $L|tr -cd '[:alnum:] ._:/=-'|sed "s/$K//g"|head -c 120);}
     echo "== $n rc=$r">>$L
   }
   return $r
 }
-R(){ runuser -u worker -- env HOME=$W PATH="$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$@";}
+# The worker gets an empty environment plus these three: nothing of root's.
+R(){ runuser -u worker -- env -i HOME=$W PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin COREPACK_ENABLE_DOWNLOAD_PROMPT=0 "$@";}
 # The worker runs code driven by other people's sites: it may not reach the metadata server or any private network.
 N(){
   id worker||useradd -m -s /bin/bash worker||return 1
@@ -68,11 +73,11 @@ N(){
   iptables -I OUTPUT -m owner --uid-owner worker -d 169.254.169.254 -p tcp --dport 80 -j REJECT||return 1
   # The same address over IPv6, for the VMs that have it.
   ip6tables -I OUTPUT -m owner --uid-owner worker -d fd20:ce::254 -j REJECT
-  ! runuser -u worker -- timeout 5 curl -s -o /dev/null http://169.254.169.254/
+  ! R timeout 5 curl -s -o /dev/null http://169.254.169.254/
 }
 A='-o DPkg::Lock::Timeout=240 -y -qq --no-install-recommends'
 s apt bash -c "timeout 300 apt-get $A update&&timeout 900 apt-get $A install xz-utils ffmpeg iptables fonts-dejavu-core libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libasound2 libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2 libcups2 libatk-bridge2.0-0"&&
-s node bash -o pipefail -c 'mkdir -p /opt/node&&timeout 180 curl -fsSL https://nodejs.org/dist/@NODE@/node-@NODE@-linux-x64.tar.xz|tar -xJ --strip-components=1 -C /opt/node&&corepack enable'&&
+s node bash -o pipefail -c 'mkdir -p /opt/node&&timeout 180 curl -fsSL https://nodejs.org/dist/@NODE@/node-@NODE@-linux-x64.tar.xz|tar -xJ --no-same-owner --strip-components=1 -C /opt/node&&PATH=/opt/node/bin:$PATH corepack enable'&&
 s fw N&&
 s fetch R bash -o pipefail -c 'mkdir -p ~/app&&cd ~/app&&timeout 120 curl -fsSL https://codeload.github.com/@REPO@/tar.gz/@REF@|tar -xz --strip-components=1'&&cd $W/app&&
 s install R timeout 900 pnpm install --frozen-lockfile --filter @app/vm...&&
