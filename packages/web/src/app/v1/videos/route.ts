@@ -10,7 +10,7 @@ import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
 import { createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
 import { precheck } from '../../../precheck/precheck';
-import type { OrderRequest } from '../../../ports';
+import { ModelOutputInvalid, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
 
 const ROUTE = '/v1/videos';
@@ -111,7 +111,14 @@ export async function POST(req: Request): Promise<Response> {
 
   // Before any payment is looked at: a site that fails the check is never charged.
   const deps = await videosDeps();
-  const check = await precheck(body.order.url, { store: deps.store, llm: deps.llm, fetchPage: deps.fetchPage });
+  let check: PrecheckResult;
+  try {
+    check = await precheck(body.order.url, { store: deps.store, llm: deps.llm, fetchPage: deps.fetchPage });
+  } catch (error) {
+    // The classifier answered with something that did not fit: the check could not be made, so there is no price yet.
+    if (error instanceof ModelOutputInvalid) return refuse(503, 'precheck_unavailable', 'The site could not be checked right now. Try again in a minute.');
+    throw error;
+  }
   if (!check.ok) return refuse(422, check.code, check.reason);
 
   const res = await paidHandler(deps, settings)(request);

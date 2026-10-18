@@ -9,6 +9,7 @@ import { getAdapters } from '../src/adapters';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
 import { POST } from '../src/app/v1/videos/route';
+import { ModelOutputInvalid } from '../src/ports';
 import { TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
@@ -102,6 +103,26 @@ describe('POST /v1/videos without a payment', () => {
     expect(res.status).toBe(422);
     expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
     expect(await res.json()).toEqual({ error: 'login_wall', reason: expect.stringMatching(/login/i) });
+  });
+
+  it('answers 503 without a 402 when the classifier cannot give a verdict, and asks it again next time', async () => {
+    const site = 'https://unavailable.example/';
+    const before = await store.orderCost('precheck');
+    llm.classifySite = async () => {
+      throw new ModelOutputInvalid('The classify model did not answer with a valid classification.', 0.0007);
+    };
+    try {
+      const res = await POST(post({ url: site }));
+      expect(res.status).toBe(503);
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(await res.json()).toEqual({ error: 'precheck_unavailable', reason: expect.any(String) });
+      expect(await store.orderCost('precheck')).toBeCloseTo(before + 0.0007, 6);
+    } finally {
+      llm.classifySite = async () => ({ admissible: true, reason: 'The site is a normal business site.', usd: 0.0004 });
+    }
+    const calls = llm.calls.classifySite;
+    expect((await POST(post({ url: site }))).status).toBe(402);
+    expect(llm.calls.classifySite).toBe(calls + 1);
   });
 
   it('answers 402 with USDT and USDC at PRICE_ATOMIC and the thin-site hint', async () => {

@@ -9,6 +9,7 @@ import { FileStore } from '../../src/adapters/fake/store';
 import { FetchFailed, type FetchedPage } from '../../src/precheck/fetch-page';
 import { precheck, PRECHECK_MAX_AGE_MS, type PrecheckDeps } from '../../src/precheck/precheck';
 import { UrlRejected } from '../../src/precheck/url-guard';
+import { ModelOutputInvalid } from '../../src/ports';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 const U = 'https://tiendita.example/';
@@ -246,6 +247,16 @@ describe('precheck', () => {
       await expect(precheck(U, deps)).rejects.toThrow('model unavailable');
       llm.classifySite = async () => ({ admissible: true, reason: 'ok', usd: 0.0004 });
       expect(await precheck(U, deps)).toMatchObject({ ok: true });
+    });
+
+    it('records what a classifier answer that did not fit cost, keeps nothing and lets it go up', async () => {
+      const put = vi.spyOn(store, 'putPrecheck');
+      llm.classifySite = async () => {
+        throw new ModelOutputInvalid('The classify model did not answer with a valid classification.', 0.0007);
+      };
+      await expect(precheck(U, deps)).rejects.toBeInstanceOf(ModelOutputInvalid);
+      expect(await store.orderCost('precheck')).toBe(0.0007);
+      expect(put).not.toHaveBeenCalled();
     });
 
     it('is not remembered, because the next try may find the site up: only what the classifier judged is kept', async () => {

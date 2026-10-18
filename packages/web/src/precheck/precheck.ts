@@ -4,7 +4,7 @@
 // 24 hours, one call to a small model.
 import { createHash } from 'node:crypto';
 import { detectBlocked, findDemoLinks } from '@app/core';
-import type { LlmPort, OrderStore, PrecheckResult } from '../ports';
+import { ModelOutputInvalid, type LlmPort, type OrderStore, type PrecheckResult, type SiteClassification } from '../ports';
 import { analyzeHtml } from './analyze';
 import { FetchFailed, type FetchedPage } from './fetch-page';
 import { UrlRejected } from './url-guard';
@@ -57,12 +57,19 @@ export async function precheck(url: string, deps: PrecheckDeps): Promise<Prechec
   if (page.status < 200 || page.status >= 300) return fail('unreachable', `The site answered with an error (HTTP ${page.status}).`);
   if (analysis.loginWall) return fail('login_wall', 'The page asks for a login. Send the address of a public page that anyone can open.');
 
-  // Only a page that loaded well is judged, and only what the model judged is kept: it is what costs money.
-  const verdict = await deps.llm.classifySite({
-    url: page.finalUrl.slice(0, CLASSIFIER_URL_CHARS),
-    title: analysis.title.slice(0, CLASSIFIER_TITLE_CHARS),
-    text: analysis.text.slice(0, CLASSIFIER_TEXT_CHARS),
-  });
+  // Only a page that loaded well is judged, and only what the model judged is kept: it is what costs money. An answer
+  // that did not fit was billed too, so it is recorded before it goes up (the route says the check is unavailable).
+  let verdict: SiteClassification;
+  try {
+    verdict = await deps.llm.classifySite({
+      url: page.finalUrl.slice(0, CLASSIFIER_URL_CHARS),
+      title: analysis.title.slice(0, CLASSIFIER_TITLE_CHARS),
+      text: analysis.text.slice(0, CLASSIFIER_TEXT_CHARS),
+    });
+  } catch (error) {
+    if (error instanceof ModelOutputInvalid) await deps.store.addCost('precheck', 'llm:classify', error.usd, 'card');
+    throw error;
+  }
   await deps.store.addCost('precheck', 'llm:classify', verdict.usd, 'card');
   const result: PrecheckResult = verdict.admissible
     ? { ok: true, thin: analysis.thin, demoLinks: findDemoLinks(analysis.anchors, page.finalUrl) }
