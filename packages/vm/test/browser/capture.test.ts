@@ -3,34 +3,24 @@
 // A capture takes half a minute, so the describes below share one capture each.
 import { ensureBrowser } from '@remotion/renderer';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { join } from 'node:path';
 import type { CaptureInput, CaptureResult } from '@app/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
+import { serveFixtureSite } from './support/fixture-site';
 
-const SITE = join(import.meta.dirname, '..', 'fixtures', 'site');
-const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css' };
-
-let server: Server;
+let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
 let fixtureUrl: string;
 const dirs: string[] = [];
 
 beforeAll(async () => {
   await ensureBrowser();
-  server = createServer((req, res) => {
-    const name = !req.url || req.url === '/' ? 'index.html' : (req.url.slice(1).split('?')[0] ?? '');
-    const file = join(SITE, name);
-    if (name.includes('..') || !existsSync(file)) return void res.writeHead(404).end();
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(readFileSync(file));
-  });
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-  fixtureUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  fixture = await serveFixtureSite();
+  fixtureUrl = fixture.url;
 });
 afterAll(async () => {
-  await new Promise<void>((done) => server.close(() => done()));
+  await fixture.close();
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 

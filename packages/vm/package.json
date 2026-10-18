@@ -10,12 +10,20 @@
   },
   "dependencies": {
     "@app/core": "workspace:*",
+    "@remotion/bundler": "4.0.536",
+    "@remotion/fonts": "4.0.536",
+    "@remotion/layout-utils": "4.0.536",
+    "@remotion/media": "4.0.536",
     "@remotion/renderer": "4.0.536",
     "puppeteer-core": "25.14.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.536",
     "tsx": "4.23.15"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   }

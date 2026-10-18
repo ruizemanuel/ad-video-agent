@@ -1,0 +1,99 @@
+// The type of the video, as plain math: one size per block of lines, the largest that fits, a step smaller for each line
+// past two (the user's hand-made cobrame ads set 1-2 lines at 132 px, 3 at 116 and 4 or more at 98), and long lines
+// split at their most balanced space. Widths come from a measure the pieces take in the page, with the font loaded.
+import { safeWidth, TYPE, type Format, type Line } from '@app/core';
+
+/** The width of `text` set at 1 px in the font of the block. */
+export type Measure = (text: string) => number;
+export type Word = { text: string; accent: boolean };
+/** A line as it is set: its words, each marked when the accent covers it. */
+export type TypeLine = Word[];
+
+// A line may fill this share of its width: the glyphs' overhang needs a hair of room.
+const FILL = 0.98;
+// How tall the glyphs of a line may be, ascent plus descent, in em: with tight line spacing they reach past the line's box.
+const GLYPH_EM = 1.3;
+// Below this share of the largest size, the widest line is split in two.
+const SPLIT_BELOW = 0.62;
+
+/** The words of a line; those that the accent (a substring of the text) covers, even in part, are marked. */
+export const toWords = (line: Line): TypeLine => {
+  const at = line.accent ? line.text.indexOf(line.accent) : -1;
+  const end = at + (line.accent?.length ?? 0);
+  let pos = 0;
+  return line.text
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((text) => {
+      const start = line.text.indexOf(text, pos);
+      pos = start + text.length;
+      return { text, accent: at >= 0 && start < end && start + text.length > at };
+    });
+};
+
+export const lineText = (line: TypeLine): string => line.map((w) => w.text).join(' ');
+
+/** One or two lines get the full size, three a step less and four or more another. */
+const lineScale = (count: number): number => (count <= 2 ? 1 : count === 3 ? 0.88 : 0.74);
+
+type Fit = {
+  width: number;
+  max: number;
+  min: number;
+  measure?: Measure;
+  /** A block of fixed height the lines must stay inside, glyphs included, and the line height of their font. */
+  box?: { height: number; lineHeight: number };
+};
+
+/** The largest size, up to `max` scaled by the line count, at which every line fits `width` and the block its `box`; not floored. */
+const fittedSize = (texts: readonly string[], { width, max, measure, box }: Fit): number =>
+  Math.min(
+    max * lineScale(texts.length),
+    ...(measure ? texts.map((t) => (width * FILL) / measure(t)) : []),
+    ...(box ? [box.height / (texts.length * box.lineHeight + Math.max(0, GLYPH_EM - box.lineHeight))] : []),
+  );
+
+const settle = (size: number, min: number): number => Math.floor(Math.max(size, min));
+
+/**
+ * The size of a headline of these lines in `format`: the format's headline size, a step smaller per line past two and,
+ * with a measure, no larger than fits the widest line in the safe width. Never below the format's smallest size.
+ */
+export const fitHeadline = (lines: readonly string[], format: Format, measure?: Measure): number => {
+  const { headline, min } = TYPE[format];
+  return settle(fittedSize(lines, { width: safeWidth(format), max: headline, min, measure }), min);
+};
+
+/**
+ * Sets lines at one size: the largest that fits each of them in `width` (see fitHeadline) and, given a `box`, all of them
+ * in its height. When that size falls below 62% of `max`, the widest line is split at its most balanced space, never
+ * inside a word, up to `maxLines`.
+ */
+export const layoutLines = (input: readonly TypeLine[], fit: Fit & { measure: Measure; maxLines: number }): { lines: TypeLine[]; size: number } => {
+  let lines = input.filter((line) => line.length > 0);
+  for (;;) {
+    const texts = lines.map(lineText);
+    const size = fittedSize(texts, fit);
+    const widths = texts.map(fit.measure);
+    const widest = lines[widths.indexOf(Math.max(...widths))];
+    if (!widest || size >= fit.max * SPLIT_BELOW || lines.length >= fit.maxLines || widest.length < 2) return { lines, size: settle(size, fit.min) };
+    let best = 1;
+    let bestDiff = Infinity;
+    for (let k = 1; k < widest.length; k++) {
+      const diff = Math.abs(lineText(widest.slice(0, k)).length - lineText(widest.slice(k)).length);
+      if (diff < bestDiff) [best, bestDiff] = [k, diff];
+    }
+    const at = lines.indexOf(widest);
+    lines = [...lines.slice(0, at), widest.slice(0, best), widest.slice(best), ...lines.slice(at + 1)];
+  }
+};
+
+/**
+ * The size of the call to action in the EndCard's pill: the caption size, or less so that the pill takes at most 96% of
+ * the column it is centered in. The room for its padding (1.1 em on each side) is reserved at the caption size. Never
+ * below the format's smallest size.
+ */
+export const pillSize = (text: string, column: number, format: Format, measure: Measure): number => {
+  const { caption, min } = TYPE[format];
+  return settle(Math.min(caption, (column * 0.96 - 2.2 * caption) / measure(text)), min);
+};
