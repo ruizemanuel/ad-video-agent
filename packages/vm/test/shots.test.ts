@@ -1,6 +1,6 @@
 import type { Shot } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { buildDirectorJpegArgs, pngSize, shotsForDirector } from '../src/capture/shots';
+import { pngSize, shotsForDirector } from '../src/capture/shots';
 
 const shot = (id: string, viewport: Shot['viewport'], sectionId?: string): Shot => ({
   id,
@@ -26,12 +26,6 @@ describe('the pictures for the director', () => {
     ];
 
     expect(shotsForDirector(shots).map((s) => s.id)).toEqual(['m-s2', 'm-s3', 'x1-m-s12']);
-  });
-
-  it('are scaled to 480 px wide, as JPEG quality 4', () => {
-    expect(buildDirectorJpegArgs('run/media/m-s2.png', 'run/director/m-s2.jpg')).toEqual([
-      '-v', 'error', '-y', '-i', 'run/media/m-s2.png', '-vf', 'scale=480:-1', '-q:v', '4', 'run/director/m-s2.jpg',
-    ]);
   });
 });
 

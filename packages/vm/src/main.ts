@@ -5,6 +5,8 @@
 import { createVmApi } from './api';
 import { captureTask } from './capture';
 import { takeSecret } from './child-env';
+import { keyframesTask } from './render/keyframes';
+import { renderTask } from './render/video';
 import { getRunDir, runWorker } from './worker';
 
 const LIFETIME_MS = 55 * 60_000;
@@ -18,7 +20,11 @@ async function main(): Promise<void> {
   const runDir = getRunDir();
   await runWorker({
     api: createVmApi({ base: apiBase, token }),
-    handlers: { capture: (task) => captureTask(task, runDir) },
+    handlers: {
+      capture: (task) => captureTask(task, runDir),
+      keyframes: (task) => keyframesTask(task, runDir),
+      render: (task) => renderTask(task, runDir),
+    },
     deadline: Date.now() + LIFETIME_MS,
   });
 }

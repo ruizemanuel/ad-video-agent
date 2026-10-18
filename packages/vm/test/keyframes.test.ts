@@ -1,6 +1,6 @@
 import { beatsToFrames, layoutScenes, type Edl, type Scene } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { buildStillJpegArgs, keyframePlan } from '../src/render/keyframes';
+import { keyframePlan } from '../src/render/keyframes';
 import { PROBE_PREFIX, readProbe } from '../src/video/probe';
 import { captionIndex, captionSwapFrame, cycleIndex, wordEnterFrame } from '../src/video/rhythm';
 
@@ -126,12 +126,6 @@ describe('the key frames of a video', () => {
       // The first word is in, whole, by the still that shows it.
       expect(plan[0]!.frame - plan[0]!.timed.from).toBeGreaterThanOrEqual(wordEnterFrame(0, plan[0]!.timed, bpm) + 6);
     }
-  });
-});
-
-describe('the picture of a key frame', () => {
-  it('is a JPEG 720 px wide at quality 3', () => {
-    expect(buildStillJpegArgs('w/52.png', 'w/52.jpg')).toEqual(['-v', 'error', '-y', '-i', 'w/52.png', '-vf', 'scale=720:-1', '-q:v', '3', 'w/52.jpg']);
   });
 });
 

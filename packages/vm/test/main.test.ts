@@ -54,6 +54,25 @@ describe('main', () => {
     expect(output).not.toContain(TOKEN);
   }, 30_000);
 
+  it('has a handler for each task the service gives out: capture, keyframes and render', async () => {
+    // Bad input to each, so that none starts a browser: the answer shows which handler took it.
+    const tasks = [
+      { id: 'a1', kind: 'capture', input: { url: 'file:///etc/passwd' }, urls: {} },
+      { id: 'a2', kind: 'keyframes', input: {}, urls: {} },
+      { id: 'a3', kind: 'render', input: {}, urls: {} },
+      { id: 'a4', kind: 'shutdown', input: {}, urls: {} },
+    ];
+    const { base, seen } = await serve((call, n) => (call.method === 'GET' ? { status: 200, body: tasks[Math.floor(n / 2)] } : { status: 200, body: { ok: true } }));
+
+    const { code } = await runMain({ API_BASE: base, VM_TOKEN: TOKEN });
+
+    expect(code).toBe(0);
+    const results = Object.fromEntries(seen.filter((c) => c.method === 'POST').map((c) => [c.url.split('/')[4], JSON.parse(c.body) as { ok: boolean; message?: string }]));
+    expect(results.a1?.message).toMatch(/web address/);
+    expect(results.a2).toMatchObject({ ok: false, message: expect.stringMatching(/keyframes task has no usable edit list/) });
+    expect(results.a3).toMatchObject({ ok: false, message: expect.stringMatching(/render task has no usable edit list/) });
+  }, 30_000);
+
   it('ends with an error, and says nothing of the token, when the service refuses the permit', async () => {
     const { base, seen } = await serve(() => ({ status: 401, body: { error: 'unauthorized' } }));
 

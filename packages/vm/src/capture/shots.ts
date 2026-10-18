@@ -1,12 +1,10 @@
 // The pictures of a page: one DPR 2 screenshot per section at each viewport, plus the whole page, each with the boxes of
 // what is in it; and the small JPEGs the director looks at.
-import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { CaptureLog, Shot, SiteData } from '@app/core';
 import type { Page } from 'puppeteer-core';
-import { childEnv } from '../child-env';
+import { buildDirectorJpegArgs, runFfmpeg } from '../render/ffmpeg';
 import { inPageBoxes, MAX_FULL_PAGE_CSS_PX, type RawSection } from './extract';
 import { addNote, DPR, removeOverlays, sleep, VIEWPORTS, type ViewportName } from './page';
 
@@ -69,20 +67,10 @@ export async function shoot(
 /** The shots the director is shown: those of the phone (the video is vertical), without the full-page ones, which are too tall to read. */
 export const shotsForDirector = (shots: readonly Shot[]): Shot[] => shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'));
 
-export const buildDirectorJpegArgs = (png: string, jpg: string): string[] => ['-v', 'error', '-y', '-i', png, '-vf', 'scale=480:-1', '-q:v', '4', jpg];
-
-const run = promisify(execFile);
-
-/** Writes `director/<shot id>.jpg` for each shot the director is shown. ffmpeg gets an environment of its own. */
+/** Writes `director/<shot id>.jpg` for each shot the director is shown. */
 export async function makeDirectorJpegs(runDir: string, shots: readonly Shot[]): Promise<void> {
   mkdirSync(join(runDir, 'director'), { recursive: true });
   for (const shot of shotsForDirector(shots)) {
-    const args = buildDirectorJpegArgs(join(runDir, shot.file), join(runDir, 'director', `${shot.id}.jpg`));
-    try {
-      await run('ffmpeg', args, { env: childEnv(), timeout: 30_000 });
-    } catch (error) {
-      const stderr = typeof (error as { stderr?: unknown }).stderr === 'string' ? (error as { stderr: string }).stderr : '';
-      throw new Error(`ffmpeg could not make the picture of ${shot.id}: ${stderr.trim().split('\n').at(-1) || (error instanceof Error ? error.name : 'unknown error')}`);
-    }
+    await runFfmpeg(buildDirectorJpegArgs(join(runDir, shot.file), join(runDir, 'director', `${shot.id}.jpg`)), `make the picture of ${shot.id}`);
   }
 }

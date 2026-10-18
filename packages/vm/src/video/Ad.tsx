@@ -20,7 +20,9 @@ import { probeMessage } from './probe';
 
 /**
  * `probe`: log the text of each frame, measured in the real DOM (see probe.ts). `music`: a track already cut to the
- * video's length, relative to the public dir.
+ * video's length, relative to the public dir. The service does not use `music` (the video is rendered muted and the
+ * track is muxed in with ffmpeg, see render/video.ts): the run folder is copied into the bundle when the bundle is made,
+ * before the music's WAV exists, so `staticFile` could not serve it.
  */
 export type AdProps = { edl: Edl | null; site: SiteData | null; format: Format; hook: number; probe?: boolean; music?: string };
 

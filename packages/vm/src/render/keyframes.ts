@@ -1,16 +1,16 @@
 // The key frames of a video: a still of each scene once it has settled, with the text of the frame measured in the real
 // DOM (the probe), for the code checks and the visual review. A scene whose text changes partway (a caption replaced at
 // its `atBeat`, the words of a WordCycle) gets one still per text it shows, so every line is seen settled once.
-import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
-import { layoutScenes, settledFrame, timedScenePath, type Edl, type Format, type ProbeItem, type SiteData, type Still, type TimedScene } from '@app/core';
-import { childEnv } from '../child-env';
+import { layoutScenes, settledFrame, timedScenePath, type Edl, type Format, type KeyframesFile, type KeyframesResult, type ProbeItem, type SiteData, type Still, type TaskEnvelope, type TimedScene } from '@app/core';
+import { uploadToPresigned } from '../upload';
 import { readProbe } from '../video/probe';
 import { textChanges } from '../video/rhythm';
 import { getServeUrl } from './bundle';
+import { buildStillJpegArgs, runFfmpeg } from './ffmpeg';
+import { parseKeyframesInput, readSite } from './input';
 
 // A still of a text that is about to be replaced is taken this many frames before the change...
 const BEFORE_CHANGE = 4;
@@ -26,21 +26,6 @@ export function keyframePlan(edl: Edl, hook: number): { timed: TimedScene; frame
     const before = textChanges(timed, edl.bpm).map((change) => timed.from + stillBefore(change));
     return [...before, settledFrame(timed)].map((frame) => ({ timed, frame }));
   });
-}
-
-/** ffmpeg arguments for the picture of a still: 720 px wide, JPEG quality 3. */
-export const buildStillJpegArgs = (png: string, jpg: string): string[] => ['-v', 'error', '-y', '-i', png, '-vf', 'scale=720:-1', '-q:v', '3', jpg];
-
-const run = promisify(execFile);
-
-async function toJpeg(png: string, jpg: string): Promise<void> {
-  try {
-    // ffmpeg gets an environment of its own (see child-env).
-    await run('ffmpeg', buildStillJpegArgs(png, jpg), { env: childEnv(), timeout: 30_000 });
-  } catch (error) {
-    const stderr = typeof (error as { stderr?: unknown }).stderr === 'string' ? (error as { stderr: string }).stderr : '';
-    throw new Error(`ffmpeg could not make the picture of a key frame: ${stderr.trim().split('\n').at(-1) || (error instanceof Error ? error.name : 'unknown error')}`);
-  }
 }
 
 export type KeyframesOptions = { edl: Edl; site: SiteData; runDir: string; format: Format; hook: number };
@@ -75,7 +60,7 @@ export async function renderKeyframes({ edl, site, runDir, format, hook }: Keyfr
         },
       });
       if (!text) throw new Error(`The key frame ${frame} came out without its text measured.`);
-      await toJpeg(png, jpg);
+      await runFfmpeg(buildStillJpegArgs(png, jpg), 'make the picture of a key frame');
       stills.push({
         index: timed.index,
         role: timed.role,
@@ -91,4 +76,25 @@ export async function renderKeyframes({ edl, site, runDir, format, hook }: Keyfr
     await browser.close({ silent: true }).catch(() => {});
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+// ---------- the task ----------
+
+/** What `keyframesTask` leans on, so that a test can put its own: the renderer and the upload. */
+export type KeyframesTaskDeps = { renderKeyframes: typeof renderKeyframes; upload: typeof uploadToPresigned };
+
+/**
+ * The handler of `keyframes` tasks: renders the key frames of the main hook in 9x16 from the capture in `runDir`, then
+ * writes them, as the file the flow reads, to the place the task names. It throws if the task cannot be done (no usable
+ * edit list, no place to write to, no capture on this VM), if a frame cannot be rendered and if the upload fails.
+ */
+export async function keyframesTask(task: TaskEnvelope, runDir: string, deps: KeyframesTaskDeps = { renderKeyframes, upload: uploadToPresigned }): Promise<KeyframesResult> {
+  const { edl, hook, format } = parseKeyframesInput(task.input);
+  const target = task.urls.keyframesJson;
+  if (!target) throw new Error('The keyframes task came without a place to put the key frames.');
+  const site = readSite(runDir);
+  const stills = await deps.renderKeyframes({ edl, site, runDir, format, hook });
+  const file: KeyframesFile = { stills };
+  await deps.upload(target, JSON.stringify(file), 'application/json');
+  return { ok: true, stills: stills.length };
 }
