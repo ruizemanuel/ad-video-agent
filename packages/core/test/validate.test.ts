@@ -246,6 +246,33 @@ describe('validateEdl: structure', () => {
 
     it('requires the url line to be framing, not a claim', () => structure(typeIn([claimLine('tiendita.example', 'c1')], 'url')));
 
+    describe('the typed address is judged only by its equality with the host', () => {
+      const at = (host: string): SiteData => ({ ...siteShop, url: `https://${host}/` });
+
+      it.each(['club365.com', '24horas.com.ar', 'unlock.xyz', 'seamless.io', 'game-changer.io'])('accepts the host %s', (host) =>
+        clean(typeIn([framing(host)], 'url', at(host))),
+      );
+
+      it('still flags a typed address that is not the host, and only for that reason', () => {
+        structure(typeIn([framing('club366.com')], 'url', at('club365.com')));
+        structure(typeIn([framing('lock.xyz')], 'url', at('unlock.xyz')));
+      });
+
+      it('still checks a prompt line for numbers and banned phrases', () => {
+        expect(rules(typeIn([framing('¿Cobrás 3 % por venta?')], 'prompt'))).toEqual(['framing-has-data']);
+        expect(rules(typeIn([framing('¿Querés llevar tu tienda al siguiente nivel?')], 'prompt'))).toEqual(['banned-phrase']);
+      });
+
+      it('still checks the framing lines of every other piece', () => {
+        expect(rules(withFraming('club365.com'))).toEqual(['framing-has-data']);
+        expect(rules(withFraming('unlock.xyz'))).toEqual(['banned-phrase']);
+      });
+
+      it('still checks the second line of a url scene, which is already a structure problem', () => {
+        expect(rules(typeIn([framing('tiendita.example'), framing('El 90 % de las tiendas')], 'url'))).toEqual(['framing-has-data', 'structure']);
+      });
+    });
+
     it('flags a url that cannot be compared when the site address is not valid', () =>
       structure(typeIn([framing('tiendita.example')], 'url', { ...siteShop, url: 'not a url' })));
   });

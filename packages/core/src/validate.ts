@@ -78,6 +78,9 @@ const checkClaims = (edl: Edl, site: SiteData, report: Report): void => {
 const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, banned: [string, string][], report: Report): void => {
   scene.lines.forEach((line, k) => {
     const at = `${path}.lines[${k}]`;
+    // The line a TypeIn url scene types is the site address: its only rule is being equal to the host (checkTypeIn),
+    // and a host such as club365.com or unlock.xyz must not trip the rules for copy.
+    const typedAddress = scene.piece === 'TypeIn' && scene.variant === 'url' && k === 0;
     if (line.kind === 'claim') {
       const claim = line.claimId === undefined ? undefined : claims.get(line.claimId);
       if (!claim) report(at, 'quote-missing', `claim line "${line.text}" has no existing claimId (${line.claimId ?? 'none'})`);
@@ -87,14 +90,14 @@ const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, bann
         for (const n of numbers(line.text))
           if (!inQuote.has(n)) report(at, 'number-mismatch', `"${n}" is not in the quote of ${claim.id}: "${claim.quote}"`);
       }
-    } else if (numbers(line.text).length) {
+    } else if (!typedAddress && numbers(line.text).length) {
       report(at, 'framing-has-data', `framing line "${line.text}" contains numbers: ${numbers(line.text).join(', ')}`);
     }
     if (line.accent !== undefined && !line.text.includes(line.accent))
       report(at, 'structure', `accent "${line.accent}" is not a substring of the line`);
 
     const folded = fold(line.text);
-    const found = banned.filter(([, phrase]) => folded.includes(phrase)).map(([original]) => `"${original}"`);
+    const found = typedAddress ? [] : banned.filter(([, phrase]) => folded.includes(phrase)).map(([original]) => `"${original}"`);
     if (found.length) report(at, 'banned-phrase', `"${line.text}" contains ${found.join(', ')}`);
   });
 };
