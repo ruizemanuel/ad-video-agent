@@ -10,3 +10,4 @@ export * from './qa';
 export * from './site';
 export * from './timing';
 export * from './validate';
+export * from './vm-protocol';
