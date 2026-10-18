@@ -3,25 +3,28 @@
 import type { Hex } from 'viem';
 import { openDb } from '../db/client';
 import { env, type Env } from '../env';
-import type { BlobPort, BuyPort, OrderStore } from '../ports';
+import type { BlobPort, BuyPort, LlmPort, OrderStore } from '../ports';
 import { FileBlob } from './fake/blob';
 import { FakeBuy } from './fake/buy';
+import { FakeLlm } from './fake/llm';
 import { FileStore } from './fake/store';
 import { VercelBlob } from './real/blob';
 import { CeloBuy } from './real/buy';
+import { GatewayLlm } from './real/llm';
 import { DrizzleStore } from './real/store';
 
 export type Adapters = {
   store: OrderStore;
   blob: BlobPort;
   buy: BuyPort;
+  llm: LlmPort;
 };
 
 /** The adapters for a set of settings. It is async because the database opens asynchronously. */
 export async function createAdapters(settings: Env): Promise<Adapters> {
   if (settings.AD_AGENT_ADAPTERS === 'fake') {
     if (settings.FAKE_DIR === undefined) throw new Error('AD_AGENT_ADAPTERS=fake needs FAKE_DIR: the folder the fake adapters keep their files in.');
-    return { store: new FileStore(settings.FAKE_DIR), blob: new FileBlob(settings.FAKE_DIR), buy: new FakeBuy() };
+    return { store: new FileStore(settings.FAKE_DIR), blob: new FileBlob(settings.FAKE_DIR), buy: new FakeBuy(), llm: new FakeLlm() };
   }
   // env.ts has already required these when the adapters are the real ones.
   const { DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY, CELO_RPC_URL } = settings;
@@ -33,6 +36,8 @@ export async function createAdapters(settings: Env): Promise<Adapters> {
     blob: new VercelBlob(BLOB_READ_WRITE_TOKEN),
     // env.ts has checked the key is 0x and 64 hex characters.
     buy: new CeloBuy({ spendKey: SPEND_WALLET_PRIVATE_KEY as Hex, rpcUrl: CELO_RPC_URL }),
+    // The AI Gateway signs in with the deployment's OIDC token: no setting.
+    llm: new GatewayLlm(),
   };
 }
 

@@ -5,9 +5,11 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createAdapters } from '../src/adapters';
 import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
+import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { VercelBlob } from '../src/adapters/real/blob';
 import { CeloBuy } from '../src/adapters/real/buy';
+import { GatewayLlm } from '../src/adapters/real/llm';
 import { DrizzleStore } from '../src/adapters/real/store';
 import { parseEnv } from '../src/env';
 
@@ -39,12 +41,13 @@ const order = {
 };
 
 describe('createAdapters on the fake adapters', () => {
-  it('gives a file-backed store and blob over FAKE_DIR, and the buy double', async () => {
+  it('gives a file-backed store and blob over FAKE_DIR, and the buy and model doubles', async () => {
     const dir = await tempDir();
-    const { store, blob, buy } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
+    const { store, blob, buy, llm } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
     expect(store).toBeInstanceOf(FileStore);
     expect(blob).toBeInstanceOf(FileBlob);
     expect(buy).toBeInstanceOf(FakeBuy);
+    expect(llm).toBeInstanceOf(FakeLlm);
   });
 
   it('shares what it keeps with the next adapters over the same directory, as a test and the flow it runs do', async () => {
@@ -63,7 +66,7 @@ describe('createAdapters on the fake adapters', () => {
 });
 
 describe('createAdapters on the real adapters', () => {
-  it('gives the Postgres store, the Vercel Blob adapter and buy on Celo, built from the settings and not yet used', async () => {
+  it('gives the Postgres store, the Vercel Blob adapter, buy on Celo and the models over the AI Gateway, built from the settings and not yet used', async () => {
     const settings = parseEnv({
       ...common,
       DATABASE_URL: 'memory',
@@ -75,10 +78,11 @@ describe('createAdapters on the real adapters', () => {
       PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
       GITHUB_REPO: 'ruizemanuel/ad-video-agent',
     });
-    const { store, blob, buy } = await createAdapters(settings);
+    const { store, blob, buy, llm } = await createAdapters(settings);
     expect(store).toBeInstanceOf(DrizzleStore);
     expect(blob).toBeInstanceOf(VercelBlob);
     expect(buy).toBeInstanceOf(CeloBuy);
+    expect(llm).toBeInstanceOf(GatewayLlm);
     expect(await store.getOrder('ord_doesnotexist')).toBeNull();
   });
 });
@@ -114,6 +118,20 @@ describe('getAdapters', () => {
     vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ settled: 'settled' }));
     const authorization = { from: order.payer, nonce: order.nonce, validAfter: '0', validBefore: '1790000000' };
     expect(await deps.buy.authorizationSettled({ asset: order.asset, authorization, to: common.PAYTO_ADDRESS, value: order.amount })).toBe('settled');
+  });
+
+  it('gives the videos route the same store and the same models, so a production quote can classify the site', async () => {
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
+    vi.stubEnv('FAKE_DIR', await tempDir());
+    for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
+    const { getAdapters } = await import('../src/adapters');
+    const { videosDeps } = await import('../src/app/v1/videos/deps');
+    const { store, llm } = await getAdapters();
+    const deps = await videosDeps();
+    expect(deps.store).toBe(store);
+    expect(deps.llm).toBe(llm);
+    // It answers, where the route used to get a classifier that always failed.
+    expect(await deps.llm.classifySite({ url: 'https://example.com/', title: 'Example', text: 'A shop.' })).toMatchObject({ admissible: true });
   });
 
   it('rejects, instead of throwing, when the environment is wrong', async () => {

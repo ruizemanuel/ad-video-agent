@@ -3,7 +3,18 @@
 // VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
 // models, as far as the tasks so far use them) and the BuyPort (renting the VM, following it, and what the chain says
 // about a payment); the other ports arrive with the tasks that use them.
-import type { OrderRequestSchema, VmTaskKind } from '@app/core';
+import type {
+  CaptureFile,
+  Claim,
+  Edl,
+  FramingItem,
+  JudgeItem,
+  OrderRequestSchema,
+  Problem,
+  ScenePatch,
+  SiteData,
+  VmTaskKind,
+} from '@app/core';
 import type { z } from 'zod';
 
 export type OrderRequest = z.infer<typeof OrderRequestSchema>;
@@ -319,11 +330,48 @@ export interface BuyPort {
 /** What the model says about a site: `usd` is what the call cost. */
 export type SiteClassification = { admissible: boolean; reason: string; usd: number };
 
-/** The language models. It holds what the pre-check needs; the script and the review add their calls with their tasks. */
+/** A picture of one shot of the site, small and in JPEG, for the director to look at. */
+export type DirectorImage = CaptureFile['directorImages'][number];
+
+/** The judge on a claim item (`id` is the item's: `${scenePath}:${claimId}`): the line says no more than its quote. */
+export type ClaimVerdict = { id: string; equivalent: boolean; reason: string };
+/** The judge on a framing item (`id` is `${scenePath}:framing:${k}`): whether the line asserts a fact about the product. */
+export type FramingVerdict = { id: string; assertsProductFact: boolean; reason: string };
+
+/**
+ * The language models. Every call says what it cost in `usd`, which the caller records on the order. The review adds
+ * its call with its task.
+ */
 export interface LlmPort {
   /**
    * Whether a site may be made into an ad: it is not a scam and has no illegal or adult content. `text` is the start of
    * what the page says. `reason` is written for the person who asked, so it does not name models or protocols.
    */
   classifySite(input: { url: string; title: string; text: string }): Promise<SiteClassification>;
+
+  /** The director: the edit list of the video, from the site, its pictures and the client's one-line brief. */
+  writeEdl(input: { site: SiteData; images: DirectorImage[]; brief?: string }): Promise<{ edl: Edl; usd: number }>;
+
+  /**
+   * The corrector: the scenes it rewrote (each whole, at its path) and the claims it added or corrected, for these
+   * problems of the edit list. It reads the site's text (to quote it) but no pictures.
+   */
+  patchEdl(input: { edl: Edl; problems: Problem[]; site: SiteData }): Promise<{ patches: ScenePatch[]; claimFixes: Claim[]; usd: number }>;
+
+  /** The judge, on the items judgeItems builds: a verdict per item, which may leave some out. */
+  judge(input: { claims: JudgeItem[]; framing: FramingItem[] }): Promise<{ verdicts: ClaimVerdict[]; framing: FramingVerdict[]; usd: number }>;
+}
+
+/**
+ * A model answered, but not with what it was asked for (its answer did not fit the schema). The call was still billed:
+ * `usd` is what it cost. The message never quotes the answer, which can hold the site's text.
+ */
+export class ModelOutputInvalid extends Error {
+  constructor(
+    message: string,
+    readonly usd: number,
+  ) {
+    super(message);
+    this.name = 'ModelOutputInvalid';
+  }
 }

@@ -7,6 +7,7 @@ import {
   judgeItems,
   layoutScenes,
   scenePaths,
+  siteHost,
   timedScenePath,
   validateEdl,
   type Claim,
@@ -410,6 +411,25 @@ describe('judgeItems', () => {
     const edl: Edl = { ...edlShop, hooks: [get(edlShop.hooks, 1)], body: [], cta: { ...edlShop.cta, lines: [claimLine('Crear mi tienda', 'c7')] } };
     expect(judgeItems(edl).framing).toEqual([]);
   });
+
+  // Its only rule is being the host (validateEdl): a judge could read a bare domain as a product claim, and no fix could
+  // satisfy both.
+  it('leaves the address a TypeIn url types out of the framing items', () => {
+    const edl = withBody(0, { piece: 'TypeIn', beats: 4, variant: 'url', lines: [framing('tiendita.example')] });
+    expect(judgeItems(edl).framing.filter((f) => f.id.startsWith('body[0]'))).toEqual([]);
+  });
+
+  it('still judges the question a TypeIn prompt types', () => {
+    const edl = withBody(0, { piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [framing('¿Cuánto cobrás por venta?')] });
+    expect(judgeItems(edl).framing).toContainEqual({ id: 'body[0]:framing:0', text: '¿Cuánto cobrás por venta?' });
+  });
+});
+
+describe('siteHost', () => {
+  it('is the host a TypeIn url has to type: no www, no path, lower case', () =>
+    expect(siteHost('https://www.Tiendita.example/precios?x=1')).toBe('tiendita.example'));
+
+  it('is undefined for an address that is not a URL', () => expect(siteHost('not a url')).toBeUndefined());
 });
 
 describe('scenePaths', () => {

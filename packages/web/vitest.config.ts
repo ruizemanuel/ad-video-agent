@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
+    // The live tests call real models and cost money: they run on their own, with `pnpm --filter @app/web test:live`.
+    exclude: ["test/live/**", "node_modules/**"],
     // Every store test opens its own in-memory Postgres (PGlite) and applies the migrations to it.
     testTimeout: 20_000,
     server: {

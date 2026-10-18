@@ -46,8 +46,8 @@ export const EdlSchema = z.object({
   style: z.object({ energy: z.enum(['calm', 'bold']), density: z.enum(['airy', 'dense']) }),
   hooks: z
     .array(z.array(SceneSchema))
-    .describe('Exactly three hooks, strongest first; hooks[0] is the main version. Each is 1-2 scenes, about 3 seconds.'),
-  body: z.array(SceneSchema).describe('Body shared by the three hooks.'),
+    .describe('One to three hooks, strongest first; hooks[0] is the main version. Each is 1-2 scenes, about 3 seconds.'),
+  body: z.array(SceneSchema).describe('Body shared by every hook.'),
   cta: SceneSchema.describe('Closing scene: an EndCard.'),
   claims: z.array(ClaimSchema),
   musicPrompt: z.string().describe('Instrumental music direction in English: genre, mood, instruments. No artist names.'),

@@ -39,4 +39,10 @@ describe('EDL contract', () => {
 
   it('tells the director that hooks[0] is the main version', () =>
     expect(EdlSchema.shape.hooks.description).toContain('three hooks, strongest first; hooks[0] is the main version'));
+
+  it('describes the hooks as validateEdl counts them: one to three, not exactly three', () => {
+    expect(EdlSchema.shape.hooks.description).toContain('One to three hooks');
+    expect(EdlSchema.shape.hooks.description).not.toContain('Exactly');
+    expect(EdlSchema.shape.body.description).not.toContain('the three hooks');
+  });
 });

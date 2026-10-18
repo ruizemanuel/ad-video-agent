@@ -44,8 +44,8 @@ const NUMBER = /\d+([.,]\d+)?\s?%?/g;
 // "0 %" and "0%" are the same number; "3 %" and "2,9 %" are not.
 const numbers = (s: string): string[] => (s.match(NUMBER) ?? []).map((n) => n.replace(/\s/g, ''));
 
-// The address a TypeIn "url" scene types: the host of the site without "www.".
-const siteHost = (url: string): string | undefined => {
+/** The address a TypeIn "url" scene types: the host of the site, without "www.", in lower case. Undefined for a bad URL. */
+export const siteHost = (url: string): string | undefined => {
   try {
     return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
   } catch {
@@ -54,6 +54,9 @@ const siteHost = (url: string): string | undefined => {
 };
 
 // ---------- scenes ----------
+
+// The line a TypeIn url scene types is the site address: its only rule is being equal to the host (checkTypeIn).
+const isTypedAddress = (scene: Scene, k: number): boolean => scene.piece === 'TypeIn' && scene.variant === 'url' && k === 0;
 
 export const scenePaths = (edl: Edl): { path: string; scene: Scene }[] => [
   ...edl.hooks.flatMap((hook, i) => hook.map((scene, j) => ({ path: `hooks[${i}][${j}]`, scene }))),
@@ -88,9 +91,8 @@ const checkClaims = (edl: Edl, site: SiteData, report: Report): void => {
 const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, banned: [string, string][], report: Report): void => {
   scene.lines.forEach((line, k) => {
     const at = `${path}.lines[${k}]`;
-    // The line a TypeIn url scene types is the site address: its only rule is being equal to the host (checkTypeIn),
-    // and a host such as club365.com or unlock.xyz must not trip the rules for copy.
-    const typedAddress = scene.piece === 'TypeIn' && scene.variant === 'url' && k === 0;
+    // A host such as club365.com or unlock.xyz must not trip the rules for copy.
+    const typedAddress = isTypedAddress(scene, k);
     if (line.kind === 'claim') {
       const claim = line.claimId === undefined ? undefined : claims.get(line.claimId);
       if (!claim) report(at, 'quote-missing', `claim line "${line.text}" has no existing claimId (${line.claimId ?? 'none'})`);
@@ -202,7 +204,8 @@ export const validateEdl = (edl: Edl, site: SiteData, banned: BannedPhrases = BA
 // ---------- the semantic judge ----------
 
 // What the judge reads: one item per (scene, claim) with the lines that state it read together, and one per framing
-// line, which must not assert anything about the product.
+// line, which must not assert anything about the product. The address a TypeIn url types is left out: its only rule is
+// being the host (checkTypeIn), and a judge could read a bare domain as a claim that no fix could take back.
 export const judgeItems = (edl: Edl): { claims: JudgeItem[]; framing: FramingItem[] } => {
   const known = new Map(edl.claims.map((c) => [c.id, c]));
   const items: { claims: JudgeItem[]; framing: FramingItem[] } = { claims: [], framing: [] };
@@ -210,7 +213,7 @@ export const judgeItems = (edl: Edl): { claims: JudgeItem[]; framing: FramingIte
     const stated = new Map<string, { claim: Claim; texts: string[] }>();
     scene.lines.forEach((line, k) => {
       if (line.kind === 'framing') {
-        items.framing.push({ id: `${path}:framing:${k}`, text: line.text });
+        if (!isTypedAddress(scene, k)) items.framing.push({ id: `${path}:framing:${k}`, text: line.text });
         return;
       }
       const claim = line.claimId === undefined ? undefined : known.get(line.claimId);
