@@ -135,8 +135,8 @@ describe('a site with a demo page, followed once as a link and once as an extra'
   });
 });
 
-describe('a site that is not asked to follow its links, with an extra page nobody answers', () => {
-  const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: ['http://127.0.0.1:1/'], followDemoLinks: 0 }));
+describe('a site that is not asked to follow its links, with an extra page nobody answers and addresses that are not web pages', () => {
+  const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: ['http://127.0.0.1:1/', 'file:///etc/passwd', 'javascript:alert(1)'], followDemoLinks: 0 }));
 
   it('takes the shots at DPR 2 with the boxes in pixels of the shot', () => {
     const { site, dir } = run;
@@ -162,7 +162,46 @@ describe('a site that is not asked to follow its links, with an extra page nobod
     expect(site.log.notes.join('\n')).toMatch(/extra page http:\/\/127\.0\.0\.1:1\/ left out/);
   });
 
+  it('does not open an extra address that is not http or https, and counts it as ignored', () => {
+    const notes = run.site.log.notes.join(' | ');
+    expect(notes).toContain('2 extra addresses ignored');
+    // Not tried as a page either: the only one that was tried and left out is the web address nobody answers.
+    expect(notes).not.toMatch(/file:|javascript:/);
+    expect(notes.match(/left out/g)).toHaveLength(1);
+  });
+
   it('says whether the metadata server is out of reach (it is, on this machine)', () => {
     expect(run.result).toMatchObject({ ok: true, metadataBlocked: true });
+  });
+});
+
+describe('a scrollytelling stage and a popup that comes up late', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}stage.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('reads the section on the sticky stage, at the desktop and at the phone, and not the popup', () => {
+    const headings = run.site.sections.map((s) => s.heading);
+    expect(headings).toEqual(expect.arrayContaining(['A story told by scrolling', 'Pinned story', 'After the story']));
+    expect(headings).not.toContain('Last chance');
+  });
+
+  it('films the stage with its heading on the screen in the shots of its section, at both sizes', () => {
+    const { site } = run;
+    const stage = site.sections.find((s) => s.heading === 'Pinned story')!;
+    for (const prefix of ['d-', 'm-']) {
+      const shot = site.shots.find((s) => s.id.startsWith(prefix) && s.sectionId === stage.id);
+      expect(shot, `a ${prefix} shot of the stage`).toBeDefined();
+      const heading = site.boxes.find((b) => b.shotId === shot?.id && b.kind === 'heading' && b.text === 'Pinned story');
+      expect(heading, `the heading of the stage in ${shot?.id}`).toBeDefined();
+    }
+  });
+
+  it('hides the popup when it films, and says so, without touching the stage', () => {
+    const { site } = run;
+    const notes = site.log.notes.join(' | ');
+    expect(notes).toContain('overlay removed');
+    expect(notes).toMatch(/hid div#late-offer/);
+    expect(notes).not.toContain('.stage');
+    // Nothing of the popup is in any shot: no box of its heading.
+    expect(site.boxes.some((b) => b.text === 'Last chance')).toBe(false);
   });
 });

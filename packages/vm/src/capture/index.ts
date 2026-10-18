@@ -183,6 +183,17 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   return { blocked: false, anchors };
 }
 
+/** The address as a full http or https address, or null: a file, a script, ftp or text that is no address is not a page to film. */
+const httpUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
 const withoutHash = (url: string): string => {
   const copy = new URL(url);
   copy.hash = '';
@@ -190,11 +201,33 @@ const withoutHash = (url: string): string => {
 };
 
 /**
+ * The extra pages to film: the demo links first, then the pages the client named, each once and never the site itself.
+ * What is not an http or https address is left out and counted in `ignored`.
+ */
+export function pickExtraPages(mainUrl: string, demoLinks: readonly string[], extraUrls: readonly string[]): { pages: string[]; ignored: number } {
+  const main = withoutHash(mainUrl);
+  const pages = new Set<string>();
+  let ignored = 0;
+  for (const given of [...demoLinks, ...extraUrls]) {
+    const url = httpUrl(given);
+    if (url === null) {
+      ignored++;
+      continue;
+    }
+    const page = withoutHash(url);
+    if (page !== main) pages.add(page);
+  }
+  return { pages: [...pages], ignored };
+}
+
+/**
  * Captures the site into `runDir`. A challenge page instead of the site is `blocked`, an address that cannot be
  * reached is `unreachable`. The extra pages (demo links the site shows, `extraUrls`) are best effort: one that fails is
  * left out and noted. `metadataBlocked` says whether this VM is shut away from the cloud's metadata server.
  */
 export async function capture(input: CaptureInput, runDir: string): Promise<CaptureResult> {
+  // The browser would open a file: address as readily as a web one.
+  if (httpUrl(input.url) === null) return { ok: false, code: 'error', message: 'The capture needs an http or https web address.' };
   const started = Date.now();
   const log: CaptureLog = { startedAt: new Date(started).toISOString(), notes: [], timings: {} };
   const lap = stopwatch(log);
@@ -225,8 +258,8 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
     if (site.sections.length === 0) return { ok: false, code: 'error', message: 'The page has no text to read.' };
 
     const demo = input.followDemoLinks > 0 ? findDemoLinks(own.anchors, input.url, Math.min(input.followDemoLinks, MAX_FOLLOWED_LINKS)) : [];
-    const main = withoutHash(input.url);
-    const extras = [...new Set([...demo, ...input.extraUrls].map(withoutHash))].filter((url) => url !== main);
+    const { pages: extras, ignored } = pickExtraPages(input.url, demo, input.extraUrls);
+    if (ignored > 0) addNote(log, `${ignored} extra addresses ignored: only http and https pages are filmed`);
     for (const [i, url] of extras.entries()) {
       if (Date.now() - started > EXTRA_PAGES_BUDGET_MS) {
         addNote(log, `${extras.length - i} extra pages skipped: the capture ran out of time`);
@@ -261,17 +294,7 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
 
 // ---------- the task ----------
 
-const httpUrl = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
-  } catch {
-    return null;
-  }
-};
-
-function parseCaptureInput(value: unknown): CaptureInput {
+export function parseCaptureInput(value: unknown): CaptureInput {
   const given = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
   const url = httpUrl(given.url);
   if (url === null) throw new Error('The capture task has no usable web address.');
@@ -292,13 +315,20 @@ export function buildCaptureFile(runDir: string): CaptureFile {
   return { site, directorImages };
 }
 
-/** The handler of `capture` tasks: captures the site, then writes `capture.json` to the place the task names. */
-export async function captureTask(task: TaskEnvelope, runDir: string): Promise<CaptureResult> {
+/** What `captureTask` leans on, so that a test can put its own: the capture itself and the upload. */
+export type CaptureTaskDeps = { capture: typeof capture; upload: typeof uploadToPresigned };
+
+/**
+ * The handler of `capture` tasks: captures the site, then writes `capture.json` to the place the task names. A capture
+ * that does not succeed uploads nothing and is given back as it is. It throws if the task has no usable address or no
+ * place to write to, and if the upload fails.
+ */
+export async function captureTask(task: TaskEnvelope, runDir: string, deps: CaptureTaskDeps = { capture, upload: uploadToPresigned }): Promise<CaptureResult> {
   const input = parseCaptureInput(task.input);
   const target = task.urls.captureJson;
   if (!target) throw new Error('The capture task came without a place to put the capture.');
-  const result = await capture(input, runDir);
+  const result = await deps.capture(input, runDir);
   if (!result.ok) return result;
-  await uploadToPresigned(target, JSON.stringify(buildCaptureFile(runDir)), 'application/json');
+  await deps.upload(target, JSON.stringify(buildCaptureFile(runDir)), 'application/json');
   return result;
 }

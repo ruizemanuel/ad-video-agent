@@ -4,7 +4,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FontFile, SiteFont } from '@app/core';
-import { describeError } from '../api';
+import { describeError, sendWithRetries } from '../api';
 import { CHROME_UA } from './page';
 
 export type Generic = 'sans-serif' | 'serif' | 'monospace';
@@ -51,14 +51,30 @@ const SYSTEM_FONT = /^(system-ui|-apple-system|blinkmacsystemfont|ui-sans-serif|
 const GOOGLE_FILES = 'https://fonts.gstatic.com/';
 const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 20_000;
+// Google Fonts is asked up to three times (two retries) after a network error or a 5xx, with a short wait that grows.
+const ATTEMPTS = 3;
+const RETRY_DELAY_MS = 500;
 
-/** Saves what is at `url` to `file` and returns its content type. The errors name the host, not the whole address. */
-export async function download(url: string, file: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+export type Fetching = {
+  fetchImpl?: typeof fetch;
+  /** The wait before the second attempt; the third waits twice as long. */
+  retryDelayMs?: number;
+};
+
+/** One request with a timeout, tried again after a network error or a 5xx. Gives back the last answer, or throws the last network error. */
+const ask = (url: string, { fetchImpl = fetch, retryDelayMs = RETRY_DELAY_MS }: Fetching): Promise<Response> =>
+  sendWithRetries(url, { headers: { 'user-agent': CHROME_UA } }, { fetchImpl, timeoutMs: DOWNLOAD_TIMEOUT_MS, attempts: ATTEMPTS, retryDelayMs });
+
+/**
+ * Saves what is at `url` to `file` and returns its content type. A network error or a 5xx is tried again, and the
+ * download fails if it goes on. The errors name the host, not the whole address.
+ */
+export async function download(url: string, file: string, fetching: Fetching = {}): Promise<string> {
   if (!/^https?:\/\//i.test(url)) throw new Error('Only http and https files can be downloaded.');
   const where = new URL(url).host;
   let response: Response;
   try {
-    response = await fetchImpl(url, { headers: { 'user-agent': CHROME_UA }, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    response = await ask(url, fetching);
   } catch (error) {
     throw new Error(`Download from ${where} failed (${describeError(error)}).`);
   }
@@ -81,13 +97,18 @@ export type FontOptions = {
   /** `font-stretch` of the heading. Anything but 100% asks Google for the width axis too. */
   stretch?: string;
   fetchImpl?: typeof fetch;
+  retryDelayMs?: number;
   note?: (text: string) => void;
 };
 
 type GoogleFont = { url: string; files: FontFile[] };
 
-/** The stylesheet of a family on Google Fonts, asking for less each time until it accepts, and the latin file(s) it names. */
-async function fromGoogle(family: string, wide: boolean, outDir: string, fetchImpl: typeof fetch): Promise<GoogleFont | null> {
+/**
+ * The stylesheet of a family on Google Fonts, asking for less each time until it accepts, and the latin file(s) it names.
+ * Null if Google Fonts does not have the family (a 4xx to every request). It throws if Google Fonts cannot be reached or
+ * keeps failing (network error, 5xx, 408, 429): that is an outage, not an answer about the family.
+ */
+async function fromGoogle(family: string, wide: boolean, outDir: string, fetching: Fetching): Promise<GoogleFont | null> {
   const fam = encodeURIComponent(family).replace(/%20/g, '+');
   const css2 = (axes: string): string => `https://fonts.googleapis.com/css2?family=${fam}${axes}&display=swap`;
   const ladder = [...(wide ? [css2(':wdth,wght@75..125,400..800')] : []), css2(':wght@400..800'), css2(':wght@400;700'), css2('')];
@@ -95,7 +116,7 @@ async function fromGoogle(family: string, wide: boolean, outDir: string, fetchIm
   for (const url of ladder) {
     let response: Response;
     try {
-      response = await fetchImpl(url, { headers: { 'user-agent': CHROME_UA }, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+      response = await ask(url, fetching);
     } catch (error) {
       throw new Error(`Google Fonts could not be reached (${describeError(error)}).`);
     }
@@ -103,6 +124,8 @@ async function fromGoogle(family: string, wide: boolean, outDir: string, fetchIm
       found = { url, css: await response.text() };
       break;
     }
+    await response.body?.cancel();
+    if (response.status >= 500 || response.status === 408 || response.status === 429) throw new Error(`Google Fonts is not answering (HTTP ${response.status}).`);
   }
   if (!found) return null;
   // Only the latin subset (it covers Spanish and English).
@@ -117,7 +140,7 @@ async function fromGoogle(family: string, wide: boolean, outDir: string, fetchIm
     // A width-axis file must not share a name with the plain one of the same family (the body font used to overwrite
     // the heading's, and the condensed style was lost).
     const file = `media/fonts/${slug(family)}-${slug(weight)}${stretch && stretch !== '100%' ? '-wdth' : ''}.woff2`;
-    await download(src, join(outDir, file), fetchImpl);
+    await download(src, join(outDir, file), fetching);
     files.push({ file, weight, ...(stretch ? { stretch } : {}) });
   }
   return files.length > 0 ? { url: found.url, files } : null;
@@ -130,7 +153,8 @@ async function fromGoogle(family: string, wide: boolean, outDir: string, fetchIm
  * none.
  */
 export async function resolveFont(stack: string, role: SiteFont['role'], sources: FontSources, options: FontOptions): Promise<SiteFont> {
-  const { outDir, stretch = '100%', fetchImpl = fetch, note = () => {} } = options;
+  const { outDir, stretch = '100%', note = () => {} } = options;
+  const fetching: Fetching = { fetchImpl: options.fetchImpl, retryDelayMs: options.retryDelayMs };
   const first = firstFamily(stack);
   let family = first;
   const nextFont = first.match(/^__(.+?)_[0-9a-f]{5,8}$/i); // next/font self-hosting
@@ -144,7 +168,7 @@ export async function resolveFont(stack: string, role: SiteFont['role'], sources
       .join(' ');
     const fontsource = /fontsource/i.test(srcs) || sources.stylesheets.some((href) => /fontsource/i.test(href));
     const wide = stretch !== '100%';
-    const found = await fromGoogle(family, wide, outDir, fetchImpl);
+    const found = await fromGoogle(family, wide, outDir, fetching);
     if (found) return { family, role, source: fontsource ? 'fontsource' : 'google', url: found.url, files: found.files, ...(wide ? { stretch } : {}) };
     note(`font "${family}" is not on Google Fonts`);
   } else {
@@ -152,7 +176,7 @@ export async function resolveFont(stack: string, role: SiteFont['role'], sources
   }
 
   const fallback = resolveFontFallback(family, genericOf(stack));
-  const found = await fromGoogle(fallback.family, false, outDir, fetchImpl);
+  const found = await fromGoogle(fallback.family, false, outDir, fetching);
   if (!found) throw new Error(`No file could be got for the open font ${fallback.family}.`);
   note(`font "${family || stack}" replaced by ${fallback.family}`);
   return { family: fallback.family, role, source: fallback.source, url: found.url, files: found.files };

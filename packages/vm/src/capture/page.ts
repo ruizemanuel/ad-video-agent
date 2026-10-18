@@ -98,33 +98,44 @@ export function inPageDismissCookies(acceptSource: string, contextSource: string
 }
 
 /**
- * Takes off whatever is fixed or sticky over the site: an element that covers more than `minShare` of the screen, and
- * any open dialog. Not what lets clicks through or sits behind the page (decoration), and not an element that holds
- * most of the page's text (an app that scrolls inside a fixed box). Returns what it removed. Runs in the page.
+ * Hides whatever is fixed or sticky over the site, on the screen as it is now: an element that covers more than
+ * `minShare` of the screen, and any open dialog that is on it. It is hidden (`display: none !important`), not taken
+ * out: a page that a framework owns takes its elements out itself, and does not stand finding one gone. Left alone:
+ * - what lets clicks through or sits behind the page (decoration);
+ * - an element that holds most of the page's text (an app that scrolls inside a fixed box);
+ * - a stage that holds a section of the page: one that holds the heading of a section (the capture tags those
+ *   `data-capsec` when it reads them), or, before they are read, a sticky one with a heading of its own. A story told
+ *   by scrolling pins its stage over the screen, and it is the site, not something on top of it;
+ * - a dialog that is shut and waits outside the screen.
+ * Returns the ones it hid, by name. Runs in the page.
  */
 export function inPageRemoveOverlays(minShare: number): string[] {
   const viewport = innerWidth * innerHeight;
   const pageText = (document.body.innerText || '').length;
-  const removed: string[] = [];
-  for (const el of [...document.body.querySelectorAll<HTMLElement>('*')]) {
-    if (!el.isConnected) continue; // it went with an ancestor
+  const hidden: string[] = [];
+  for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
     const cs = getComputedStyle(el);
     if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
     if (cs.pointerEvents === 'none' || (cs.zIndex !== 'auto' && Number(cs.zIndex) < 0)) continue;
+    // Not shown already: hidden by an earlier pass (or by the page), or inside something that is.
     if (!el.checkVisibility()) continue;
     const r = el.getBoundingClientRect();
     const w = Math.max(0, Math.min(innerWidth, r.right) - Math.max(0, r.left));
     const h = Math.max(0, Math.min(innerHeight, r.bottom) - Math.max(0, r.top));
+    if (w * h === 0) continue; // outside the screen
     const dialog = cs.position === 'fixed' && el.matches('[role=dialog], [role=alertdialog], [aria-modal=true]');
     if (!dialog && (w * h) / viewport <= minShare) continue;
     if (pageText > 0 && (el.innerText || '').length > pageText * 0.6) continue;
-    removed.push(el.id ? `${el.localName}#${el.id}` : el.localName);
-    el.remove();
+    if (el.querySelector('[data-capsec]') !== null) continue;
+    if (cs.position === 'sticky' && [...el.querySelectorAll('h1, h2, h3')].some((heading) => (heading.textContent || '').trim() !== '')) continue;
+    el.style.setProperty('display', 'none', 'important');
+    const className = el.classList[0];
+    hidden.push(`${el.localName}${el.id ? `#${el.id}` : ''}${className ? `.${className}` : ''}`);
   }
-  return removed;
+  return hidden;
 }
 
-/** What share of the screen a fixed or sticky element has to cover to be taken off. */
+/** What share of the screen a fixed or sticky element has to cover to be hidden. */
 export const OVERLAY_MIN_SHARE = 0.3;
 
 /** Answers the cookie banner if there is one. Returns whether it pressed a button. */
@@ -137,13 +148,13 @@ export async function dismissCookies(page: Page, log: CaptureLog, where: string)
   return true;
 }
 
-/** Takes the overlays off the page. Returns how many it removed. */
+/** Hides the overlays of the page (see `inPageRemoveOverlays`). Returns how many it hid; the log says "overlay removed" once, and which ones. */
 export async function removeOverlays(page: Page, log: CaptureLog, where: string): Promise<number> {
-  const removed = await page.evaluate(inPageRemoveOverlays, OVERLAY_MIN_SHARE);
-  if (removed.length === 0) return 0;
+  const hidden = await page.evaluate(inPageRemoveOverlays, OVERLAY_MIN_SHARE);
+  if (hidden.length === 0) return 0;
   addNoteOnce(log, 'overlay removed');
-  addNote(log, `${where}: removed ${removed.join(', ')}`);
-  return removed.length;
+  addNote(log, `${where}: hid ${hidden.join(', ')}`);
+  return hidden.length;
 }
 
 // ---------- opening ----------

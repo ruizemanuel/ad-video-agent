@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scroll story | Tiendita</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fbf7f4; color: #1a1614; }
+    section { min-height: 700px; padding: 80px 32px; }
+    h1 { font-size: 52px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 600px; }
+
+    /* Scrollytelling: a stage as tall as the screen that sticks while the runway behind it scrolls. A section lives in it. */
+    .runway { height: 2200px; }
+    .stage { position: sticky; top: 0; height: 100vh; padding: 80px 32px; background: #eef2ff; }
+
+    /* A popup that comes up late, when the page has already been opened and read. */
+    #late-offer { display: none; position: fixed; inset: 0; z-index: 100; background: rgba(0, 0, 0, 0.6); align-items: center; justify-content: center; }
+    #late-offer .dialog { background: #ffffff; padding: 32px; border-radius: 12px; width: 420px; max-width: 90vw; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>A story told by scrolling</h1>
+    <p>Scroll down to follow what the product does for you.</p>
+  </section>
+
+  <div class="runway">
+    <div class="stage">
+      <h2>Pinned story</h2>
+      <p>One step at a time, the product does the work for you.</p>
+    </div>
+  </div>
+
+  <section>
+    <h2>After the story</h2>
+    <p>Everything you saw is included from the first day.</p>
+  </section>
+
+  <div id="late-offer">
+    <div class="dialog">
+      <h2>Last chance</h2>
+      <p>Take 10% off your first month.</p>
+    </div>
+  </div>
+
+  <script>
+    // The popup waits until the page has been read: the capture marks the headings of the sections it reads with
+    // data-capsec, and from then on only a pass made while it films can take the popup off.
+    const wait = setInterval(() => {
+      if (!document.querySelector('[data-capsec]')) return;
+      clearInterval(wait);
+      document.getElementById('late-offer').style.display = 'flex';
+    }, 50);
+  </script>
+</body>
+</html>

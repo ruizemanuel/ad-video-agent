@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { genericOf, resolveFont, resolveFontFallback } from '../src/capture/fonts';
 
 describe('resolveFontFallback', () => {
@@ -145,11 +145,83 @@ describe('resolveFont', () => {
     await expect(resolveFont('Inter, sans-serif', 'body', sources, { outDir: dir, fetchImpl })).rejects.toThrow(/font/i);
   });
 
-  it('fails, rather than going on without a font file, when Google Fonts cannot be reached', async () => {
-    const fetchImpl = (async () => {
+  it('fails, rather than going on without a font file, when Google Fonts cannot be reached, after trying three times', async () => {
+    const fetchImpl = vi.fn(async () => {
       throw new TypeError('fetch failed');
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
-    await expect(resolveFont('Inter, sans-serif', 'body', sources, { outDir: dir, fetchImpl })).rejects.toThrow(/font/i);
+    await expect(resolveFont('Inter, sans-serif', 'body', sources, { outDir: dir, fetchImpl, retryDelayMs: 0 })).rejects.toThrow(/font/i);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  describe('when Google Fonts has a bad moment', () => {
+    const CSS = (family: string): string =>
+      `/* latin */\n@font-face {\n  font-family: '${family}';\n  font-style: normal;\n  font-weight: 400 800;\n  src: url(https://fonts.gstatic.com/s/${family.toLowerCase()}/a.woff2) format('woff2');\n}\n`;
+
+    /** A fetch that answers each address by how many times it has been asked: `answer(url, n)`, with n from 1. */
+    function scripted(answer: (url: string, n: number) => Response | Error) {
+      const asked = new Map<string, number>();
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        const n = (asked.get(url) ?? 0) + 1;
+        asked.set(url, n);
+        const reply = answer(url, n);
+        if (reply instanceof Error) throw reply;
+        return reply;
+      }) as unknown as typeof fetch;
+      return { fetchImpl, asked: (url: string) => asked.get(url) ?? 0, urls: () => [...asked.keys()] };
+    }
+    const STYLE = (family: string): string => `https://fonts.googleapis.com/css2?family=${family}:wght@400..800&display=swap`;
+
+    it('asks again after a network error or a 5xx, for the stylesheet and for the file, and takes the font', async () => {
+      const file = 'https://fonts.gstatic.com/s/inter/a.woff2';
+      const { fetchImpl, asked } = scripted((url, n) => {
+        if (url === STYLE('Inter')) return n === 1 ? new TypeError('fetch failed') : n === 2 ? new Response('busy', { status: 503 }) : new Response(CSS('Inter'));
+        if (url === file) return n === 1 ? new Response('bad gateway', { status: 502 }) : new Response('bytes');
+        return new Response('unexpected', { status: 500 });
+      });
+
+      const font = await resolveFont('Inter, sans-serif', 'body', sources, { outDir: dir, fetchImpl, retryDelayMs: 0 });
+
+      expect(font.family).toBe('Inter');
+      expect(asked(STYLE('Inter'))).toBe(3);
+      expect(asked(file)).toBe(2);
+      expect(readFileSync(join(dir, 'media/fonts/inter-400-800.woff2'), 'utf8')).toBe('bytes');
+    });
+
+    it('fails when the stylesheet keeps answering 5xx: that is an outage, not "not on Google Fonts"', async () => {
+      const { fetchImpl, asked, urls } = scripted(() => new Response('busy', { status: 503 }));
+
+      await expect(resolveFont('Circular Std, sans-serif', 'body', sources, { outDir: dir, fetchImpl, retryDelayMs: 0 })).rejects.toThrow(/Google Fonts.*503/);
+
+      // It did not go down the ladder or ask for the open font: three tries at the first stylesheet and no more.
+      expect(urls()).toEqual([expect.stringContaining('Circular+Std')]);
+      expect(asked(urls()[0] ?? '')).toBe(3);
+    });
+
+    it('takes a 4xx as the answer "not on Google Fonts": no retries, down the ladder and then the open font', async () => {
+      const { fetchImpl, asked } = scripted((url) => {
+        if (url.includes('Circular+Std')) return new Response('not found', { status: 404 });
+        return url === STYLE('Inter') ? new Response(CSS('Inter')) : new Response('bytes');
+      });
+
+      const font = await resolveFont('Circular Std, sans-serif', 'display', sources, { outDir: dir, fetchImpl, retryDelayMs: 0 });
+
+      expect(font.family).toBe('Inter');
+      // Each of the three requests for Circular Std was made once.
+      expect(asked(STYLE('Circular+Std'))).toBe(1);
+      expect(asked('https://fonts.googleapis.com/css2?family=Circular+Std:wght@400;700&display=swap')).toBe(1);
+      expect(asked('https://fonts.googleapis.com/css2?family=Circular+Std&display=swap')).toBe(1);
+    });
+
+    it('fails when the font file keeps answering 5xx', async () => {
+      const file = 'https://fonts.gstatic.com/s/inter/a.woff2';
+      const { fetchImpl, asked } = scripted((url) => (url === STYLE('Inter') ? new Response(CSS('Inter')) : new Response('bad gateway', { status: 502 })));
+
+      await expect(resolveFont('Inter, sans-serif', 'body', sources, { outDir: dir, fetchImpl, retryDelayMs: 0 })).rejects.toThrow(/502/);
+
+      expect(asked(file)).toBe(3);
+    });
   });
 });
