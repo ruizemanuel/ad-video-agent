@@ -177,8 +177,10 @@ describe('CeloBuy.authorizationSettled', () => {
     expect(await ask()).toBe('unsettled');
   });
 
-  it('answers unsettled when the nonce was spent on another token than the one asked about', async () => {
+  it('does not take a nonce spent on another token for this one: on this token it is unspent, and pending until validBefore', async () => {
     chain.settle({ token: USDT, from: PAYER, to: BUY_PAY_TO, value: VALUE, nonce: NONCE });
+    expect(await ask({ asset: USDC })).toBe('pending');
+    chain.head.timestamp += 400n;
     expect(await ask({ asset: USDC })).toBe('unsettled');
   });
 
@@ -198,8 +200,25 @@ describe('CeloBuy.authorizationSettled', () => {
     expect(await ask()).toBe('unsettled');
   });
 
-  it('answers unsettled while the nonce is not spent', async () => {
+  it('answers pending while the nonce is not spent and the chain has not reached validBefore: it may still settle', async () => {
+    expect(await ask()).toBe('pending');
+  });
+
+  it('answers unsettled once the chain is past validBefore and the nonce was never spent: it can never settle', async () => {
+    chain.head.timestamp += 400n;
     expect(await ask()).toBe('unsettled');
+  });
+
+  it('answers pending by the chain\'s clock, whatever the server\'s says', async () => {
+    // The server's clock is ten minutes past validBefore; the chain's is not there yet.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 600_000 });
+    try {
+      const validBefore = String(Number(chain.head.timestamp) + 1);
+      const answer = await buy.authorizationSettled({ asset: USDT, authorization: { from: PAYER, nonce: NONCE, validAfter: '0', validBefore }, to: BUY_PAY_TO, value: VALUE });
+      expect(answer).toBe('pending');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('answers unknown when the node does not answer, and lets nothing of its error out', async () => {

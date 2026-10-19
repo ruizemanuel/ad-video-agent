@@ -276,11 +276,18 @@ export interface BlobPort {
 }
 
 /** What the chain says about the payment an authorization was signed for. See `BuyPort.authorizationSettled`. */
-export type AuthorizationSettlement = 'settled' | 'unsettled' | 'unknown';
+export type AuthorizationSettlement = 'settled' | 'unsettled' | 'pending' | 'unknown';
 
 /**
- * How long past its validBefore an unspent authorization is still taken as able to settle. The token compares
- * validBefore with the chain's time, and the server's clock may run ahead of it: only after this is "unsettled" final.
+ * What a lookup of a payment concludes for now: `settled` and `unsettled` are final, and an authorization that may still
+ * settle (`pending`) is `unknown` until it no longer can.
+ */
+export type SettlementVerdict = Exclude<AuthorizationSettlement, 'pending'>;
+
+/**
+ * How long past its validBefore, by this server's clock, an authorization is still taken as able to settle. The token
+ * compares validBefore with the chain's time, and the server's clock may run ahead of it: an `unsettled` answer (which
+ * the chain gives only once it is past validBefore, or the nonce went elsewhere) is acted on only after this too.
  */
 export const SETTLEMENT_GRACE_SECONDS = 60n;
 
@@ -353,8 +360,10 @@ export interface BuyPort {
    * fails. `asset` is the token's address, `to` the address
    * that has to be paid (compared whatever the case of the hex) and `value` the least it has to receive, in atomic units.
    * - `settled`: the transaction that spent the nonce moved at least `value` of `asset` from `authorization.from` to `to`.
-   * - `unsettled`: that payment did not happen. The nonce is not spent yet (it may still be, until `validBefore`) or it
-   *   was spent by any other transfer (this authorization can then never settle).
+   * - `pending`: that payment has not happened yet, and still can: the nonce is not spent and the chain's time is not
+   *   past `validBefore`.
+   * - `unsettled`: that payment did not happen and never will, by the chain's own evidence: the nonce is unspent and the
+   *   chain's time is past `validBefore`, or the nonce was spent by any other transfer, or cancelled.
    * - `unknown`: the chain could not be read, or its answer is not final.
    */
   authorizationSettled(input: {

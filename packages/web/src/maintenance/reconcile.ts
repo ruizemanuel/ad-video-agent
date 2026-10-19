@@ -122,12 +122,12 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
         const payment = { asset: order.asset, payer: order.payer, nonce: order.nonce, txHash: null };
         if ((await markPaidAndStart(payment, { store })) === 'started') result.started.push(order.id);
       } else if (settlement === 'unsettled' && nowSeconds >= order.validBefore + SETTLEMENT_GRACE_SECONDS) {
-        // The token takes an authorization only before `validBefore`, by the chain's clock (this one may run ahead of it):
-        // this one can never settle (nor could one whose nonce went to another transfer). If the order was paid while the
-        // chain was being asked, the move is refused and the order stays as it is.
+        // The chain says this authorization can never settle: by its own clock it is past `validBefore` and the nonce was
+        // never spent, or the nonce went to another transfer. This clock (which may run ahead of the chain's) is past it
+        // too. If the order was paid while the chain was being asked, the move is refused and the order stays as it is.
         if (await store.transition(order.id, 'unpaid')) result.unpaid.push(order.id);
       }
-      // `unknown`, or `unsettled` while it still can: nothing to do yet.
+      // `unknown`, `pending` (the chain says it can still settle), or `unsettled` within the grace minute: nothing yet.
     });
   }
 

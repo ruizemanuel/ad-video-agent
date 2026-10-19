@@ -383,6 +383,14 @@ describe('resolveVmPayment', () => {
       expect(await resolveVmPayment(orderId, deps)).toBe('unknown');
       expect(await payment()).toMatchObject({ status: 'uncertain' });
     });
+
+    it('is still unknown while the chain has not reached validBefore, however far past it the server\'s clock is', async () => {
+      await expiredBy(600);
+      // The chain's clock is behind: by its time, buy can still settle the authorization.
+      chain.head.timestamp -= 601n;
+      expect(await resolveVmPayment(orderId, deps)).toBe('unknown');
+      expect(await payment()).toMatchObject({ status: 'uncertain' });
+    });
   });
 
   it('answers unknown when the chain cannot be read', async () => {

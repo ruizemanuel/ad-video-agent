@@ -2,7 +2,7 @@
 // never more than VM_MAX_ATOMIC: the intent is written before anything is quoted, the authorization before it goes out,
 // and a payment whose outcome is not clear is looked up on the chain (resolveVmPayment), never paid again. The step that
 // calls payForVm runs with maxRetries = 0, and an attempt after the first one does not pay either.
-import { SETTLEMENT_GRACE_SECONDS, type AuthorizationSettlement, type BuyPort, type OrderStore, type RentVmResult, type VmPaymentOutcome } from '../ports';
+import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type OrderStore, type RentVmResult, type SettlementVerdict, type VmPaymentOutcome } from '../ports';
 
 export const VM_URL = 'https://usebuy.ai/google/vm';
 /** buy quoted the e2-medium at 67011 atomic units of USDT on 17/10: the cap leaves a little room, and no more. */
@@ -113,7 +113,7 @@ export type ResolveVmPaymentDeps = {
  * Whether buy got paid for the order's VM. `settled` and `unsettled` are final and written to the payment; `unknown`
  * is not (the chain could not be read, or the payment may still land), and leaves it as it was.
  */
-export async function resolveVmPayment(orderId: string, deps: ResolveVmPaymentDeps): Promise<AuthorizationSettlement> {
+export async function resolveVmPayment(orderId: string, deps: ResolveVmPaymentDeps): Promise<SettlementVerdict> {
   const { store, buy } = deps;
   const key = vmPaymentKey(orderId);
   const payment = await store.getPayment(key);
@@ -140,8 +140,9 @@ export async function resolveVmPayment(orderId: string, deps: ResolveVmPaymentDe
     await store.updatePayment(key, { status: 'settled' });
     return 'settled';
   }
-  // The token takes an authorization until validBefore, by the chain's clock: before then (and the grace minute this
-  // clock may be ahead by), an unspent one may still be settled by buy.
+  // The token takes an authorization until validBefore, by the chain's clock: only the chain says it can no longer
+  // settle (`unsettled`; `pending` while it still can), and this clock must be past it too, by the grace minute it may
+  // be ahead by.
   if (answer === 'unsettled' && BigInt(Math.floor(Date.now() / 1000)) >= BigInt(authorization.validBefore) + SETTLEMENT_GRACE_SECONDS) {
     await store.updatePayment(key, { status: 'unsettled' });
     return 'unsettled';

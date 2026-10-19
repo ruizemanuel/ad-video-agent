@@ -174,6 +174,15 @@ describe('reconcile: orders waiting for their settlement', () => {
     expect(await statusOf(order)).toBe('awaiting_settlement');
   });
 
+  it('leaves alone an authorization the chain says can still settle, however far past validBefore the server\'s clock is', async () => {
+    const now = after(6 * MINUTE);
+    const order = await awaiting(unixSeconds(now) - 3600n);
+    buy.settlement(order.nonce, 'pending');
+
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await statusOf(order)).toBe('awaiting_settlement');
+  });
+
   it('leaves unknown settlements alone, even past validBefore', async () => {
     const now = after(6 * MINUTE);
     const order = await awaiting(unixSeconds(now) - 3600n);

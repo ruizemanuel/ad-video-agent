@@ -24,7 +24,7 @@ const BuyScenario = z.object({
   /** `paid` (the default): buy serves the VM. `ambiguous`: the payment goes out and no clear answer comes back. `rejected`: buy refuses before anything is paid. */
   buy: z.enum(['paid', 'ambiguous', 'rejected']).optional(),
   /** What the chain says about an authorization the test said nothing about. */
-  settled: z.enum(['settled', 'unsettled', 'unknown']).optional(),
+  settled: z.enum(['settled', 'unsettled', 'pending', 'unknown']).optional(),
 });
 
 function scenario(): z.infer<typeof BuyScenario> {
@@ -54,7 +54,7 @@ export class FakeBuy implements BuyPort {
   private readonly transfers = new Map<string, Transfer>();
   private readonly rented = new Set<string>();
 
-  /** Makes the authorization with this nonce answer `settled`, `unsettled` or `unknown`, whatever it is asked; an `Error` makes the question fail. */
+  /** Makes the authorization with this nonce answer `settled`, `pending`, `unsettled` or `unknown`, whatever it is asked; an `Error` makes the question fail. */
   settlement(nonce: string, answer: AuthorizationSettlement | Error): void {
     this.answers.set(nonce.toLowerCase(), answer);
   }

@@ -39,11 +39,11 @@ import {
   ModelOutputInvalid,
   MusicOutputInvalid,
   SETTLEMENT_GRACE_SECONDS,
-  type AuthorizationSettlement,
   type BlobPort,
   type Deliverable,
   type OrderRequest,
   type OrderStore,
+  type SettlementVerdict,
   type StepName,
   type StepState,
 } from '../ports';
@@ -233,9 +233,9 @@ async function rentVm(orderId: string, vm: { mayExist: boolean }): Promise<{ ok:
  * still be spent until it expires, so the run waits for that and asks again. When the chain cannot be read, it asks a few
  * more times and then gives up (`unknown`): the client is refunded, and at worst a VM nobody uses was paid.
  */
-async function paidOnChain(orderId: string): Promise<AuthorizationSettlement> {
+async function paidOnChain(orderId: string): Promise<SettlementVerdict> {
   for (let look = 1; ; look += 1) {
-    let answer: { settlement: AuthorizationSettlement; waitMs: number | null };
+    let answer: { settlement: SettlementVerdict; waitMs: number | null };
     try {
       answer = await lookUpVmPayment(orderId);
     } catch {
@@ -467,7 +467,7 @@ payVm.maxRetries = 0;
  * What the chain says of the VM payment, and how long until asking again can tell more: until the authorization can no
  * longer settle. `waitMs` is null when nothing was signed, so nothing went out.
  */
-async function lookUpVmPayment(orderId: string): Promise<{ settlement: AuthorizationSettlement; waitMs: number | null }> {
+async function lookUpVmPayment(orderId: string): Promise<{ settlement: SettlementVerdict; waitMs: number | null }> {
   'use step';
   const { store, buy } = await getAdapters();
   const settlement = await resolveVmPayment(orderId, { store, buy });

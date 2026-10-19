@@ -213,8 +213,11 @@ export class CeloBuy implements BuyPort {
       client: reader,
     });
     switch (found.state) {
-      // Not spent: not yet, or never (past validBefore).
+      // Not spent, and the chain's time is not past validBefore: it can still be.
       case 'pending':
+        return 'pending';
+      // Not spent, and the chain's time is past validBefore: it never will be. The chain's own evidence, not this
+      // server's clock.
       case 'not_settled':
         return 'unsettled';
       case 'settled':
