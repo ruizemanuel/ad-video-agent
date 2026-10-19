@@ -153,6 +153,45 @@ export async function broadcastRefund(orderId: string, deps: BroadcastRefundDeps
   }
 }
 
+/** An order the retry of a refund does not take, and why, in words fit for whoever runs it. */
+export class RefundNotRetryable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RefundNotRetryable';
+  }
+}
+
+/** What a retry of a refund leaves: the order's status, and the hash of the refund it sent (null when none was). */
+export type RetriedRefund = { orderId: string; status: string; txHash: string | null };
+
+/**
+ * What a person runs for an order left `refund_failed` (scripts/retry-refund.ts): it moves the order back to `refunding`
+ * and, in the same go, signs its refund (or takes the one it kept, whose bytes are sent again: they still pay once) and
+ * sends it. The reconciliation then looks it up as it does any refund. A move to `refunding` alone would only be handed
+ * back to a person by the reconciliation, as a refund nobody signed.
+ *
+ * A refund that reverted cannot be signed again over its record, and one that was mined is found by the reconciliation:
+ * neither is retried. A refund that still cannot be paid leaves the order `refund_failed` again, with why.
+ */
+export async function retryRefund(orderId: string, deps: RefundDeps): Promise<RetriedRefund> {
+  const { store } = deps;
+  const order = await store.getOrder(orderId);
+  if (order === null) throw new RefundNotRetryable(`There is no order ${orderId}.`);
+  if (order.status !== 'refund_failed') throw new RefundNotRetryable(`The order is ${order.status}: only a refund_failed order is retried.`);
+  const kept = await store.getRefund(orderId);
+  if (kept?.status === 'reverted') throw new RefundNotRetryable('Its refund reverted: it has to be paid by hand.');
+  if (kept?.status === 'confirmed') throw new RefundNotRetryable('Its refund was mined: the reconciliation moves the order to refunded.');
+  if (!(await store.transition(orderId, 'refunding'))) throw new RefundNotRetryable('The order moved on while it was being retried.');
+
+  const prepared = await prepareRefund(orderId, order.failureReason ?? 'retry', deps);
+  let txHash: string | null = null;
+  if (!('failed' in prepared)) {
+    await broadcastRefund(orderId, deps);
+    txHash = prepared.txHash;
+  }
+  return { orderId, status: (await store.getOrder(orderId))?.status ?? 'missing', txHash };
+}
+
 /**
  * Positive evidence that the refund can never be mined: another of our kept refunds signed by the same wallet with the
  * same nonce is mined in a block at or below the safe head. Only a refund the wallet's current key signed is judged: one

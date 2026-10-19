@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeRefunds } from '../src/adapters/fake/refunds';
 import { FileStore } from '../src/adapters/fake/store';
-import { broadcastRefund, confirmRefund, prepareRefund, type ConfirmRefundDeps, type RefundDeps } from '../src/payments/refunds';
+import { broadcastRefund, confirmRefund, prepareRefund, RefundNotRetryable, retryRefund, type ConfirmRefundDeps, type RefundDeps } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/tokens';
 import { FeeTooHigh, type Order, type OrderStatus, type RefundRecord } from '../src/ports';
 
@@ -549,5 +549,78 @@ describe('a refund that can never be mined', () => {
     expect(await store.getRefund(b.id)).toMatchObject({ status: 'prepared', txHash: fresh.txHash });
     expect(await prepareRefund(b.id, 'render', deps)).toEqual(await store.getRefund(b.id));
     expect(refunds.prepareCalls).toBe(3);
+  });
+});
+
+describe('retryRefund (what a person runs for an order whose refund failed)', () => {
+  /** An order handed to a person: its refund was never signed (the chain could not be read, and its run died). */
+  async function unsigned(): Promise<Order> {
+    const order = await orderIn('refunding');
+    await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unsigned' });
+    return order;
+  }
+
+  it('moves the order back to refunding, then signs its refund and sends it, in one go', async () => {
+    const order = await unsigned();
+
+    const result = await retryRefund(order.id, deps);
+
+    const refund = (await store.getRefund(order.id))!;
+    expect(result).toEqual({ orderId: order.id, status: 'refunding', txHash: refund.txHash });
+    expect(refund).toMatchObject({ status: 'broadcast', to: order.payer, asset: order.asset, amount: order.amount });
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toEqual([refund.rawTx]);
+    // The reconciliation confirms it as it does any refund.
+    expect(await confirmRefund(order.id, deps)).toBe('confirmed');
+    expect((await store.getOrder(order.id))?.status).toBe('refunded');
+  });
+
+  it('sends the bytes it kept again for a refund that was sent and never confirmed, and signs nothing new', async () => {
+    const order = await orderIn('running');
+    const first = await prepared(order.id);
+    // The send died before the node took the bytes, and the order was handed to a person.
+    refunds.broadcastError = new Error('socket hang up');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await broadcastRefund(order.id, deps);
+    refunds.broadcastError = undefined;
+    await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unconfirmed' });
+
+    expect(await retryRefund(order.id, deps)).toEqual({ orderId: order.id, status: 'refunding', txHash: first.txHash });
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toEqual([first.rawTx, first.rawTx]);
+    expect(await confirmRefund(order.id, deps)).toBe('confirmed');
+  });
+
+  it('leaves the order refund_failed, with why, when its refund still cannot be paid', async () => {
+    const order = await unsigned();
+    refunds.balance = 0n;
+
+    expect(await retryRefund(order.id, deps)).toEqual({ orderId: order.id, status: 'refund_failed', txHash: null });
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'insufficient_balance' });
+    expect(refunds.broadcasts).toEqual([]);
+  });
+
+  it.each(['running', 'refunding', 'paid'] as const)('refuses a %s order, and changes nothing', async (status) => {
+    const order = await orderIn(status);
+    await expect(retryRefund(order.id, deps)).rejects.toThrow(RefundNotRetryable);
+    expect((await store.getOrder(order.id))?.status).toBe(status);
+    expect(refunds.prepareCalls).toBe(0);
+  });
+
+  it('refuses an order whose refund reverted or was mined: a person pays the one, the reconciliation finds the other', async () => {
+    for (const status of ['reverted', 'confirmed'] as const) {
+      const order = await orderIn('running');
+      const refund = await prepared(order.id);
+      await store.updateRefund(order.id, refund.txHash!, { status });
+      await store.transition(order.id, 'refund_failed', { failureReason: 'refund-reverted' });
+
+      await expect(retryRefund(order.id, deps)).rejects.toThrow(RefundNotRetryable);
+      expect((await store.getOrder(order.id))?.status).toBe('refund_failed');
+    }
+    expect(refunds.broadcasts).toEqual([]);
+  });
+
+  it('refuses an order that does not exist', async () => {
+    await expect(retryRefund('ord_doesnotexist', deps)).rejects.toThrow(RefundNotRetryable);
   });
 });

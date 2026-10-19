@@ -11,7 +11,8 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "refund:retry": "tsx scripts/retry-refund.ts"
   },
   "dependencies": {
     "@app/core": "workspace:*",
@@ -41,6 +42,7 @@
     "@vercel/config": "0.12.0",
     "@workflow/vitest": "5.0.5",
     "drizzle-kit": "0.31.11",
+    "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.5"
   }
