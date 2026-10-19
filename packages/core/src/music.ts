@@ -96,7 +96,7 @@ const SILENCE_DB = -120;
 const FRAME_SECONDS = 0.01;
 // A beat further off the grid than this share of a beat (a 32nd note) is one the tracker took off the groove.
 const MAX_BEAT_OFFSET = 1 / 8;
-// At most this share of the beats may be left out of the grid: a pulse that is off for longer than that is unsteady.
+// The share of the tracker's beats, counted from the first, that may be left out of the grid: how the track opens.
 const MAX_DROPPED_SHARE = 0.15;
 // A sample above this level is sound; below it is the digital silence Lyria puts before some tracks.
 const AUDIBLE_DBFS = -60;
@@ -137,22 +137,27 @@ const lineThrough = (beats: Beat[]): Line => {
   return { phase, slope, deviations: beats.map(({ index, time }) => time - (phase + slope * index)) };
 };
 
-// The beat grid of a track: a line through the tracker's beats, without the few it took off the groove. A tracker can
-// take its first beats from a figure that sits off the beat (an intro a 16th ahead of it) before it finds the groove,
-// and those few beats tilt the line and make a steady track read as unsteady. So while the beat furthest off the line
-// is more than MAX_BEAT_OFFSET of a beat off, it is left out and the line fitted again, up to MAX_DROPPED_SHARE of the
-// beats. A pulse that really moves is off for more beats than that, and still reads as unsteady. The residual is the
-// root mean square of what the kept beats are off the line.
+// The beat grid of a track: a line through the tracker's beats, without the few it took off the groove as the track
+// opened. A tracker can take its first beats from a figure that sits off the beat (an intro a 16th ahead of it) before
+// it finds the groove, and those few beats tilt the line and make a steady track read as unsteady. So while one of the
+// first 15 % of the beats (MAX_DROPPED_SHARE) is more than MAX_BEAT_OFFSET of a beat off the line, the one furthest off
+// is left out and the line fitted again. Only the opening is forgiven: a beat off the grid later in the track counts,
+// however few there are. The residual is the root mean square of what the kept beats are off the line.
 const fitBeats = (times: number[]): { phase: number; slope: number; residual: number; dropped: number } => {
+  const opening = Math.floor(times.length * MAX_DROPPED_SHARE);
   let kept: Beat[] = times.map((time, index) => ({ index, time }));
   for (;;) {
     const { phase, slope, deviations } = lineThrough(kept);
     const off = deviations.map(Math.abs);
-    const worst = off.reduce((far, x, i) => (x > (off[far] ?? 0) ? i : far), 0);
-    const dropped = times.length - kept.length;
-    if ((off[worst] ?? 0) <= slope * MAX_BEAT_OFFSET || dropped + 1 > times.length * MAX_DROPPED_SHARE) {
+    // The beat of the opening furthest off the line, if one is off by more than MAX_BEAT_OFFSET.
+    let worst = -1;
+    kept.forEach((beat, i) => {
+      const x = off[i] ?? 0;
+      if (beat.index < opening && x > slope * MAX_BEAT_OFFSET && (worst < 0 || x > (off[worst] ?? 0))) worst = i;
+    });
+    if (worst < 0) {
       const residual = Math.sqrt(deviations.reduce((sum, x) => sum + x ** 2, 0) / kept.length);
-      return { phase, slope, residual, dropped };
+      return { phase, slope, residual, dropped: times.length - kept.length };
     }
     kept = kept.filter((_, i) => i !== worst);
   }

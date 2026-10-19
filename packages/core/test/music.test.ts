@@ -256,11 +256,27 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'weak-start' }]);
   });
 
+  it('does not move the start back onto a beat where nothing starts, however loud it is there', () => {
+    // A steady grid from 1 s, and a long tone that starts 0.2 s before the beat ahead of it: loud on that beat, but no
+    // onset within 40 ms of it.
+    const mono = addClicks(silence(), beats(1));
+    addClicks(mono, [1 - BEAT - 0.2], { clickSeconds: 1 });
+    const track = measure(mono);
+    expect(track.firstBeat).toBeCloseTo(1, 1);
+    expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
+  });
+
   it('still finds unsteady a groove whose pulse moves by a 16th between sections (cand-1)', () => {
     // A 16th early for 12 beats, then on the grid, then a 16th late from 21.9 s.
     const track = measure(addClicks(silence(), beats(0.3, (beat, time) => (beat < 12 ? -SIXTEENTH : time < 21.9 ? 0 : SIXTEENTH))));
     expect(track.beatResidualMs).toBeGreaterThan(30);
     expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'unsteady' }]);
+  });
+
+  it('still finds unsteady a groove whose last beats move by a 16th: only how a track opens is forgiven', () => {
+    // A 24 s video plays the beats from 21 s, which come a 16th late.
+    const track = measureTrack(addClicks(silence(), beats(0.3, (_, time) => (time >= 21 ? SIXTEENTH : 0))), SAMPLE_RATE, 112, 24);
+    expect(chooseTrack([track], 112, 24).rejected).toEqual([{ index: 0, reason: 'unsteady' }]);
   });
 
   it('still finds weak the start of a track that opens on a soft count-in (cand-2)', () => {
