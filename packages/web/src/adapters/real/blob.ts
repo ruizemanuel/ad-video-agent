@@ -7,6 +7,8 @@ import type { BlobPort } from '../../ports';
 const MINUTE_MS = 60_000;
 // The read URL `get` makes for itself: it is used at once.
 const OWN_READ_MINUTES = 2;
+/** How long `get` may take: the largest file it reads (the key frames, 30 MB at most) comes well within it. */
+export const BLOB_READ_TIMEOUT_MS = 60_000;
 
 export class VercelBlob implements BlobPort {
   constructor(private readonly token: string) {}
@@ -19,11 +21,23 @@ export class VercelBlob implements BlobPort {
   }
 
   async get(path: string): Promise<Uint8Array> {
-    const response = await fetch(await this.presignGet(path, OWN_READ_MINUTES));
+    const url = await this.presignGet(path, OWN_READ_MINUTES);
+    // The messages leave out the URL: it carries a signature. Of an error on the way, only its kind is kept.
+    const failed = (error: unknown): Error => new Error(`The blob ${path} could not be read (${error instanceof Error ? error.name : 'error'}).`);
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(BLOB_READ_TIMEOUT_MS) });
+    } catch (error) {
+      throw failed(error);
+    }
     if (response.status === 404) throw new Error(`The blob ${path} does not exist.`);
-    // The message leaves out the URL: it carries a signature.
     if (!response.ok) throw new Error(`The blob ${path} could not be read (HTTP ${response.status}).`);
-    return new Uint8Array(await response.arrayBuffer());
+    try {
+      return new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      // The time limit covers the body too.
+      throw failed(error);
+    }
   }
 
   async presignGet(path: string, minutes: number): Promise<string> {

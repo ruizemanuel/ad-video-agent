@@ -5,7 +5,7 @@
 import type { IssueSignedTokenOptions } from '@vercel/blob';
 import * as sdk from '@vercel/blob';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { VercelBlob } from '../src/adapters/real/blob';
+import { BLOB_READ_TIMEOUT_MS, VercelBlob } from '../src/adapters/real/blob';
 
 vi.mock('@vercel/blob', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@vercel/blob')>()),
@@ -143,6 +143,30 @@ describe('VercelBlob.get', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url] = (fetchMock.mock.calls[0] as unknown as [string]) ?? [];
     expect(new URL(url).pathname).toBe('/orders/ord_a/capture.json');
+  });
+
+  it('gives the read a time limit', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{}'));
+    vi.stubGlobal('fetch', fetchMock);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    await new VercelBlob(TOKEN).get('orders/ord_a/capture.json');
+    const ours = timeout.mock.calls.findIndex(([ms]) => ms === BLOB_READ_TIMEOUT_MS);
+    expect(ours).toBeGreaterThanOrEqual(0);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(timeout.mock.results[ours]?.value);
+    expect(BLOB_READ_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it('fails with the path, and not the signed URL, when the read fails or runs out of time', async () => {
+    for (const failure of [new DOMException('The operation was aborted due to timeout', 'TimeoutError'), new TypeError('fetch failed')]) {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => Promise.reject(Object.assign(failure, { url }))));
+      const message = await new VercelBlob(TOKEN)
+        .get('orders/ord_a/capture.json')
+        .then(() => 'it did not fail')
+        .catch((error: Error) => error.message);
+      expect(message).toContain('orders/ord_a/capture.json');
+      expect(message).toContain(failure.name);
+      expect(message).not.toContain('https://');
+    }
   });
 
   it('says which blob is missing', async () => {
