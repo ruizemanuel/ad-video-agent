@@ -1,7 +1,7 @@
 // The OrderStore on Postgres (Neon over HTTP in production, PGlite in the tests), through drizzle. Neon's HTTP
 // driver has no interactive transactions, so every operation that must be atomic is one statement.
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, gte, inArray, isNull, lt, ne, or, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
 import { costs, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
 import {
@@ -259,17 +259,18 @@ export class DrizzleStore implements OrderStore {
     return (await this.db.select().from(refunds).where(eq(refunds.nonce, nonce))).map(toRefund);
   }
 
-  async stalledRefunds(updatedBefore: Date): Promise<Order[]> {
+  async stalledRefunds(updatedBefore: Date, limit: number): Promise<Order[]> {
     const rows = await this.db
       .select({ order: orders })
       .from(orders)
       .innerJoin(refunds, eq(refunds.orderId, orders.id))
       .where(and(eq(orders.status, 'refunding'), lt(refunds.updatedAt, updatedBefore)))
-      .orderBy(asc(orders.createdAt));
+      .orderBy(asc(orders.createdAt))
+      .limit(limit);
     return rows.map((row) => row.order);
   }
 
-  async unsignedRefunds(paidBefore: Date): Promise<Order[]> {
+  async unsignedRefunds(paidBefore: Date, limit: number): Promise<Order[]> {
     const rows = await this.db
       .select({ order: orders })
       .from(orders)
@@ -281,7 +282,8 @@ export class DrizzleStore implements OrderStore {
           or(lt(orders.paidAt, paidBefore), and(isNull(orders.paidAt), lt(orders.createdAt, paidBefore))),
         ),
       )
-      .orderBy(asc(orders.createdAt));
+      .orderBy(asc(orders.createdAt))
+      .limit(limit);
     return rows.map((row) => row.order);
   }
 
@@ -309,21 +311,32 @@ export class DrizzleStore implements OrderStore {
       .onConflictDoUpdate({ target: prechecks.key, set: { result: r, createdAt: now } });
   }
 
-  ordersAwaitingSettlement(olderThan: Date): Promise<Order[]> {
+  ordersAwaitingSettlement(olderThan: Date, limit: number): Promise<Order[]> {
     return this.db
       .select()
       .from(orders)
       .where(and(eq(orders.status, 'awaiting_settlement'), lt(orders.createdAt, olderThan)))
-      .orderBy(asc(orders.createdAt));
+      .orderBy(asc(orders.createdAt))
+      .limit(limit);
   }
 
   // A paid order is stamped with its payment time, so it is the one to measure from.
-  paidWithoutRun(olderThan: Date): Promise<Order[]> {
+  paidWithoutRun(olderThan: Date, limit: number): Promise<Order[]> {
     return this.db
       .select()
       .from(orders)
       .where(and(eq(orders.status, 'paid'), isNull(orders.runId), lt(orders.paidAt, olderThan)))
-      .orderBy(asc(orders.paidAt));
+      .orderBy(asc(orders.paidAt))
+      .limit(limit);
+  }
+
+  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]> {
+    return this.db
+      .select()
+      .from(orders)
+      .where(and(or(and(eq(orders.status, 'paid'), isNotNull(orders.runId)), eq(orders.status, 'running')), lt(orders.paidAt, paidBefore)))
+      .orderBy(asc(orders.paidAt))
+      .limit(limit);
   }
 
   ordersToExpire(createdBefore: Date): Promise<Order[]> {
@@ -334,7 +347,7 @@ export class DrizzleStore implements OrderStore {
       .orderBy(asc(orders.createdAt));
   }
 
-  refundFailures(): Promise<Order[]> {
-    return this.db.select().from(orders).where(eq(orders.status, 'refund_failed')).orderBy(asc(orders.createdAt));
+  refundFailures(limit: number): Promise<Order[]> {
+    return this.db.select().from(orders).where(eq(orders.status, 'refund_failed')).orderBy(asc(orders.createdAt)).limit(limit);
   }
 }

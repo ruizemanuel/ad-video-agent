@@ -1,7 +1,8 @@
 // What happens to an order around its payment, and what its status says to whoever polls it. The paying request
 // makes the order (`awaiting_settlement`); once the facilitator settles, `markPaidAndStart` moves it to `paid` and
 // starts its run. The reconciliation does the same for a settlement nobody reported.
-import { start } from 'workflow/api';
+import { getRun, start, type Run } from 'workflow/api';
+import { WorkflowRunNotFoundError } from 'workflow/errors';
 import type { Env } from '../env';
 import { signFileLink } from '../links';
 import { ORDER_DAYS, STEP_NAMES, type Order, type OrderStatus, type OrderStore, type RefundRecord, type RefundStatus, type StepName, type StepState } from '../ports';
@@ -21,6 +22,21 @@ export type FoundPayment = Pick<SettledPayment, 'asset' | 'payer' | 'nonce'> & {
 export async function startRun(orderId: string, store: Pick<OrderStore, 'setRunId'>): Promise<void> {
   const run = await start(orderWorkflow, [orderId]);
   await store.setRunId(orderId, run.runId);
+}
+
+/**
+ * What the workflow runtime says of a run: `pending` or `running` while it is at work, `completed`, `failed` or
+ * `cancelled` once it is over, `missing` when the runtime does not know it, `unreadable` when it could not be asked.
+ */
+export type RunStatus = Awaited<Run<unknown>['status']> | 'missing' | 'unreadable';
+
+/** One read of the run's record, without its data. It never throws. */
+export async function runStatus(runId: string): Promise<RunStatus> {
+  try {
+    return await getRun(runId).status;
+  } catch (error) {
+    return WorkflowRunNotFoundError.is(error) ? 'missing' : 'unreadable';
+  }
 }
 
 /**

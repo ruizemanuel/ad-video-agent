@@ -1,5 +1,5 @@
 // What the cron routes need from outside: the store and the blob store, buy to ask the chain about a payment, and the
-// refunds' adapter to ask it about a refund.
+// refunds' adapter to ask it about a refund (and to refund an order whose run was lost).
 // The service builds them from its settings; a test hands the routes its doubles instead.
 import { getAdapters } from '../../../adapters';
 import type { BlobPort, BuyPort, OrderStore, RefundPort } from '../../../ports';

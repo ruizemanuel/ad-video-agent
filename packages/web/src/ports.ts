@@ -244,18 +244,26 @@ export interface OrderStore {
   refundsSince(t: Date): Promise<number>;
   /** The kept refunds signed with this nonce of the refunds' wallet, whatever their order. */
   refundsByNonce(nonce: number): Promise<RefundRecord[]>;
-  /** The orders still `refunding` whose refund was last written before `updatedBefore`, oldest first. */
-  stalledRefunds(updatedBefore: Date): Promise<Order[]>;
-  /** The orders still `refunding` with no refund signed, paid (or, unpaid, made) before `paidBefore`, oldest first. */
-  unsignedRefunds(paidBefore: Date): Promise<Order[]>;
 
   getPrecheck(key: string, maxAgeMs: number): Promise<PrecheckResult | null>;
   putPrecheck(key: string, r: PrecheckResult): Promise<void>;
 
-  ordersAwaitingSettlement(olderThan: Date): Promise<Order[]>;
-  paidWithoutRun(olderThan: Date): Promise<Order[]>;
+  // What the cron looks for. Each list is the oldest first, and `limit` long at most: a pass never takes more than its share.
+
+  /** The orders still `refunding` whose refund was last written before `updatedBefore`. */
+  stalledRefunds(updatedBefore: Date, limit: number): Promise<Order[]>;
+  /** The orders still `refunding` with no refund signed, paid (or, unpaid, made) before `paidBefore`. */
+  unsignedRefunds(paidBefore: Date, limit: number): Promise<Order[]>;
+  /** The orders `awaiting_settlement` made before `olderThan`. */
+  ordersAwaitingSettlement(olderThan: Date, limit: number): Promise<Order[]>;
+  /** The orders `paid` with no run, paid before `olderThan`. */
+  paidWithoutRun(olderThan: Date, limit: number): Promise<Order[]>;
+  /** The orders whose run should be over: `paid` with a run, or `running`, paid before `paidBefore`, by their payment. */
+  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]>;
+  /** The orders `refund_failed`. */
+  refundFailures(limit: number): Promise<Order[]>;
+  /** The cleanup's: the orders `delivered`, `refunded` or `unpaid` made before `createdBefore`, oldest first. */
   ordersToExpire(createdBefore: Date): Promise<Order[]>;
-  refundFailures(): Promise<Order[]>;
 }
 
 /**

@@ -13,14 +13,38 @@ import { setCronDeps } from '../src/app/api/cron/deps';
 import { GET as cleanupRoute } from '../src/app/api/cron/cleanup/route';
 import { GET as reconcileRoute } from '../src/app/api/cron/reconcile/route';
 import { cleanup } from '../src/maintenance/cleanup';
-import { reconcile } from '../src/maintenance/reconcile';
-import { broadcastRefund, prepareRefund } from '../src/payments/refunds';
+import {
+  AWAITING_SETTLEMENT_PER_PASS,
+  OVERDUE_RUNS_PER_PASS,
+  PAID_WITHOUT_RUN_PER_PASS,
+  reconcile,
+  REFUND_FAILURES_PER_PASS,
+  STALLED_REFUNDS_PER_PASS,
+  UNSIGNED_REFUNDS_PER_PASS,
+  type ReconcileDeps,
+} from '../src/maintenance/reconcile';
+import { runStatus, type RunStatus } from '../src/payments/orders';
+import { broadcastRefund, confirmRefund, prepareRefund } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/x402';
 import type { Order } from '../src/ports';
 import { orderWorkflow } from '../src/workflows/order';
 import { config } from '../vercel';
 
-vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_test' })) }));
+// What the workflow runtime says of a run, by its id; a run it was told nothing of does not exist.
+const runs = vi.hoisted(() => new Map<string, string | Error>());
+vi.mock('workflow/api', async () => {
+  const { WorkflowRunNotFoundError } = await import('workflow/errors');
+  return {
+    start: vi.fn(async () => ({ runId: 'wrun_test' })),
+    getRun: vi.fn((runId: string) => ({
+      get status(): Promise<string> {
+        const status = runs.get(runId);
+        if (status === undefined) return Promise.reject(new WorkflowRunNotFoundError(runId));
+        return status instanceof Error ? Promise.reject(status) : Promise.resolve(status);
+      },
+    })),
+  };
+});
 
 const CRON_SECRET = 'c'.repeat(40);
 const PAYTO = `0x${'1'.repeat(40)}`;
@@ -42,6 +66,7 @@ let refunds: FakeRefunds;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  runs.clear();
   const dir = await mkdtemp(join(tmpdir(), 'maintenance-'));
   dirs.push(dir);
   store = new FileStore(dir);
@@ -98,8 +123,19 @@ async function delivered(): Promise<Order> {
   return (await store.getOrder(order.id)) as Order;
 }
 
-/** What reconcile runs on: the service's wallet is where the payments go. */
-const deps = (chain: FakeBuy = buy) => ({ store, buy: chain, refunds, payTo: PAYTO });
+/**
+ * What reconcile runs on: the service's wallet is where the payments go, a day's refunds may reach US$ 10, and the
+ * workflow runtime is the mocked one (runStatus over `runs`).
+ */
+const deps = (chain: FakeBuy = buy, over: Partial<ReconcileDeps> = {}): ReconcileDeps => ({
+  store,
+  buy: chain,
+  refunds,
+  payTo: PAYTO,
+  refundDailyCapUsd: 10,
+  runStatus,
+  ...over,
+});
 const statusOf = async (order: Order) => (await store.getOrder(order.id))!.status;
 /** Orders made in the same millisecond have no fixed order between them. */
 const sorted = (ids: string[]): string[] => [...ids].sort();
@@ -110,7 +146,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     buy.settlement(order.nonce, 'settled');
 
     const now = after(6 * MINUTE);
-    expect(await reconcile(deps(), now)).toEqual({ started: [order.id], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [order.id], unpaid: [], refundFailed: [], runLost: [] });
 
     // It asked about this very authorization.
     expect(buy.settlementQueries).toEqual([
@@ -132,7 +168,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(after(10 * MINUTE)));
     buy.settlement(order.nonce, 'settled');
 
-    expect(await reconcile(deps(), after(4 * MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), after(4 * MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(buy.settlementQueries).toEqual([]);
     expect(await statusOf(order)).toBe('awaiting_settlement');
     expect(start).not.toHaveBeenCalled();
@@ -143,7 +179,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(now) - 3600n);
     buy.settlement(order.nonce, 'unsettled');
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('unpaid');
     expect(start).not.toHaveBeenCalled();
   });
@@ -161,7 +197,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(now) - 59n);
     buy.settlement(order.nonce, 'unsettled');
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('awaiting_settlement');
   });
 
@@ -170,7 +206,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(now) + 1n);
     buy.settlement(order.nonce, 'unsettled');
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('awaiting_settlement');
   });
 
@@ -179,7 +215,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(now) - 3600n);
     buy.settlement(order.nonce, 'pending');
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('awaiting_settlement');
   });
 
@@ -188,7 +224,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     const order = await awaiting(unixSeconds(now) - 3600n);
     buy.settlement(order.nonce, 'unknown');
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('awaiting_settlement');
     expect(start).not.toHaveBeenCalled();
   });
@@ -204,7 +240,7 @@ describe('reconcile: orders waiting for their settlement', () => {
       return buy.authorizationSettled(input);
     };
 
-    expect(await reconcile(deps(slow), after(6 * MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(slow), after(6 * MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(start).not.toHaveBeenCalled();
   });
 
@@ -229,7 +265,7 @@ describe('reconcile: orders waiting for their settlement', () => {
     buy.settlement(broken.nonce, new Error('rpc down'));
     buy.settlement(fine.nonce, 'settled');
 
-    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [fine.id], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [fine.id], unpaid: [], refundFailed: [], runLost: [] });
     expect(logged).toHaveBeenCalledWith('[reconcile_error]', broken.id, 'rpc down');
     expect(await statusOf(broken)).toBe('awaiting_settlement');
   });
@@ -245,7 +281,7 @@ describe('reconcile: a nonce spent by another transfer', () => {
     const order = await awaiting(unixSeconds(now) + 600n);
     buy.consumed(order.nonce, burn);
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [] });
     expect(buy.settlementQueries).toHaveLength(1);
     expect(await statusOf(order)).toBe('awaiting_settlement');
     expect(start).not.toHaveBeenCalled();
@@ -256,7 +292,7 @@ describe('reconcile: a nonce spent by another transfer', () => {
     const order = await awaiting(unixSeconds(now) - 3600n);
     buy.consumed(order.nonce, burn);
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [], unpaid: [order.id], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('unpaid');
     expect(start).not.toHaveBeenCalled();
   });
@@ -281,7 +317,7 @@ describe('reconcile: a nonce spent by another transfer', () => {
     const order = await awaiting(unixSeconds(now) + 600n);
     buy.consumed(order.nonce, { to: PAYTO, value });
 
-    expect(await reconcile(deps(), now)).toEqual({ started: [order.id], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), now)).toEqual({ started: [order.id], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('paid');
   });
 });
@@ -290,7 +326,7 @@ describe('reconcile: paid orders without a run', () => {
   it('starts a paid order that has no run after 5 min, once', async () => {
     const order = await paid();
 
-    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [order.id], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [order.id], unpaid: [], refundFailed: [], runLost: [] });
     expect(start).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledWith(orderWorkflow, [order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'paid', runId: 'wrun_test' });
@@ -321,10 +357,172 @@ describe('reconcile: paid orders without a run', () => {
     const second = await paid();
     vi.mocked(start).mockRejectedValueOnce(new Error('workflow unavailable'));
 
-    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [second.id], unpaid: [], refundFailed: [] });
+    expect(await reconcile(deps(), after(6 * MINUTE))).toEqual({ started: [second.id], unpaid: [], refundFailed: [], runLost: [] });
     expect(logged).toHaveBeenCalledWith('[reconcile_error]', first.id, 'workflow unavailable');
     // The failed one has no run, so the next pass tries it again.
     expect((await store.getOrder(first.id))!.runId).toBeNull();
+  });
+});
+
+describe('reconcile: paid orders whose run was lost', () => {
+  const HOUR = 60 * MINUTE;
+
+  /** An order a run took (`running`, or still `paid` with the run's id) and never let go of. */
+  async function taken(status: 'paid' | 'running' = 'running', runId = 'wrun_lost'): Promise<Order> {
+    const order = await paid();
+    await store.setRunId(order.id, runId);
+    if (status === 'running') await store.transition(order.id, 'running');
+    return (await store.getOrder(order.id))!;
+  }
+
+  it.each([
+    ['running', 'failed'],
+    ['running', 'completed'],
+    ['running', 'cancelled'],
+    ['paid', 'failed'],
+  ] as const)('refunds a %s order whose run is %s two hours after the payment, as run-lost, signing and sending its refund once', async (status, run) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken(status);
+    runs.set('wrun_lost', run);
+
+    expect(await reconcile(deps(), after(2 * HOUR + MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [order.id] });
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'run-lost', steps: { refund: 'running' } });
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast', to: PAYER, asset: order.asset, amount: order.amount, reason: 'run-lost' });
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toHaveLength(1);
+    expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, status, run);
+  });
+
+  it('refunds an order whose run the runtime does not know, or that has no run id', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unknown = await taken('running', 'wrun_gone');
+    const anonymous = await paid();
+    await store.transition(anonymous.id, 'running');
+
+    expect(sorted((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost)).toEqual(sorted([unknown.id, anonymous.id]));
+  });
+
+  it('refunds an order whose run cannot be read: two hours after the payment, no run of an order is still at work', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', new Error('workflow backend unavailable'));
+
+    expect((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost).toEqual([order.id]);
+    expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', 'unreadable');
+  });
+
+  it.each(['running', 'pending'])('leaves alone, and logs every pass, an order whose run says it is %s', async (run) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', run);
+
+    for (const now of [after(2 * HOUR + MINUTE), after(2 * HOUR + 11 * MINUTE)]) {
+      logged.mockClear();
+      expect((await reconcile(deps(), now)).runLost).toEqual([]);
+      expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', run);
+    }
+    expect(await statusOf(order)).toBe('running');
+    expect(refunds.prepareCalls).toBe(0);
+  });
+
+  it('leaves alone an order paid less than two hours ago, without asking about its run', async () => {
+    const order = await taken();
+    const asked = vi.fn(runStatus);
+
+    expect((await reconcile(deps(buy, { runStatus: asked }), after(2 * HOUR - MINUTE))).runLost).toEqual([]);
+    expect(asked).not.toHaveBeenCalled();
+    expect(await statusOf(order)).toBe('running');
+  });
+
+  it('confirms the refund in a later pass, once it has not moved for 30 minutes, and sends nothing more', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'failed');
+    await reconcile(deps(), after(2 * HOUR + MINUTE));
+
+    await reconcile(deps(), after(2 * HOUR + 32 * MINUTE));
+    expect(await statusOf(order)).toBe('refunded');
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'confirmed' });
+    expect(refunds.prepareCalls).toBe(1);
+    expect(refunds.broadcasts).toHaveLength(1);
+  });
+
+  it("hands to a person, in the same pass's log, a lost-run order whose refund cannot be paid", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'failed');
+
+    const result = await reconcile(deps(buy, { refundDailyCapUsd: 1 }), after(2 * HOUR + MINUTE));
+    expect(result).toMatchObject({ runLost: [order.id], refundFailed: [order.id] });
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-daily-cap' });
+    expect(refunds.broadcasts).toEqual([]);
+    expect(logged).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+  });
+
+  it('hands to a person, in the next pass, a lost-run order whose refund could not be signed', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'failed');
+    refunds.prepareError = new Error('the chain could not be read');
+
+    expect((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost).toEqual([]);
+    expect(logged).toHaveBeenCalledWith('[reconcile_error]', order.id, 'the chain could not be read');
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'run-lost' });
+
+    refunds.prepareError = undefined;
+    expect((await reconcile(deps(), after(2 * HOUR + 11 * MINUTE))).refundFailed).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unsigned' });
+    expect(refunds.broadcasts).toEqual([]);
+  });
+
+  it('pays once when the run was not lost after all: the run, when it wakes, gets the refund the reconciliation kept', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'failed');
+    await reconcile(deps(), after(2 * HOUR + MINUTE));
+    const kept = (await store.getRefund(order.id))!;
+
+    // What the run's refund steps do (prepareOrderRefund, broadcastOrderRefund, confirmOrderRefund), for its own reason.
+    const refundDeps = { store, refunds, dailyCapUsd: 10 };
+    expect(await prepareRefund(order.id, 'capture', refundDeps)).toEqual(kept);
+    expect(await broadcastRefund(order.id, refundDeps)).toBe('broadcast');
+    expect(await confirmRefund(order.id, refundDeps)).toBe('confirmed');
+
+    expect(refunds.prepareCalls).toBe(1);
+    expect(new Set(refunds.broadcasts)).toEqual(new Set([kept.rawTx]));
+    // One transfer: the wallet's first nonce, and no other.
+    expect(await refunds.nonceUsed(0)).toBe(true);
+    expect(await refunds.nonceUsed(1)).toBe(false);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunded', failureReason: 'run-lost' });
+  });
+});
+
+describe('reconcile: one pass', () => {
+  /** The store's lists, in the order the pass asks for them, with how many of each it asks for. */
+  function listed(): [string, unknown][] {
+    const calls: [string, unknown][] = [];
+    for (const name of ['stalledRefunds', 'unsignedRefunds', 'runsOverdue', 'refundFailures', 'ordersAwaitingSettlement', 'paidWithoutRun'] as const) {
+      const real = (store[name] as (...args: unknown[]) => Promise<Order[]>).bind(store);
+      vi.spyOn(store, name).mockImplementation((async (...args: unknown[]) => {
+        calls.push([name, args.at(-1)]);
+        return real(...args);
+      }) as never);
+    }
+    return calls;
+  }
+
+  it('settles the refunds first, then the payments, and takes a bounded number of orders, the oldest first, in each pass', async () => {
+    const calls = listed();
+    await reconcile(deps(), after(6 * MINUTE));
+    expect(calls).toEqual([
+      ['stalledRefunds', STALLED_REFUNDS_PER_PASS],
+      ['unsignedRefunds', UNSIGNED_REFUNDS_PER_PASS],
+      ['runsOverdue', OVERDUE_RUNS_PER_PASS],
+      ['refundFailures', REFUND_FAILURES_PER_PASS],
+      ['ordersAwaitingSettlement', AWAITING_SETTLEMENT_PER_PASS],
+      ['paidWithoutRun', PAID_WITHOUT_RUN_PER_PASS],
+    ]);
+    for (const [, limit] of calls) expect(limit).toSatisfy((n: unknown) => Number.isInteger(n) && (n as number) > 0 && (n as number) <= 50);
   });
 });
 
@@ -513,7 +711,8 @@ describe('cleanup', () => {
     expect(await statusOf(unpaid)).toBe('expired');
   });
 
-  it('leaves alone an order still being worked on, with its files, and deletes only the files of the one it expires', async () => {
+  it('leaves an order still being worked on, and its files, to the reconciliation: refunded once its run is lost, it expires', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const old = await delivered();
     const busy = await paid();
     await store.transition(busy.id, 'running');
@@ -522,6 +721,13 @@ describe('cleanup', () => {
     expect(await cleanup({ store, blob }, after(90 * DAY))).toEqual({ expired: [old.id] });
     expect(await statusOf(busy)).toBe('running');
     expect(await blob.get(`orders/${busy.id}/capture.json`)).toBeInstanceOf(Uint8Array);
+
+    // Its run is lost (it has none the runtime knows): the reconciliation refunds it, and a refunded order expires.
+    expect((await reconcile(deps(), after(3 * 60 * MINUTE))).runLost).toEqual([busy.id]);
+    await reconcile(deps(), after(4 * 60 * MINUTE));
+    expect(await statusOf(busy)).toBe('refunded');
+    expect(await cleanup({ store, blob }, after(90 * DAY))).toEqual({ expired: [busy.id] });
+    await expect(blob.get(`orders/${busy.id}/capture.json`)).rejects.toThrow('does not exist');
   });
 
   it('keeps the order for the next run when its blobs could not be deleted, and goes on with the others', async () => {
@@ -585,7 +791,7 @@ describe('the cron routes', () => {
     const res = await call(reconcileRoute, `Bearer ${CRON_SECRET}`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.json()).toEqual({ started: [order.id], unpaid: [], refundFailed: [] });
+    expect(await res.json()).toEqual({ started: [order.id], unpaid: [], refundFailed: [], runLost: [] });
     expect(await statusOf(order)).toBe('paid');
   });
 

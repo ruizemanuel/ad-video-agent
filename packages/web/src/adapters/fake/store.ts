@@ -163,6 +163,12 @@ export class FileStore implements OrderStore {
     return (await this.all<Order>('orders')).filter(keep).sort(byAge);
   }
 
+  /** The orders `keep` takes that were paid before `t`, the earliest payment first, `limit` at most. */
+  private async paidBefore(t: Date, limit: number, keep: (order: Order) => boolean): Promise<Order[]> {
+    const paid = (await this.all<Order>('orders')).filter((o) => keep(o) && o.paidAt !== null && o.paidAt < t);
+    return paid.sort((a, b) => (a.paidAt?.getTime() ?? 0) - (b.paidAt?.getTime() ?? 0)).slice(0, limit);
+  }
+
   // Orders.
 
   createOrder(o: NewOrder): Promise<{ order: Order; created: boolean }> {
@@ -422,17 +428,17 @@ export class FileStore implements OrderStore {
     return this.locked(async () => (await this.all<StoredRefund>('refunds')).filter((refund) => refund.nonce === nonce).map(publicRefund));
   }
 
-  stalledRefunds(updatedBefore: Date): Promise<Order[]> {
+  stalledRefunds(updatedBefore: Date, limit: number): Promise<Order[]> {
     return this.locked(async () => {
       const stalled = new Set((await this.all<StoredRefund>('refunds')).filter((refund) => refund.updatedAt < updatedBefore).map((refund) => refund.orderId));
-      return this.ordersWhere((o) => o.status === 'refunding' && stalled.has(o.id));
+      return (await this.ordersWhere((o) => o.status === 'refunding' && stalled.has(o.id))).slice(0, limit);
     });
   }
 
-  unsignedRefunds(paidBefore: Date): Promise<Order[]> {
+  unsignedRefunds(paidBefore: Date, limit: number): Promise<Order[]> {
     return this.locked(async () => {
       const signed = new Set((await this.all<StoredRefund>('refunds')).map((refund) => refund.orderId));
-      return this.ordersWhere((o) => o.status === 'refunding' && !signed.has(o.id) && (o.paidAt ?? o.createdAt) < paidBefore);
+      return (await this.ordersWhere((o) => o.status === 'refunding' && !signed.has(o.id) && (o.paidAt ?? o.createdAt) < paidBefore)).slice(0, limit);
     });
   }
 
@@ -452,19 +458,23 @@ export class FileStore implements OrderStore {
 
   // What the cron looks for.
 
-  ordersAwaitingSettlement(olderThan: Date): Promise<Order[]> {
-    return this.locked(() => this.ordersWhere((o) => o.status === 'awaiting_settlement' && o.createdAt < olderThan));
+  ordersAwaitingSettlement(olderThan: Date, limit: number): Promise<Order[]> {
+    return this.locked(async () => (await this.ordersWhere((o) => o.status === 'awaiting_settlement' && o.createdAt < olderThan)).slice(0, limit));
   }
 
-  paidWithoutRun(olderThan: Date): Promise<Order[]> {
-    return this.locked(() => this.ordersWhere((o) => o.status === 'paid' && o.runId === null && o.paidAt !== null && o.paidAt < olderThan));
+  paidWithoutRun(olderThan: Date, limit: number): Promise<Order[]> {
+    return this.locked(() => this.paidBefore(olderThan, limit, (o) => o.status === 'paid' && o.runId === null));
+  }
+
+  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]> {
+    return this.locked(() => this.paidBefore(paidBefore, limit, (o) => (o.status === 'paid' && o.runId !== null) || o.status === 'running'));
   }
 
   ordersToExpire(createdBefore: Date): Promise<Order[]> {
     return this.locked(() => this.ordersWhere((o) => ['delivered', 'refunded', 'unpaid'].includes(o.status) && o.createdAt < createdBefore));
   }
 
-  refundFailures(): Promise<Order[]> {
-    return this.locked(() => this.ordersWhere((o) => o.status === 'refund_failed'));
+  refundFailures(limit: number): Promise<Order[]> {
+    return this.locked(async () => (await this.ordersWhere((o) => o.status === 'refund_failed')).slice(0, limit));
   }
 }

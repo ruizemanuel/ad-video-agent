@@ -672,10 +672,10 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         await pause();
         // Written after the cutoff: it has moved since.
         await s.updateRefund(fresh.id, '0xf', { status: 'broadcast' });
-        expect((await s.stalledRefunds(cutoff)).map((o) => o.id)).toEqual([stalled.id]);
-        expect(await s.stalledRefunds(ago(minutes(1)))).toEqual([]);
+        expect((await s.stalledRefunds(cutoff, 10)).map((o) => o.id)).toEqual([stalled.id]);
+        expect(await s.stalledRefunds(ago(minutes(1)), 10)).toEqual([]);
         // An order refunding with no refund signed yet is not one of them.
-        expect((await s.stalledRefunds(ahead(minutes(1)))).map((o) => o.id)).not.toContain(unsigned.id);
+        expect((await s.stalledRefunds(ahead(minutes(1)), 10)).map((o) => o.id)).not.toContain(unsigned.id);
       });
 
       it('finds the orders refunding with no refund signed, paid before a moment', async () => {
@@ -683,8 +683,8 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         const signed = await orderIn('refunding');
         await orderIn('running');
         await s.insertRefund(refund(signed.id));
-        expect((await s.unsignedRefunds(ahead(minutes(1)))).map((o) => o.id)).toEqual([unsigned.id]);
-        expect(await s.unsignedRefunds(ago(minutes(1)))).toEqual([]);
+        expect((await s.unsignedRefunds(ahead(minutes(1)), 10)).map((o) => o.id)).toEqual([unsigned.id]);
+        expect(await s.unsignedRefunds(ago(minutes(1)), 10)).toEqual([]);
       });
 
       it('ignores an update to a refund that does not exist', async () => {
@@ -730,8 +730,8 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       it('lists orders awaiting settlement older than a date', async () => {
         const waiting = await create();
         await orderIn('paid');
-        expect(ids(await s.ordersAwaitingSettlement(ahead(minutes(1))))).toEqual([waiting.id]);
-        expect(await s.ordersAwaitingSettlement(ago(minutes(1)))).toEqual([]);
+        expect(ids(await s.ordersAwaitingSettlement(ahead(minutes(1)), 10))).toEqual([waiting.id]);
+        expect(await s.ordersAwaitingSettlement(ago(minutes(1)), 10)).toEqual([]);
       });
 
       it('lists paid orders with no run, older than a date', async () => {
@@ -740,8 +740,8 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         await s.setRunId(started.id, 'wrun_1');
         await orderIn('running');
         await create();
-        expect(ids(await s.paidWithoutRun(ahead(minutes(1))))).toEqual([stuck.id]);
-        expect(await s.paidWithoutRun(ago(minutes(1)))).toEqual([]);
+        expect(ids(await s.paidWithoutRun(ahead(minutes(1)), 10))).toEqual([stuck.id]);
+        expect(await s.paidWithoutRun(ago(minutes(1)), 10)).toEqual([]);
       });
 
       it('lists delivered, refunded and unpaid orders created before a date', async () => {
@@ -760,9 +760,69 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         const failed = await orderIn('refund_failed');
         await orderIn('refunding');
         await orderIn('refunded');
-        expect(ids(await s.refundFailures())).toEqual([failed.id]);
+        expect(ids(await s.refundFailures(10))).toEqual([failed.id]);
         await s.transition(failed.id, 'refunding');
-        expect(await s.refundFailures()).toEqual([]);
+        expect(await s.refundFailures(10)).toEqual([]);
+      });
+
+      it('lists the paid orders whose run should be over: paid with a run, or running, paid before a date', async () => {
+        const started = await orderIn('paid');
+        await s.setRunId(started.id, 'wrun_1');
+        const running = await orderIn('running');
+        await s.setRunId(running.id, 'wrun_2');
+        // Not these: a paid order with no run yet (another pass starts it), and the orders past running.
+        await orderIn('paid');
+        for (const status of ['delivered', 'refunding', 'refunded', 'refund_failed', 'unpaid', 'expired'] as const) await orderIn(status);
+        await create();
+        expect(ids(await s.runsOverdue(ahead(minutes(1)), 10))).toEqual([started.id, running.id].sort());
+        expect(await s.runsOverdue(ago(minutes(1)), 10)).toEqual([]);
+      });
+
+      describe('at most as many as asked, the oldest first', () => {
+        const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+        /** Three orders, each made (and moved through its route) a little after the one before. */
+        const three = async (status: OrderStatus, then?: (order: Order) => Promise<unknown>): Promise<string[]> => {
+          const made: string[] = [];
+          for (let k = 0; k < 3; k++) {
+            const order = await orderIn(status);
+            await then?.(order);
+            made.push(order.id);
+            await pause();
+          }
+          return made;
+        };
+        const later = () => ahead(minutes(1));
+        const first = (orders: Order[]) => orders.map((o) => o.id);
+
+        it('of the orders awaiting settlement', async () => {
+          const made = await three('awaiting_settlement');
+          expect(first(await s.ordersAwaitingSettlement(later(), 2))).toEqual(made.slice(0, 2));
+        });
+
+        it('of the paid orders with no run', async () => {
+          const made = await three('paid');
+          expect(first(await s.paidWithoutRun(later(), 2))).toEqual(made.slice(0, 2));
+        });
+
+        it('of the paid orders whose run should be over', async () => {
+          const made = await three('running', (o) => s.setRunId(o.id, `wrun_${o.id}`));
+          expect(first(await s.runsOverdue(later(), 2))).toEqual(made.slice(0, 2));
+        });
+
+        it('of the stalled refunds', async () => {
+          const made = await three('refunding', (o) => s.insertRefund(refund(o.id, { txHash: `0x${o.id}` })));
+          expect(first(await s.stalledRefunds(later(), 2))).toEqual(made.slice(0, 2));
+        });
+
+        it('of the unsigned refunds', async () => {
+          const made = await three('refunding');
+          expect(first(await s.unsignedRefunds(later(), 2))).toEqual(made.slice(0, 2));
+        });
+
+        it('of the failed refunds', async () => {
+          const made = await three('refund_failed');
+          expect(first(await s.refundFailures(2))).toEqual(made.slice(0, 2));
+        });
       });
     });
   });
