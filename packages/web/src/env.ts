@@ -111,6 +111,11 @@ const schema = z
     }
     if (settings.VERCEL_ENV === 'production') {
       if (settings.AD_AGENT_ADAPTERS === 'fake') issue('AD_AGENT_ADAPTERS', 'The fake adapters are for tests and cannot run in production');
+      // Without it every paid order would be refunded before its VM (vm_not_configured): the service refuses to take
+      // payments instead. The flow keeps its own check, in case.
+      if (settings.AD_AGENT_ADAPTERS === 'real' && settings.VERCEL_GIT_COMMIT_SHA === undefined && settings.VM_CODE_REF === undefined) {
+        issue('VM_CODE_REF', 'Required in production when VERCEL_GIT_COMMIT_SHA is not set: it is the commit the VM downloads');
+      }
       const database = settings.DATABASE_URL;
       if (database !== undefined && (database === 'memory' || database.startsWith('pglite:'))) {
         issue('DATABASE_URL', 'A database that lives in memory or on a local disk cannot run in production');

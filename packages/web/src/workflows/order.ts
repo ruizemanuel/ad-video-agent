@@ -453,7 +453,8 @@ async function payVm(orderId: string): Promise<VmPayment> {
     if (settings.PUBLIC_BASE_URL === undefined || settings.GITHUB_REPO === undefined || ref === undefined) throw new RangeError('missing setting');
     script = buildBootstrap({ apiBase: settings.PUBLIC_BASE_URL, vmToken: permit.token, repo: settings.GITHUB_REPO, ref });
   } catch {
-    // Nothing was paid: the service does not know where it lives or which code the VM runs.
+    // Nothing was paid: the service does not know where it lives or which code the VM runs. In production env.ts refuses
+    // these settings before any payment is taken; this is the backstop.
     console.error('[vm_not_configured]', orderId, 'PUBLIC_BASE_URL, GITHUB_REPO and VERCEL_GIT_COMMIT_SHA (or VM_CODE_REF) make the VM script');
     return { status: 'rejected', pollUrl: null };
   }

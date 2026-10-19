@@ -104,10 +104,21 @@ describe('parseEnv', () => {
   });
 
   it('refuses a database that lives in memory in production', () => {
-    expect(() => parseEnv({ ...real, VERCEL_ENV: 'production', DATABASE_URL: 'memory' })).toThrow('DATABASE_URL');
-    expect(() => parseEnv({ ...real, VERCEL_ENV: 'production', DATABASE_URL: 'pglite:./data' })).toThrow('DATABASE_URL');
-    expect(parseEnv({ ...real, VERCEL_ENV: 'production' }).DATABASE_URL).toBe(real.DATABASE_URL);
+    const production = { ...real, VERCEL_ENV: 'production', VERCEL_GIT_COMMIT_SHA: 'def456' };
+    expect(() => parseEnv({ ...production, DATABASE_URL: 'memory' })).toThrow('DATABASE_URL');
+    expect(() => parseEnv({ ...production, DATABASE_URL: 'pglite:./data' })).toThrow('DATABASE_URL');
+    expect(parseEnv(production).DATABASE_URL).toBe(real.DATABASE_URL);
     expect(parseEnv({ ...real, DATABASE_URL: 'memory' }).DATABASE_URL).toBe('memory');
+  });
+
+  it('refuses the real adapters in production without the commit the VM downloads, so no payment is taken to be refunded', () => {
+    expect(() => parseEnv({ ...real, VERCEL_ENV: 'production' })).toThrow('VM_CODE_REF');
+    expect(() => parseEnv({ ...real, VERCEL_ENV: 'production', VERCEL_GIT_COMMIT_SHA: '', VM_CODE_REF: '' })).toThrow('VM_CODE_REF');
+    expect(parseEnv({ ...real, VERCEL_ENV: 'production', VERCEL_GIT_COMMIT_SHA: 'def456' }).VERCEL_GIT_COMMIT_SHA).toBe('def456');
+    expect(parseEnv({ ...real, VERCEL_ENV: 'production', VM_CODE_REF: 'abc123' }).VM_CODE_REF).toBe('abc123');
+    // Outside production (a local run, a preview without git), it is the order that is refunded, as before.
+    expect(parseEnv(real).AD_AGENT_ADAPTERS).toBe('real');
+    expect(parseEnv({ ...real, VERCEL_ENV: 'preview' }).AD_AGENT_ADAPTERS).toBe('real');
   });
 
   it('refuses DEV_MODE with a real price and FORCE_FAIL_AT without DEV_MODE', () => {
