@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { FileStore } from '../src/adapters/fake/store';
 import { DrizzleStore } from '../src/adapters/real/store';
 import { openDb } from '../src/db/client';
@@ -77,6 +77,18 @@ describe('FileStore', () => {
     await a.enqueueTask({ orderId: created.id, kind: 'capture', round: 0, input: {}, hookToken: `vmtask:${created.id}:capture:0` });
     const claims = await Promise.all([a.claimNextTask(created.id), b.claimNextTask(created.id), a.claimNextTask(created.id), b.claimNextTask(created.id)]);
     expect(claims.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('keeps one queue per directory even across two copies of its module, as a test and the workflow build it runs load', async () => {
+    const dir = await tempDir();
+    vi.resetModules();
+    const { FileStore: Copy } = await import('../src/adapters/fake/store');
+    expect(Copy).not.toBe(FileStore);
+    const [here, there] = [new FileStore(dir), new Copy(dir)];
+    const { order: created } = await here.createOrder(order);
+    // Each warning is a read and a write of the order: without one queue, the two copies write over each other.
+    await Promise.all(Array.from({ length: 20 }, (_, k) => (k % 2 === 0 ? here : there).addWarning(created.id, `w${k}`)));
+    expect((await here.getOrder(created.id))?.warnings).toHaveLength(20);
   });
 
   it('keeps its records after the instance is gone, and leaves no temporary file behind', async () => {

@@ -306,6 +306,9 @@ importers:
       '@vercel/config':
         specifier: 0.12.0
         version: 0.12.0
+      '@workflow/vitest':
+        specifier: 5.0.5
+        version: 5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))(vitest@5.0.5(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)))(ws@8.22.0)
       drizzle-kit:
         specifier: 0.31.11
         version: 0.31.11
@@ -2389,6 +2392,15 @@ packages:
 
   '@workflow/vite@5.0.5':
     resolution: {integrity: sha512-g2p3WNymn9jLhuep3LDcdsM/Askx3McnEhppWTu0DAdotN2JOyJQbwLOQ3pYoLE+Di7Ot4iXaH9RjbfhQ/Rf2g==}
+
+  '@workflow/vitest@5.0.5':
+    resolution: {integrity: sha512-EjHO4NP3X68fVFcWKIQxW7HnABPjYV6yhS256itNLdN9qvaOOgRuUCx3rvvLSTj9vzsIc/31xmas8lO/Bpcjyw==}
+    peerDependencies:
+      vite: '>=6.0.0'
+      vitest: '>=3.1.0'
+    peerDependenciesMeta:
+      vite:
+        optional: true
 
   '@workflow/web@5.0.5':
     resolution: {integrity: sha512-M5ZA81x4pW/KvE/CHPv2H/msD+ZAJyHARH3iw6JBRFHUiDPlOavHG4DrBtuVvGqb6HeeuNd6kobzigolzCxBkA==}
@@ -6449,6 +6461,24 @@ snapshots:
   '@workflow/vite@5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(ws@8.22.0)':
     dependencies:
       '@workflow/builders': 5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(ws@8.22.0)
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
+      - '@swc/helpers'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
+
+  '@workflow/vitest@5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))(vitest@5.0.5(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)))(ws@8.22.0)':
+    dependencies:
+      '@workflow/builders': 5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(ws@8.22.0)
+      '@workflow/core': 5.2.2(supports-color@8.1.1)(ws@8.22.0)
+      '@workflow/rollup': 5.0.5(@swc/helpers@0.5.23)(supports-color@8.1.1)(ws@8.22.0)
+      '@workflow/world': 5.0.4
+      '@workflow/world-local': 5.1.1
+      vitest: 5.0.5(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
+    optionalDependencies:
+      vite: 8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)
     transitivePeerDependencies:
       - '@opentelemetry/api'
       - '@swc/helpers'

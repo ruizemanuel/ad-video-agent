@@ -13,6 +13,7 @@ import {
   type FramingItem,
   type JudgeItem,
   type Problem,
+  type SiteData,
 } from '@app/core';
 import { ModelOutputInvalid, type ClaimVerdict, type FramingVerdict, type LlmPort, type OrderStore } from '../ports';
 import { canAfford, EST } from './budget';
@@ -99,6 +100,54 @@ class Verdicts {
   }
 }
 
+/** What one round of checks and corrections needs: the order to record each call on, and the models. */
+type Calls = { orderId: string; store: Pick<OrderStore, 'addCost'>; llm: Pick<LlmPort, 'patchEdl' | 'judge'> };
+
+/** Runs a model call and records what it cost, whether it answered well or with something that did not fit (billed anyway). */
+async function paid<T extends { usd: number }>({ orderId, store }: Calls, item: string, call: () => Promise<T>): Promise<T> {
+  try {
+    const answer = await call();
+    await store.addCost(orderId, item, answer.usd, 'card');
+    return answer;
+  } catch (error) {
+    if (error instanceof ModelOutputInvalid) await store.addCost(orderId, item, error.usd, 'card');
+    throw error;
+  }
+}
+
+/**
+ * The code checks; the judge only when they find nothing, since the edit list changes anyway, and only about the items
+ * it has not read: the rest keep what it said about them.
+ */
+async function problemsOf(calls: Calls, edl: Edl, site: SiteData, verdicts: Verdicts): Promise<Problem[]> {
+  const found = validateEdl(edl, site);
+  if (found.length > 0) return found;
+  const items = judgeItems(edl);
+  const unread = verdicts.unread(items);
+  if (unread.claims.length + unread.framing.length > 0) verdicts.keep(unread, await paid(calls, 'llm:judge', () => calls.llm.judge(unread)));
+  return verdicts.problems(items);
+}
+
+/**
+ * The edit list with the corrector's fix, or undefined when the fix cannot be used: an answer that does not fit, or a
+ * patch for a scene that is not there.
+ */
+async function patched(calls: Calls, edl: Edl, problems: Problem[], site: SiteData): Promise<Edl | undefined> {
+  let fix: Awaited<ReturnType<LlmPort['patchEdl']>>;
+  try {
+    fix = await paid(calls, 'llm:patch', () => calls.llm.patchEdl({ edl, problems, site }));
+  } catch (error) {
+    if (error instanceof ModelOutputInvalid) return undefined;
+    throw error;
+  }
+  try {
+    return applyPatches(edl, fix.patches, fix.claimFixes);
+  } catch (error) {
+    if (error instanceof RangeError) return undefined;
+    throw error;
+  }
+}
+
 export async function runScript({
   orderId,
   capture,
@@ -112,61 +161,47 @@ export async function runScript({
 }): Promise<ScriptResult> {
   const { store, llm, spendCap } = deps;
   const { site } = capture;
-
-  // Records what a call cost, whether it answered well or with something that did not fit (it was billed anyway).
-  const paid = async <T extends { usd: number }>(item: string, call: () => Promise<T>): Promise<T> => {
-    try {
-      const answer = await call();
-      await store.addCost(orderId, item, answer.usd, 'card');
-      return answer;
-    } catch (error) {
-      if (error instanceof ModelOutputInvalid) await store.addCost(orderId, item, error.usd, 'card');
-      throw error;
-    }
-  };
-
-  // The code checks; the judge only when they find nothing, since the edit list changes anyway, and only about the
-  // items it has not read: the rest keep what it said about them.
+  const calls: Calls = { orderId, store, llm };
   const verdicts = new Verdicts();
-  const problemsOf = async (edl: Edl): Promise<Problem[]> => {
-    const found = validateEdl(edl, site);
-    if (found.length > 0) return found;
-    const items = judgeItems(edl);
-    const unread = verdicts.unread(items);
-    if (unread.claims.length + unread.framing.length > 0) verdicts.keep(unread, await paid('llm:judge', () => llm.judge(unread)));
-    return verdicts.problems(items);
-  };
 
-  // The edit list with the corrector's fix, or undefined when the fix cannot be used: an answer that does not fit, or a
-  // patch for a scene that is not there.
-  const patched = async (edl: Edl, problems: Problem[]): Promise<Edl | undefined> => {
-    let fix: Awaited<ReturnType<ScriptDeps['llm']['patchEdl']>>;
-    try {
-      fix = await paid('llm:patch', () => llm.patchEdl({ edl, problems, site }));
-    } catch (error) {
-      if (error instanceof ModelOutputInvalid) return undefined;
-      throw error;
-    }
-    try {
-      return applyPatches(edl, fix.patches, fix.claimFixes);
-    } catch (error) {
-      if (error instanceof RangeError) return undefined;
-      throw error;
-    }
-  };
-
-  let { edl } = await paid('llm:director', () => llm.writeEdl({ site, images: capture.directorImages, brief }));
-  let problems = await problemsOf(edl);
+  let { edl } = await paid(calls, 'llm:director', () => llm.writeEdl({ site, images: capture.directorImages, brief }));
+  let problems = await problemsOf(calls, edl, site, verdicts);
   for (let round = 0; problems.length > 0; round += 1) {
     if (round === PATCH_ROUNDS) return { ok: false, reason: 'validation' };
     // A patch is only worth it if the judge that checks it fits too.
     if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge, spendCap)) return { ok: false, reason: 'budget' };
-    const next = await patched(edl, problems);
+    const next = await patched(calls, edl, problems, site);
     // A round whose fix cannot be used is spent, and what was found stands. A fix that leaves a failing item as it was
     // does not help either: the judge is not asked about it again, and it fails the same way.
     if (next === undefined) continue;
     edl = next;
-    problems = await problemsOf(edl);
+    problems = await problemsOf(calls, edl, site, verdicts);
   }
   return { ok: true, edl };
+}
+
+/**
+ * One correction outside the script's own rounds, for the problems the visual review found in the key frames: the
+ * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on every
+ * item, since nothing it said before is at hand). Undefined when the fix cannot be used: an answer that does not fit, a
+ * patch for a scene that is not there, or a fixed edit list that fails a check. Every call is recorded on the order, and
+ * any other failure of a model goes up.
+ */
+export async function correctEdl({
+  orderId,
+  edl,
+  problems,
+  site,
+  deps,
+}: {
+  orderId: string;
+  edl: Edl;
+  problems: Problem[];
+  site: SiteData;
+  deps: Omit<Calls, 'orderId'>;
+}): Promise<Edl | undefined> {
+  const calls: Calls = { orderId, ...deps };
+  const fixed = await patched(calls, edl, problems, site);
+  if (fixed === undefined) return undefined;
+  return (await problemsOf(calls, fixed, site, new Verdicts())).length === 0 ? fixed : undefined;
 }

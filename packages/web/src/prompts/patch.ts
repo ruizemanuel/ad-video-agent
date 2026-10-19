@@ -11,7 +11,10 @@ export const PATCH_SYSTEM = `You correct the edit decision list (EDL) of a short
 receive the site data (its text, its brand and its shots, without pictures), the EDL and its problems.
 Each problem says where it is: a scene path ("hooks[0][1]", "body[2]" or "cta"), sometimes followed
 by a detail such as ".lines[1]"; or "edl" when it is not about one scene (a claim whose quote is not
-on the site, the length of the video, the tempo, the number of hooks).
+on the site, the length of the video, the tempo, the number of hooks); or "all" when the key frames
+show a problem with the whole video, such as the logo-swap test (the ad would work as well for
+another brand): make the scenes more specific to this brand, with its real product and its own
+words from the site. For a problem at "all" you may rewrite any scenes.
 
 Return only what changes:
 - \`patches\`: each scene you rewrite, whole, with its \`path\`. Rewrite the scenes the problems name,

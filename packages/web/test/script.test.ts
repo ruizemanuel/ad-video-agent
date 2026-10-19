@@ -6,9 +6,9 @@ import { applyPatches, judgeItems, scenePaths, type Edl, type Problem, type Scen
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { canAfford, EST } from '../src/pipeline/budget';
-import { runScript } from '../src/pipeline/script';
+import { correctEdl, runScript } from '../src/pipeline/script';
 import { siteForModel } from '../src/pipeline/site-for-model';
-import { ModelOutputInvalid } from '../src/ports';
+import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop as shopEdl, siteShop } from './support/shop';
 
 const edlShop = shopEdl();
@@ -288,6 +288,69 @@ describe('runScript', () => {
     llm.edl = withBadNumber(edlShop, 'body[1]');
     await runScript(args);
     expect(await store.orderCost(id)).toBeCloseTo(llm.usd.writeEdl + llm.usd.patchEdl + llm.usd.judge, 6);
+  });
+});
+
+describe('correctEdl', () => {
+  // What the visual review blocks on: a scene path and a visual problem, which the code checks never find.
+  const cut: Problem = { where: 'body[1]', rule: 'visual', detail: 'visual review: a letter is cut by an edge or a mask' };
+  const reworded = withScene(edlShop, 'body[1]', (scene) => ({ ...scene, lines: [{ text: '0% de comisión en tus ventas.', kind: 'claim', claimId: 'c3' }] }));
+  const patchTo = (edl: Edl, path: string) => {
+    const scene = scenePaths(edl).find((p) => p.path === path)?.scene;
+    llm.patchEdl = async () => ({ patches: scene ? [{ path, scene }] : [], claimFixes: [], usd: 0.05 });
+  };
+  let input: Parameters<typeof correctEdl>[0];
+  beforeEach(() => {
+    input = { orderId: id, edl: edlShop, problems: [cut], site: siteShop(), deps: { store, llm } };
+  });
+
+  it('gives the corrector the edit list, the problems and the site', async () => {
+    await correctEdl(input);
+    expect(llm.lastPatchInput).toEqual({ edl: edlShop, problems: [cut], site: siteShop() });
+  });
+
+  it('gives back the fixed edit list once the code checks and the judge pass it, judging every item of it', async () => {
+    patchTo(reworded, 'body[1]');
+    expect(await correctEdl(input)).toEqual(reworded);
+    expect(llm.lastJudgeInput).toEqual(judgeItems(reworded));
+  });
+
+  it('records the corrector and the judge on the order', async () => {
+    patchTo(reworded, 'body[1]');
+    await correctEdl(input);
+    expect(await store.orderCost(id)).toBeCloseTo(0.05 + llm.usd.judge, 6);
+  });
+
+  it('gives back nothing when the fix fails a code check, without asking the judge', async () => {
+    patchTo(withBadNumber(edlShop, 'body[1]'), 'body[1]');
+    expect(await correctEdl(input)).toBeUndefined();
+    expect(llm.calls.judge).toBe(0);
+  });
+
+  it('gives back nothing when the judge fails the fixed edit list', async () => {
+    patchTo(reworded, 'body[1]');
+    llm.claimVerdicts = { 'body[1]:c3': false };
+    expect(await correctEdl(input)).toBeUndefined();
+  });
+
+  it('gives back nothing for a patch of a scene that does not exist', async () => {
+    llm.patchEdl = async () => ({ patches: [{ path: 'body[9]', scene: edlShop.cta }], claimFixes: [], usd: 0.05 });
+    expect(await correctEdl(input)).toBeUndefined();
+  });
+
+  it('gives back nothing for an answer that does not fit, and records what it cost', async () => {
+    llm.patchEdl = async () => {
+      throw new ModelOutputInvalid('The corrector did not answer with valid patches.', 0.04);
+    };
+    expect(await correctEdl(input)).toBeUndefined();
+    expect(await store.orderCost(id)).toBe(0.04);
+  });
+
+  it('lets any other failure of a model through', async () => {
+    llm.patchEdl = async () => {
+      throw new ModelCallFailed('corrector', 'AI_APICallError', 503);
+    };
+    await expect(correctEdl(input)).rejects.toThrow(ModelCallFailed);
   });
 });
 

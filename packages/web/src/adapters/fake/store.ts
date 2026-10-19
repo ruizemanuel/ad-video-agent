@@ -70,8 +70,10 @@ const fileName = (key: string): string =>
 const isMissing = (error: unknown): boolean => (error as { code?: string }).code === 'ENOENT';
 
 // One queue per directory in this process, shared by every FileStore over it: a test that seeds an order with one
-// instance and a workflow that reads it with another must not interleave their writes.
-const queues = new Map<string, Promise<unknown>>();
+// instance and a workflow that reads it with another must not interleave their writes. It lives on globalThis, since
+// one process can hold two copies of this module: the workflow test build bundles its own next to the test's.
+const QUEUES = Symbol.for('ad-agent.filestore.locks');
+const queues: Map<string, Promise<unknown>> = ((globalThis as { [QUEUES]?: Map<string, Promise<unknown>> })[QUEUES] ??= new Map());
 function inQueue<T>(dir: string, run: () => Promise<T>): Promise<T> {
   const result = (queues.get(dir) ?? Promise.resolve()).then(run);
   queues.set(

@@ -87,6 +87,12 @@ describe('PATCH_SYSTEM', () => {
     for (const rule of RULES) expect(PATCH_SYSTEM).toContain(`- ${rule}:`);
   });
 
+  it('says a problem at "all" is about the whole video, the logo-swap test among them, and may take any scenes', () => {
+    expect(PATCH_SYSTEM).toContain('"all"');
+    expect(PATCH_SYSTEM).toMatch(/logo-swap/);
+    expect(PATCH_SYSTEM).toMatch(/any scenes/);
+  });
+
   it('asks only for the scenes it changes and the claims it corrects', () => {
     for (const field of ['`patches`', '`claimFixes`']) expect(PATCH_SYSTEM).toContain(field);
   });

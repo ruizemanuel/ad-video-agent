@@ -2,3 +2,6 @@
 # the "/.swc" line here and adds it if it is missing).
 next-env.d.ts
 /.swc
+# Written by the workflow integration tests (@workflow/vitest): the test build of the workflows and its run data.
+/.workflow-vitest
+/.workflow-data

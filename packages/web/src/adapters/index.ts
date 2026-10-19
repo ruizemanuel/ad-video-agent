@@ -65,13 +65,24 @@ export async function createAdapters(settings: Env): Promise<Adapters> {
   };
 }
 
-let cached: Promise<Adapters> | undefined;
+// Kept on globalThis, not in this module: one process can hold two copies of it (the workflow's steps are bundled apart
+// from the routes, and the workflow tests load that bundle next to their own modules), and all of them must hand out the
+// same adapters, one database and one set of doubles.
+const CACHE = Symbol.for('ad-agent.adapters');
+type WithAdapters = { [CACHE]?: Promise<Adapters> };
 
 /**
- * The service's adapters, built once. The same ones come back every time, so a double keeps what it recorded
- * (a test reads `lastPresignGet` from the blob that the route used). It rejects when the settings are wrong.
+ * The service's adapters, built once per process. The same ones come back every time, so a double keeps what it
+ * recorded (a test reads `lastPresignGet` from the blob that the route used, or tells the model double what to answer
+ * before a workflow runs). It rejects when the settings are wrong.
  */
 export async function getAdapters(): Promise<Adapters> {
-  cached ??= createAdapters(env());
-  return cached;
+  const shared = globalThis as WithAdapters;
+  shared[CACHE] ??= createAdapters(env());
+  return shared[CACHE];
+}
+
+/** Tests only: forgets the adapters, so the next getAdapters builds them again. */
+export function resetAdaptersForTests(): void {
+  delete (globalThis as WithAdapters)[CACHE];
 }

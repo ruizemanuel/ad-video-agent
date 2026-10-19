@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { scenePaths } from '@app/core';
 import { createAdapters } from '../src/adapters';
 import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
@@ -16,6 +17,7 @@ import { LyriaMusic } from '../src/adapters/real/music';
 import { CeloRefunds } from '../src/adapters/real/refunds';
 import { DrizzleStore } from '../src/adapters/real/store';
 import { parseEnv } from '../src/env';
+import { edlShop, siteShop } from './support/shop';
 
 const dirs: string[] = [];
 const tempDir = async () => {
@@ -96,8 +98,9 @@ describe('createAdapters on the real adapters', () => {
 });
 
 describe('getAdapters', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.unstubAllEnvs();
+    (await import('../src/adapters')).resetAdaptersForTests();
     vi.resetModules();
   });
 
@@ -109,6 +112,27 @@ describe('getAdapters', () => {
     const [first, second] = [await getAdapters(), await getAdapters()];
     expect(second).toBe(first);
     expect(await Promise.all([getAdapters(), getAdapters()])).toEqual([first, first]);
+  });
+
+  it('gives the same adapters to every copy of its module in the process, as the routes and the workflow build each have one', async () => {
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
+    vi.stubEnv('FAKE_DIR', await tempDir());
+    for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
+    const first = await import('../src/adapters');
+    vi.resetModules();
+    const copy = await import('../src/adapters');
+    expect(copy.getAdapters).not.toBe(first.getAdapters);
+    expect(await copy.getAdapters()).toBe(await first.getAdapters());
+  });
+
+  it('builds them again after resetAdaptersForTests, from the environment as it is then', async () => {
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
+    vi.stubEnv('FAKE_DIR', await tempDir());
+    for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
+    const { getAdapters, resetAdaptersForTests } = await import('../src/adapters');
+    const before = await getAdapters();
+    resetAdaptersForTests();
+    expect(await getAdapters()).not.toBe(before);
   });
 
   it('gives the cron routes the same adapters, buy and the refunds included', async () => {
@@ -148,5 +172,31 @@ describe('getAdapters', () => {
     vi.stubEnv('PAYTO_ADDRESS', 'not-an-address');
     const { getAdapters } = await import('../src/adapters');
     await expect(getAdapters()).rejects.toThrow('PAYTO_ADDRESS');
+  });
+});
+
+describe('the model double', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const frames = [
+    { label: 'Frame 1: hooks[0][0], hook scene, KineticHeadline', jpeg: '/9j/1' },
+    { label: 'Frame 2: cta, cta scene, EndCard', jpeg: '/9j/2' },
+  ];
+
+  it('has the corrector rewrite every scene it knows for a problem with the whole ad', async () => {
+    const llm = new FakeLlm();
+    llm.fixed = edlShop();
+    const { patches } = await llm.patchEdl({ edl: edlShop(), problems: [{ where: 'all', rule: 'visual', detail: 'logo-swap test: generic' }], site: siteShop() });
+    expect(patches.map((p) => p.path)).toEqual(scenePaths(edlShop()).map((p) => p.path));
+  });
+
+  it('finds a letter cut in every frame while FAKE_SCENARIO says review "always-cut", read at each call', async () => {
+    const llm = new FakeLlm();
+    vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ buy: 'paid', review: 'always-cut' }));
+    expect((await llm.review({ frames, siteUrl: 'https://tiendita.example' })).review.frames.map((f) => f.cutMidLetter)).toEqual([true, true]);
+    vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ buy: 'paid' }));
+    expect((await llm.review({ frames, siteUrl: 'https://tiendita.example' })).review.frames.map((f) => f.cutMidLetter)).toEqual([false, false]);
   });
 });

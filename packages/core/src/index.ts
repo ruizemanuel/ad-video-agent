@@ -1,6 +1,7 @@
 export * from './banned-phrases';
 export * from './blocked';
 export * from './brand';
+export * from './deliverables';
 export * from './demo-links';
 export * from './edl';
 export * from './formats';

@@ -1,7 +1,10 @@
 // The LlmPort as a double, for the tests that run the pre-check, the script and the flow without a model. It answers
 // what a test tells it to, and counts the calls it gets and keeps what each was last asked, so a test can say a model
 // was (or was not) asked, and with what. A test changes an answer by assigning the method: `llm.judge = async () => ...`.
+// The visual review also reads FAKE_SCENARIO at each call: {"review":"always-cut"} has it find a letter cut in every
+// frame, so the flow's corrections never pass.
 import { scenePaths, type Claim, type Edl, type Scene, type ScenePatch } from '@app/core';
+import { z } from 'zod';
 import type { LlmPort } from '../../ports';
 
 type ClassifySite = LlmPort['classifySite'];
@@ -12,6 +15,28 @@ type Review = LlmPort['review'];
 
 // A claim problem says which claim it is about at the start of its detail ("claim c3: ...").
 const CLAIM_DETAIL = /^claim (\S+):/;
+// A problem with the whole ad, which the corrector may fix in any scene.
+const WHOLE_AD = 'all';
+
+// Other keys of FAKE_SCENARIO belong to other doubles, and are let through.
+const LlmScenario = z.object({
+  /** `always-cut`: the visual review finds a letter cut in every frame it is shown. */
+  review: z.enum(['always-cut']).optional(),
+});
+
+function scenario(): z.infer<typeof LlmScenario> {
+  const raw = process.env.FAKE_SCENARIO;
+  if (raw === undefined || raw === '') return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('FAKE_SCENARIO has to be JSON, such as {"review":"always-cut"}.');
+  }
+  const result = LlmScenario.safeParse(parsed);
+  if (!result.success) throw new Error(`FAKE_SCENARIO says something the models cannot do: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  return result.data;
+}
 
 export class FakeLlm implements LlmPort {
   /** How many times each call was made, whatever it answered. */
@@ -52,8 +77,9 @@ export class FakeLlm implements LlmPort {
     const claimFixes: Claim[] = [];
     for (const { where, detail } of problems) {
       const path = where.split('.')[0] ?? where;
-      const scene = scenes.get(path);
-      if (scene && !patches.some((p) => p.path === path)) patches.push({ path, scene });
+      for (const [at, scene] of scenes) {
+        if ((at === path || where === WHOLE_AD) && !patches.some((p) => p.path === at)) patches.push({ path: at, scene });
+      }
       const claimId = where === 'edl' ? CLAIM_DETAIL.exec(detail)?.[1] : undefined;
       const claim = source?.claims.find((c) => c.id === claimId);
       if (claim && !claimFixes.some((c) => c.id === claim.id)) claimFixes.push(claim);
@@ -74,9 +100,10 @@ export class FakeLlm implements LlmPort {
   });
 
   // The reviewer finds nothing wrong: every frame legible and whole, no remarks, and an ad that is specific to its product.
+  // Unless FAKE_SCENARIO says it finds every frame cut.
   private reviewAnswer: Review = async ({ frames }) => ({
     review: {
-      frames: frames.map((_, k) => ({ frame: k + 1, legible: true, cutMidLetter: false, issues: [] })),
+      frames: frames.map((_, k) => ({ frame: k + 1, legible: true, cutMidLetter: scenario().review === 'always-cut', issues: [] })),
       logoSwap: { generic: false, reason: 'The ad leans on what only this product has.' },
     },
     usd: this.usd.review,
