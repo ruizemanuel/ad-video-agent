@@ -18,15 +18,28 @@ const ATTEMPTS = 3;
 /**
  * Whether the store refused a write because the blob is already there. The presigned URLs are made with
  * `allowOverwrite: false`, so a second write to the path is refused: measured against the real private store on
- * 17/10/2026 (docs/superpowers/2026-10-16-traspaso.md, "Blob"), it answers HTTP 400 and says the blob "already exists".
- * Neither the SDK (@vercel/blob 2.8.2) nor its docs give the status or the wording of this refusal, and the exact body
- * was not kept, so both the status and the words are checked: any other 400 is a real refusal, and a body worded
- * differently would only bring back the old behavior (the upload fails), never a false success.
+ * 17/10/2026, it answers HTTP 400 and says the blob "already exists". Neither the SDK (@vercel/blob 2.8.2) nor its docs
+ * give the status or the wording of this refusal, and the exact body was not kept, so both the status and the words are
+ * checked: any other 400 is a real refusal, and a body worded differently would only bring back the old behavior (the
+ * upload fails), never a false success.
  */
 async function blobAlreadyExists(response: Response): Promise<boolean> {
   if (response.status !== 400) return false;
   const text = await response.text().catch(() => '');
   return /already exists/i.test(text);
+}
+
+/**
+ * The name of the file a presigned URL writes (`capture.json`, `hook-a-9x16.mp4`): what the log may say of it. Nothing
+ * else of the URL goes there, neither its host nor its folder (the order) nor its query (the signature).
+ */
+function fileKind(url: string): string {
+  try {
+    const name = decodeURIComponent(new URL(url).pathname.split('/').at(-1) ?? '');
+    return /^[A-Za-z0-9._-]{1,64}$/.test(name) ? name : 'unknown';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /**
@@ -36,7 +49,8 @@ async function blobAlreadyExists(response: Response): Promise<boolean> {
  * A try again can find the write already done: the first PUT landed but its answer was lost (a timeout, a dropped
  * connection, a 5xx from a proxy), which is likelier the bigger the file. The store then refuses the second PUT because
  * the blob exists (see blobAlreadyExists). From the second attempt on, that refusal counts as done: the path is this
- * task's own, written only by this upload. On the first attempt it stays a refusal.
+ * task's own, written only by this upload. On the first attempt it stays a refusal. A write counted done this way leaves
+ * a line in the log, with the file's name and nothing else of the URL.
  */
 async function put(url: string, body: Uint8Array | Blob, contentType: string, options: UploadOptions): Promise<void> {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -59,7 +73,10 @@ async function put(url: string, body: Uint8Array | Blob, contentType: string, op
   } catch (error) {
     throw new Error(`The upload failed (${describeError(error)}).`);
   }
-  if (!response.ok && sent >= 2 && (await blobAlreadyExists(response))) return;
+  if (!response.ok && sent >= 2 && (await blobAlreadyExists(response))) {
+    console.warn('[blob_exists]', fileKind(url));
+    return;
+  }
   // blobAlreadyExists reads the body of the refusals it looks at.
   if (!response.bodyUsed) await response.body?.cancel();
   if (!response.ok) throw new Error(`The upload was refused (HTTP ${response.status}).`);

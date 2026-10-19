@@ -65,9 +65,9 @@ describe('uploadToPresigned', () => {
 });
 
 // The store refuses a second write to a path, because the URLs are made with allowOverwrite false. Measured against the
-// real private store on 17/10/2026 (docs/superpowers/2026-10-16-traspaso.md): the second PUT to the same URL answers
-// HTTP 400 and says the blob "already exists". The body below is in the shape the SDK parses ({error: {code, message}}),
-// with words of our own around "already exists": the exact body was not kept.
+// real private store on 17/10/2026: the second PUT to the same URL answers HTTP 400 and says the blob "already exists".
+// The body below is in the shape the SDK parses ({error: {code, message}}), with words of our own around
+// "already exists": the exact body was not kept.
 const EXISTS = JSON.stringify({ error: { code: 'bad_request', message: 'This blob already exists, use `allowOverwrite: true` if you want to overwrite it.' } });
 const exists = () => new Response(EXISTS, { status: 400 });
 
@@ -78,6 +78,31 @@ describe('a retry after a write that landed', () => {
 
       await expect(uploadToPresigned(U, 'x', 'video/mp4', { fetchImpl, retryDelayMs: 0 })).resolves.toBeUndefined();
       expect(fetchImpl).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('leaves a line in the log that names the file it found there, and nothing of its address', async () => {
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const fetchImpl = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('fetch failed')).mockImplementationOnce(async () => exists());
+
+      await uploadToPresigned(U, 'x', 'application/json', { fetchImpl, retryDelayMs: 0 });
+
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(logged).toHaveBeenCalledWith('[blob_exists]', 'capture.json');
+      expect(JSON.stringify(logged.mock.calls)).not.toMatch(/SECRET|store\.example|o1/);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it('logs nothing for a write that lands at once', async () => {
+    const logged = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await uploadToPresigned(U, 'x', 'application/json', { fetchImpl: vi.fn<typeof fetch>(async () => new Response(null, { status: 200 })) });
+      expect(logged).not.toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
     }
   });
 
