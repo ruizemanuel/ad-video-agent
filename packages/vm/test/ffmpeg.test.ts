@@ -2,20 +2,34 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildDirectorJpegArgs, buildMuxArgs, buildMusicArgs, buildStillJpegArgs, runFfmpeg } from '../src/render/ffmpeg';
 
 describe('the music of the video', () => {
-  it('cuts, fades and normalizes the track', () =>
-    expect(buildMusicArgs({ wav: 'm.wav', firstBeat: 0.12, seconds: 19.07, out: 't.wav' })).toEqual([
-      '-v', 'error', '-y', '-ss', '0.120', '-t', '19.070', '-i', 'm.wav', '-af', 'afade=t=out:st=18.570:d=0.5,loudnorm=I=-14:TP=-1.5:LRA=11', '-ar', '48000', 't.wav',
+  /** The audio filters of a cut. */
+  const filters = (args: string[]): string | undefined => args[args.indexOf('-af') + 1];
+
+  it('cuts, fades and normalizes the track, and pads it to the length of the video', () =>
+    expect(buildMusicArgs({ wav: 'm.wav', firstBeat: 0.12, trackSeconds: 30, seconds: 19.07, out: 't.wav' })).toEqual([
+      '-v', 'error', '-y', '-ss', '0.120', '-t', '19.070', '-i', 'm.wav',
+      '-af', 'afade=t=out:st=18.570:d=0.5,loudnorm=I=-14:TP=-1.5:LRA=11,apad=whole_dur=19.070', '-ar', '48000', 't.wav',
     ]));
+
+  it('fades a track that ends before the video out where it ends, and fills the rest of the video with silence', () => {
+    // 19.5 s of track from a first beat at 0.5 s: 19 s of music under a video of 19.4 s.
+    const args = buildMusicArgs({ wav: 'm.wav', firstBeat: 0.5, trackSeconds: 19.5, seconds: 19.4, out: 't.wav' });
+    expect(filters(args)).toBe('afade=t=out:st=18.500:d=0.5,loudnorm=I=-14:TP=-1.5:LRA=11,apad=whole_dur=19.400');
+    expect(args.slice(5, 7)).toEqual(['-t', '19.400']);
+  });
 
   it('starts at the start of the track when the first beat is not a time', () => {
     for (const firstBeat of [-0.3, Number.NaN]) {
-      expect(buildMusicArgs({ wav: 'm.wav', firstBeat, seconds: 10, out: 't.wav' }).slice(3, 5)).toEqual(['-ss', '0.000']);
+      const args = buildMusicArgs({ wav: 'm.wav', firstBeat, trackSeconds: 9.8, seconds: 10, out: 't.wav' });
+      expect(args.slice(3, 5)).toEqual(['-ss', '0.000']);
+      // The whole track plays, and fades out where it ends.
+      expect(filters(args)).toMatch(/^afade=t=out:st=9\.300:d=0\.5,/);
     }
   });
 
   it('never starts the fade before the track does', () => {
-    const args = buildMusicArgs({ wav: 'm.wav', firstBeat: 0, seconds: 0.3, out: 't.wav' });
-    expect(args[args.indexOf('-af') + 1]).toMatch(/^afade=t=out:st=0\.000:d=0\.3/);
+    expect(filters(buildMusicArgs({ wav: 'm.wav', firstBeat: 0, trackSeconds: 30, seconds: 0.3, out: 't.wav' }))).toMatch(/^afade=t=out:st=0\.000:d=0\.3,/);
+    expect(filters(buildMusicArgs({ wav: 'm.wav', firstBeat: 0, trackSeconds: 0.2, seconds: 0.3, out: 't.wav' }))).toMatch(/^afade=t=out:st=0\.000:d=0\.2,/);
   });
 });
 

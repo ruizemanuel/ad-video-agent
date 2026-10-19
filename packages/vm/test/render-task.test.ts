@@ -91,9 +91,10 @@ describe('renderTask', () => {
     expect(wavUrl).toBe(URLS.musicWav);
     const [cut, mux] = d.ffmpeg.mock.calls;
     const muted = d.renderVideo.mock.calls[0]?.[0].out ?? '';
-    // The cut is of the downloaded file, of the video's length, starting at the track's first beat.
+    // The cut is of the downloaded file, of the video's length, starting at the track's first beat; it fades where the
+    // track's own length says it ends, if that comes first.
     const track = String(cut?.[0].at(-1));
-    expect(cut?.[0]).toEqual(buildMusicArgs({ wav: wav ?? '', firstBeat: 0.12, seconds: FIXTURE_SECONDS, out: track }));
+    expect(cut?.[0]).toEqual(buildMusicArgs({ wav: wav ?? '', firstBeat: 0.12, trackSeconds: 30, seconds: FIXTURE_SECONDS, out: track }));
     // The mix keeps the render as it is and puts the cut under it.
     const mixed = String(mux?.[0].at(-1));
     expect(mux?.[0]).toEqual(buildMuxArgs({ video: muted, audio: track, out: mixed }));

@@ -187,8 +187,9 @@ export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSe
 };
 
 /**
- * How far short of the video a track may fall, in seconds: the render mixes to the shorter of the two, so a track that
- * runs out cuts the video's end, and half a second of the close, which is a fade, is let through.
+ * How far short of the video a track may fall, in seconds. The render fades a track out where it ends and fills the rest
+ * of the video with silence, so a track that runs out early leaves the end of the video silent: half a second of the
+ * close, which is a fade anyway, is let through.
  */
 export const MAX_TRACK_SHORT_FALL_SECONDS = 0.5;
 

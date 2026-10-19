@@ -67,9 +67,10 @@ export async function renderTask(task: TaskEnvelope, runDir: string, deps: Rende
   const { muted: mutedUrl, withMusic: withMusicUrl, musicWav: musicUrl } = task.urls;
   if (!mutedUrl) throw new Error('The render task came without a place to put the video.');
   if (music && !(withMusicUrl && musicUrl)) throw new Error('The render task has a track but no place to read it from or to put the video with it.');
-  // The video lasts what its edit list says; the track has to cover that from its first beat on. The mix ends with the
-  // shorter of the picture and the track (see buildMuxArgs), so a track that runs out would cut the video's end. The
-  // service checks the same rule before it asks for music, so this is a safety net.
+  // The video lasts what its edit list says; the track has to cover that from its first beat on, but for the half second
+  // of the close the rule lets through. The cut fades out where the track ends and is padded with silence to the video's
+  // length (see buildMusicArgs), so a track that ran out earlier would leave the video's end silent. The service checks
+  // the same rule before it asks for music, so this is a safety net.
   const videoSeconds = layoutScenes(edl, hook).total / FPS;
   if (music && !trackCoversVideo(music, videoSeconds)) {
     throw new Error(`The track is shorter than the video: ${(music.seconds - Math.max(0, music.firstBeat)).toFixed(1)} s from its first beat, and the video lasts ${videoSeconds.toFixed(1)} s.`);
@@ -88,7 +89,7 @@ export async function renderTask(task: TaskEnvelope, runDir: string, deps: Rende
     const track = join(work, 'track.wav');
     const mixed = join(work, 'hook-a-9x16.mp4');
     await deps.download(musicUrl, wav);
-    await deps.ffmpeg(buildMusicArgs({ wav, firstBeat: music.firstBeat, seconds, out: track }), 'cut the music', { timeoutMs: CUT_TIMEOUT_MS });
+    await deps.ffmpeg(buildMusicArgs({ wav, firstBeat: music.firstBeat, trackSeconds: music.seconds, seconds, out: track }), 'cut the music', { timeoutMs: CUT_TIMEOUT_MS });
     await deps.ffmpeg(buildMuxArgs({ video: muted, audio: track, out: mixed }), 'mix the music into the video', { timeoutMs: MIX_TIMEOUT_MS });
     await deps.uploadFile(withMusicUrl, mixed, 'video/mp4');
     return { ok: true, frames, seconds, mutedBytes, withMusicBytes: statSync(mixed).size };

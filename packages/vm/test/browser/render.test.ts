@@ -92,7 +92,7 @@ describe('the muted render', () => {
     // A quiet 440 Hz tone, longer than the video and starting 0.3 s before its first beat.
     await runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12', '-af', 'volume=0.1', '-ar', '44100', sine], 'make a test tone');
 
-    await runFfmpeg(buildMusicArgs({ wav: sine, firstBeat: 0.3, seconds, out: track }), 'cut the music');
+    await runFfmpeg(buildMusicArgs({ wav: sine, firstBeat: 0.3, trackSeconds: 12, seconds, out: track }), 'cut the music');
     await runFfmpeg(buildMuxArgs({ video: out(), audio: track, out: mixed }), 'mix the music into the video');
 
     const { duration, streams } = await probe(mixed);

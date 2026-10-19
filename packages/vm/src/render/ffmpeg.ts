@@ -29,27 +29,39 @@ export type MusicCut = {
   wav: string;
   /** Where its first beat falls, in seconds: the cut starts there, so the video's first cut lands on a beat. Under 0 or unknown, the cut starts at 0. */
   firstBeat: number;
+  /** The length of the whole track, as measured: from its first beat it may fall up to half a second short of the video (core's trackCoversVideo). */
+  trackSeconds: number;
   /** The length of the cut: the video's. */
   seconds: number;
   out: string;
 };
 
-/** ffmpeg arguments to cut the track at its first beat to the video's length, fade it out and normalize it to -14 LUFS. */
-export const buildMusicArgs = ({ wav, firstBeat, seconds, out }: MusicCut): string[] => {
+/**
+ * ffmpeg arguments to cut the track at its first beat to the video's length, fade it out and normalize it to -14 LUFS.
+ * The fade ends where the music does: at the end of the video, or earlier at the end of a track that runs out first, so
+ * it always fades. The cut is then padded with silence to the video's length, so the mix (which ends with the shorter of
+ * the two) never cuts the end of the video.
+ */
+export const buildMusicArgs = ({ wav, firstBeat, trackSeconds, seconds, out }: MusicCut): string[] => {
   const start = Number.isFinite(firstBeat) ? Math.max(0, firstBeat) : 0;
-  const fade = Math.min(FADE_SECONDS, seconds);
+  const playing = Math.max(0, Math.min(seconds, trackSeconds - start));
+  const fade = Math.min(FADE_SECONDS, playing);
   return [
     '-v', 'error', '-y',
     '-ss', secondsArg(start),
     '-t', secondsArg(seconds),
     '-i', wav,
-    '-af', `afade=t=out:st=${secondsArg(Math.max(0, seconds - fade))}:d=${fade},${LOUDNORM}`,
+    '-af', `afade=t=out:st=${secondsArg(playing - fade)}:d=${fade},${LOUDNORM},apad=whole_dur=${secondsArg(seconds)}`,
     '-ar', String(SAMPLE_RATE),
     out,
   ];
 };
 
-/** ffmpeg arguments to put the audio under the video without re-encoding the video: the render is the picture, copied as it is. */
+/**
+ * ffmpeg arguments to put the audio under the video without re-encoding the video: the render is the picture, copied as
+ * it is. It ends with the shorter of the two: the cut is padded to the video's length (buildMusicArgs), so that is the
+ * video's.
+ */
 export const buildMuxArgs = ({ video, audio, out }: { video: string; audio: string; out: string }): string[] => [
   '-v', 'error', '-y',
   '-i', video,
