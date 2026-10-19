@@ -1,0 +1,28 @@
+# The reconcile clock: a Cloudflare Worker whose Cron Trigger calls GET /api/cron/reconcile every 10 minutes.
+# The reconciliation starts the paid orders that never started, resolves pending settlements, refunds lost runs and
+# watches refunds, so it cannot wait a day. Vercel's Hobby plan only allows crons that run once a day, so this Worker is
+# the 10-minute clock and Vercel's own daily cron (packages/web/vercel.ts) stays as a backstop. The route takes both: GET
+# with `Authorization: Bearer <CRON_SECRET>`.
+#
+# Secret: CRON_SECRET, the same value Vercel has, set with `wrangler secret put CRON_SECRET` (never in this file).
+# Deploy from the repository's root: pnpm dlx wrangler@4.151.2 deploy --config packages/clock/wrangler.toml
+# (wrangler is not a dependency of this repository; 4.151.2 was the latest on npm on 19/10/2026).
+name = "ad-video-reconcile-clock"
+main = "src/index.ts"
+compatibility_date = "2026-10-10"
+
+# No public URL: the Worker only runs on its schedule.
+workers_dev = false
+preview_urls = false
+
+# Workers Logs: each run's answer, or why it failed.
+[observability]
+enabled = true
+
+# Every 10 minutes, off the top of the hour (the busiest minute) and off the minute of Vercel's daily backstop.
+[triggers]
+crons = ["3,13,23,33,43,53 * * * *"]
+
+[vars]
+# Must match PUBLIC_BASE_URL (the production domain is confirmed at the first deploy).
+RECONCILE_URL = "https://ad-video-agent.vercel.app/api/cron/reconcile"

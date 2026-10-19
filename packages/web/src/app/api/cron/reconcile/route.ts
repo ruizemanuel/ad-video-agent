@@ -1,4 +1,5 @@
-// GET /api/cron/reconcile: the reconciliation, every 10 minutes (see vercel.ts). Only Vercel's cron, with the secret.
+// GET /api/cron/reconcile: the reconciliation. The Cloudflare Worker in packages/clock calls it every 10 minutes, and
+// Vercel's cron once a day as the backstop (see vercel.ts); both with the secret, and nobody else.
 import { env } from '../../../../env';
 import { reconcile } from '../../../../maintenance/reconcile';
 import { runStatus } from '../../../../payments/orders';

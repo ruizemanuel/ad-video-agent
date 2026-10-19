@@ -13,6 +13,9 @@ docs/superpowers/
 # Vercel
 .vercel
 
+# Cloudflare (wrangler's local state)
+.wrangler/
+
 # Build and dependencies
 node_modules/
 .next/

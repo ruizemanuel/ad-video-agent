@@ -878,9 +878,11 @@ describe('the cron routes', () => {
 });
 
 describe('the cron schedule', () => {
-  it('runs the reconciliation every 10 minutes and the cleanup at 04:00 UTC', () => {
+  // The 10-minute clock is the Cloudflare Worker in packages/clock (Hobby allows one run a day); this is its backstop.
+  // That the minute is none of the Worker's is checked in packages/clock/test/wrangler.test.ts.
+  it('runs the reconciliation once a day, as the backstop, and the cleanup at 04:00 UTC', () => {
     expect(config.crons).toEqual([
-      { path: '/api/cron/reconcile', schedule: '*/10 * * * *' },
+      { path: '/api/cron/reconcile', schedule: '8 3 * * *' },
       { path: '/api/cron/cleanup', schedule: '0 4 * * *' },
     ]);
   });
