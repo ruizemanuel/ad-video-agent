@@ -5,7 +5,7 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FPS, layoutScenes, type Edl, type Format, type RenderResult, type SiteData, type TaskEnvelope } from '@app/core';
+import { FPS, layoutScenes, trackCoversVideo, type Edl, type Format, type RenderResult, type SiteData, type TaskEnvelope } from '@app/core';
 import { downloadToFile } from '../download';
 import { uploadFileToPresigned } from '../upload';
 import { getServeUrl } from './bundle';
@@ -43,13 +43,6 @@ export async function renderVideo({ edl, site, runDir, out, format, hook }: Rend
 const CUT_TIMEOUT_MS = 60_000;
 const MIX_TIMEOUT_MS = 180_000;
 
-/**
- * The mix ends with the shorter of the picture and the track (see buildMuxArgs), so a track that runs out before the
- * video would cut the video's end. The service only chooses tracks that last long enough (a track "too-short" is
- * rejected), so this is a safety net, and a short fall is let through: half a second of the close, which is a fade.
- */
-const MAX_SHORT_FALL_SECONDS = 0.5;
-
 /** What `renderTask` leans on, so that a test can put its own: the renderer, the transfers and ffmpeg. */
 export type RenderTaskDeps = {
   renderVideo: typeof renderVideo;
@@ -74,9 +67,11 @@ export async function renderTask(task: TaskEnvelope, runDir: string, deps: Rende
   const { muted: mutedUrl, withMusic: withMusicUrl, musicWav: musicUrl } = task.urls;
   if (!mutedUrl) throw new Error('The render task came without a place to put the video.');
   if (music && !(withMusicUrl && musicUrl)) throw new Error('The render task has a track but no place to read it from or to put the video with it.');
-  // The video lasts what its edit list says; the track has to cover that from its first beat on.
+  // The video lasts what its edit list says; the track has to cover that from its first beat on. The mix ends with the
+  // shorter of the picture and the track (see buildMuxArgs), so a track that runs out would cut the video's end. The
+  // service checks the same rule before it asks for music, so this is a safety net.
   const videoSeconds = layoutScenes(edl, hook).total / FPS;
-  if (music && music.seconds - Math.max(0, music.firstBeat) < videoSeconds - MAX_SHORT_FALL_SECONDS) {
+  if (music && !trackCoversVideo(music, videoSeconds)) {
     throw new Error(`The track is shorter than the video: ${(music.seconds - Math.max(0, music.firstBeat)).toFixed(1)} s from its first beat, and the video lasts ${videoSeconds.toFixed(1)} s.`);
   }
   const site = readSite(runDir);

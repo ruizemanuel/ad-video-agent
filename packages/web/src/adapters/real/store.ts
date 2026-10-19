@@ -154,8 +154,13 @@ export class DrizzleStore implements OrderStore {
     return row ? toPayment(row) : null;
   }
 
-  async setVmToken(orderId: string, hash: string, expiresAt: Date): Promise<void> {
-    await this.db.update(orders).set({ vmTokenHash: hash, vmTokenExpiresAt: expiresAt }).where(eq(orders.id, orderId));
+  async setVmToken(orderId: string, hash: string, expiresAt: Date): Promise<boolean> {
+    const written = await this.db
+      .update(orders)
+      .set({ vmTokenHash: hash, vmTokenExpiresAt: expiresAt })
+      .where(and(eq(orders.id, orderId), isNull(orders.vmTokenHash)))
+      .returning({ id: orders.id });
+    return written.length > 0;
   }
 
   async orderByVmTokenHash(hash: string): Promise<Order | null> {

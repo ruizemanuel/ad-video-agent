@@ -9,7 +9,23 @@ import { renderPaths } from '../../src/vm/tasks';
 import { vmTokenHash } from '../../src/vm/token';
 import { orderWorkflow } from '../../src/workflows/order';
 import { captureShop, edlShop as shopEdl, siteShop as shopSite } from '../support/shop';
-import { actAsVm, fakeService, paidOrder, passingKeyframes, PAYER, PRICE, removeFakeService, scenario, taskToken, tasks, USDT, type Fakes } from './support';
+import {
+  actAsVm,
+  BUY_PAY_TO,
+  fakeService,
+  paidOrder,
+  passingKeyframes,
+  PAYER,
+  PRICE,
+  removeFakeService,
+  runLog,
+  scenario,
+  stepOutput,
+  taskToken,
+  tasks,
+  USDT,
+  type Fakes,
+} from './support';
 
 const edlShop = shopEdl();
 const siteShop = shopSite();
@@ -114,6 +130,43 @@ describe('an order that goes through', () => {
     expect(script).toContain('codeload.github.com/ruizemanuel/ad-video-agent/tar.gz/0123456789abcdef0123456789abcdef01234567');
     await timeOut(run, id, 'capture');
     await run.returnValue;
+    // The permit is in the VM's script and nowhere else: not in what any step was given or gave back. (The log is read
+    // back into values, as the order id in it shows.)
+    const log = await runLog(run.runId);
+    expect(log).toContain(id);
+    expect(permit.length).toBeGreaterThan(20);
+    expect(log).not.toContain(permit);
+  });
+
+  it('keeps a permit the order already has, and does not pay again: nothing went out, so it is refunded', async () => {
+    // What an earlier run of the paying step leaves when it died before anything was signed.
+    const first = 'f'.repeat(64);
+    await fakes.store.setVmToken(id, first, new Date(Date.now() + 75 * 60_000));
+    const before = rentals();
+    const run = await start(orderWorkflow, [id]);
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'vm-payment-failed' });
+    expect(rentals()).toBe(before);
+    expect((await fakes.store.getOrder(id))?.vmTokenHash).toBe(first);
+    expect(await stepOutput(run.runId, 'payVm')).toEqual({ status: 'uncertain', pollUrl: null });
+    expect(await tasks(fakes.store, id)).toEqual([]);
+  });
+
+  it('keeps a permit the order already has when its payment went out, and uses the VM that boots with it once the chain says it was paid', async () => {
+    // What an earlier run of the paying step leaves when it died after the authorization went out.
+    const first = 'e'.repeat(64);
+    await fakes.store.setVmToken(id, first, new Date(Date.now() + 75 * 60_000));
+    const key = `${id}:vm`;
+    const authorization = { from: `0x${'fa'.repeat(20)}`, nonce: `0x${'ab'.repeat(32)}`, validAfter: '0', validBefore: String(Math.floor(Date.now() / 1000) + 300) };
+    await fakes.store.insertPaymentIntent({ key, orderId: id, kind: 'vm', maxAtomic: 70_000n });
+    await fakes.store.updatePayment(key, { status: 'uncertain', asset: USDT, amount: 67_011n, payTo: BUY_PAY_TO, authorization });
+    fakes.buy.consumed(authorization.nonce, { to: BUY_PAY_TO, value: 67_011n });
+    const before = rentals();
+    const run = await start(orderWorkflow, [id]);
+    await timeOut(run, id, 'capture');
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'vm-timeout' });
+    expect(rentals()).toBe(before);
+    expect((await fakes.store.getOrder(id))?.vmTokenHash).toBe(first);
+    expect(await kinds(id)).toEqual(['capture:0', 'shutdown:0']);
   });
 
   it('delivers only the muted MP4 and claims.md when audio is none, without asking for music', async () => {
@@ -176,6 +229,28 @@ describe('an order that goes through', () => {
     expect(await text(`orders/${id}/out/claims.md`)).toBe(claimsMarkdown(corrected, siteShop));
   });
 
+  it('renders without music, and says so, when a correction makes the video outlast the track: music never refunds', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fakes.llm.review = async ({ frames }) => ({
+      review: {
+        frames: frames.map((_, k) => ({ frame: k + 1, legible: true, cutMidLetter: false, issues: [] })),
+        logoSwap: { generic: fakes.llm.calls.review === 1, reason: 'Any shop could say this.' },
+      },
+      usd: 0.2,
+    });
+    // Every body scene two beats or more longer: about 4 s more than the video the music was made for.
+    const longer: Edl = { ...edlShop, body: edlShop.body.map((scene) => ({ ...scene, beats: 8 })) };
+    fakes.llm.fixed = longer;
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'keyframes', 1, passingKeyframes(longer, siteShop), { ok: true, stills: KEYFRAMES.stills.length });
+    await actAsVm(run, id, 'render', 0, null, RENDERED_MUTED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: MUTED_FILES, warnings: ['music_unavailable'] });
+    const render = (await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input;
+    expect(render).toEqual({ edl: longer, hook: 0, format: '9x16', music: null });
+    expect((await fakes.store.getOrder(id))?.steps.music).toBe('failed');
+    expect(warn).toHaveBeenCalledWith('[music_too_short]', id);
+  });
+
   it('logs what the review remarks without blocking on it, and keeps it from the client', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     fakes.llm.review = async ({ frames }) => ({
@@ -197,6 +272,44 @@ describe('an order that goes through', () => {
     await timeOut(run, id, 'capture');
     expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'vm-timeout' });
     expect(await kinds(id)).toEqual(['capture:0', 'shutdown:0']);
+    // Why buy's answer was not clear stays in the payment record: the run's log keeps only the status (and the tracking URL).
+    expect(await stepOutput(run.runId, 'payVm')).toEqual({ status: 'uncertain', pollUrl: null });
+  });
+
+  it('keeps the tracking URL of a paid VM in the paying step\'s output, and nothing else', async () => {
+    const run = await start(orderWorkflow, [id]);
+    await timeOut(run, id, 'capture');
+    await run.returnValue;
+    expect(await stepOutput(run.runId, 'payVm')).toEqual({ status: 'paid', pollUrl: expect.stringMatching(/^https:\/\/usebuy\.ai\/google\/vm\//) });
+  });
+
+  it('takes the order back when a try of its first step failed after taking it and a reconciliation recorded another run', async () => {
+    vi.spyOn(fakes.store, 'getOrder').mockImplementationOnce(async () => {
+      // The first try moved the order; then a reconciliation overwrote its run id, and the store failed this read.
+      await fakes.store.setRunId(id, 'wrun_reconciliation');
+      throw new Error('The store did not answer.');
+    });
+    const run = await start(orderWorkflow, [id]);
+    await timeOut(run, id, 'capture');
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'vm-timeout' });
+    expect((await fakes.store.getOrder(id))?.runId).toBe(run.runId);
+  });
+
+  it('ends a delivered order as delivered when the delivery step fails after its delivery', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const setStep = fakes.store.setStep.bind(fakes.store);
+    vi.spyOn(fakes.store, 'setStep').mockImplementation(async (orderId, name, state) => {
+      if (name === 'delivery' && state === 'done') throw new Error('The store did not answer.');
+      return setStep(orderId, name, state);
+    });
+    const prepares = fakes.refunds.prepareCalls;
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'render', 0, null, RENDERED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
+    expect((await fakes.store.getOrder(id))?.status).toBe('delivered');
+    expect(fakes.refunds.prepareCalls).toBe(prepares);
+    expect(error.mock.calls.filter(([first]) => first === '[refund_failed]')).toEqual([]);
+    expect(await kinds(id)).toEqual(['capture:0', 'keyframes:0', 'render:0', 'shutdown:0']);
   });
 });
 
@@ -243,7 +356,8 @@ describe('an order that is refunded', () => {
     expect(await outcome).toEqual({ status: 'refunded', reason: 'vm-payment-failed' });
     expect(woken).toBeGreaterThan(1);
     expect(woken).toBeLessThanOrEqual(20);
-    expect(await tasks(fakes.store, id)).toEqual([]);
+    // The VM may exist after all: it is told to stop, which costs nothing.
+    expect(await kinds(id)).toEqual(['shutdown:0']);
   });
 
   it('refunds when buy will not rent a VM, without any VM task', async () => {

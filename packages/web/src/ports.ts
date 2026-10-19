@@ -213,7 +213,11 @@ export interface OrderStore {
   updatePayment(key: string, patch: PaymentPatch): Promise<void>;
   getPayment(key: string): Promise<PaymentRecord | null>;
 
-  setVmToken(orderId: string, hash: string, expiresAt: Date): Promise<void>;
+  /**
+   * Keeps the hash of the order's VM permit, once: an order whose permit is set keeps it (the VM it paid for boots with
+   * that one). True when this call wrote it; false when the order already had one, or does not exist.
+   */
+  setVmToken(orderId: string, hash: string, expiresAt: Date): Promise<boolean>;
   orderByVmTokenHash(hash: string): Promise<Order | null>;
 
   /** One task per hook token: queueing the same one again returns the first. */

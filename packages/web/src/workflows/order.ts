@@ -11,8 +11,11 @@
 import {
   claimsMarkdown,
   EdlSchema,
+  FPS,
+  layoutScenes,
   musicMarkdown,
   retimeForBpm,
+  trackCoversVideo,
   type CaptureFile,
   type CaptureInput,
   type Edl,
@@ -121,7 +124,8 @@ export async function orderWorkflow(orderId: string): Promise<OrderOutcome> {
   const owned = await owner.getConflict();
   if (owned !== null) return { status: 'duplicate', runId: owned.runId };
 
-  const vm = { rented: false };
+  // Whether a VM may be running for the order: paid for, or paid for as far as anyone can tell.
+  const vm = { mayExist: false };
   let made: { ok: true; files: string[]; warnings: string[] } | Failed;
   try {
     const started = await startOrder(orderId, getWorkflowMetadata().workflowRunId);
@@ -133,16 +137,15 @@ export async function orderWorkflow(orderId: string): Promise<OrderOutcome> {
     made = { ok: false, reason: 'internal' };
   }
   // Before a refund, which can take minutes: the VM has nothing left to do.
-  if (vm.rented) await shutDownVm(orderId);
+  if (vm.mayExist) await shutDownVm(orderId);
   if (made.ok) return { status: 'delivered', files: made.files, warnings: made.warnings };
   return await refund(orderId, made.reason);
 }
 
 /** The order made: the VM, the capture, the script, the music and the key frames, the review, the render, the delivery. */
-async function make(orderId: string, request: OrderRequest, vm: { rented: boolean }): Promise<{ ok: true; files: string[]; warnings: string[] } | Failed> {
-  const rental = await rentVm(orderId);
+async function make(orderId: string, request: OrderRequest, vm: { mayExist: boolean }): Promise<{ ok: true; files: string[]; warnings: string[] } | Failed> {
+  const rental = await rentVm(orderId, vm);
   if (!rental.ok) return rental;
-  vm.rented = true;
   await markStep(orderId, 'vm', 'done');
 
   const capture = { url: request.url, extraUrls: request.extraUrls ?? [], followDemoLinks: DEMO_LINKS };
@@ -167,13 +170,25 @@ async function make(orderId: string, request: OrderRequest, vm: { rented: boolea
   const reviewed = await review(orderId, script.edl, keyframes);
   if (!reviewed.ok) return reviewed;
 
-  const rendered = await vmTask(orderId, { kind: 'render', edl: reviewed.edl, track }, RENDER_TIMEOUT);
+  // The track was chosen for the director's edit list; a correction can make the video longer than it.
+  let music: ChosenTrack | null = null;
+  try {
+    music = track === null ? null : await trackForRender(orderId, reviewed.edl, track);
+  } catch {
+    // Without the check, the VM could refuse the render: the video goes out without music, never refunded for it.
+    try {
+      await musicUnavailable(orderId);
+    } catch {
+      // The video goes out all the same.
+    }
+  }
+  const rendered = await vmTask(orderId, { kind: 'render', edl: reviewed.edl, track: music }, RENDER_TIMEOUT);
   if (rendered === TIMED_OUT) return await failAt(orderId, 'render', 'vm-timeout');
   const video = renderedVideo(rendered);
   if (video === null) return await failAt(orderId, 'render', 'render');
   await markStep(orderId, 'render', 'done');
 
-  return { ok: true, ...(await deliver(orderId, reviewed.edl, track, video)) };
+  return { ok: true, ...(await deliver(orderId, reviewed.edl, music, video)) };
 }
 
 /** Marks the step of the status as failed and gives the failure back: a status that cannot be written does not change it. */
@@ -192,25 +207,33 @@ async function failAt(orderId: string, step: StepName, reason: Failure): Promise
  * The VM, paid for once. A payment whose outcome is not clear (the step died, buy did not answer clearly) is looked up on
  * the chain, never paid again, and the VM is used only once the chain says buy was paid.
  */
-async function rentVm(orderId: string): Promise<{ ok: true } | Failed> {
-  let payment: PayResult;
+async function rentVm(orderId: string, vm: { mayExist: boolean }): Promise<{ ok: true } | Failed> {
+  let payment: VmPayment;
   try {
     payment = await payVm(orderId);
   } catch {
     // It may have died after the money went out.
-    payment = { status: 'uncertain', reason: 'step-failed' };
+    payment = { status: 'uncertain', pollUrl: null };
   }
   if (payment.status === 'rejected') return await failAt(orderId, 'vm', 'vm-unavailable');
-  if (payment.status === 'uncertain' && !(await paidOnChain(orderId))) return await failAt(orderId, 'vm', 'vm-payment-failed');
+  if (payment.status === 'uncertain') {
+    const onChain = await paidOnChain(orderId);
+    if (onChain !== 'settled') {
+      // A chain that never told: the VM may exist, and is told to stop with the rest.
+      vm.mayExist = onChain === 'unknown';
+      return await failAt(orderId, 'vm', 'vm-payment-failed');
+    }
+  }
+  vm.mayExist = true;
   return { ok: true };
 }
 
 /**
  * Whether the chain says buy got paid for the VM. An authorization nobody signed never went out; one that is unspent may
  * still be spent until it expires, so the run waits for that and asks again. When the chain cannot be read, it asks a few
- * more times and then takes the payment as not made: the client is refunded, and at worst a VM nobody uses was paid.
+ * more times and then gives up (`unknown`): the client is refunded, and at worst a VM nobody uses was paid.
  */
-async function paidOnChain(orderId: string): Promise<boolean> {
+async function paidOnChain(orderId: string): Promise<AuthorizationSettlement> {
   for (let look = 1; ; look += 1) {
     let answer: { settlement: AuthorizationSettlement; waitMs: number | null };
     try {
@@ -218,9 +241,10 @@ async function paidOnChain(orderId: string): Promise<boolean> {
     } catch {
       answer = { settlement: 'unknown', waitMs: 0 };
     }
-    if (answer.settlement === 'settled') return true;
-    if (answer.settlement === 'unsettled' || answer.waitMs === null || look === PAYMENT_LOOKS) return false;
-    await sleep(Math.max(answer.waitMs, PAYMENT_PAUSE_MS));
+    // Nothing signed, so nothing went out.
+    if (answer.settlement === 'unknown' && answer.waitMs === null) return 'unsettled';
+    if (answer.settlement !== 'unknown' || look === PAYMENT_LOOKS) return answer.settlement;
+    await sleep(Math.max(answer.waitMs ?? 0, PAYMENT_PAUSE_MS));
   }
 }
 
@@ -353,7 +377,9 @@ async function refund(orderId: string, reason: Failure): Promise<OrderOutcome> {
   for (let look = 1; look <= REFUND_LOOKS; look += 1) {
     try {
       const prepared = await prepareOrderRefund(orderId, reason);
-      if (!prepared.ok) return { status: 'refund_failed', reason };
+      // The order was delivered after all (the delivery step failed after its last write): nothing is refunded.
+      if (prepared.status === 'delivered') return { status: 'delivered', files: prepared.files, warnings: prepared.warnings };
+      if (prepared.status === 'failed') return { status: 'refund_failed', reason };
       try {
         await broadcastOrderRefund(orderId);
       } catch {
@@ -384,8 +410,11 @@ async function startOrder(
   const { store } = await getAdapters();
   const moved = await store.transition(orderId, 'running', { runId });
   const order = await store.getOrder(orderId);
-  // A second try of this step finds the order taken already, by this run.
-  if (order === null || (!moved && !(order.status === 'running' && order.runId === runId))) return { status: 'taken', runId: order?.runId ?? '' };
+  // A second try of this step finds the order taken already, by this run: it holds the order's token, so no other run
+  // can have taken it, whatever run id a reconciliation wrote since (setRunId is unconditional). It writes its own back.
+  const retried = !moved && order?.status === 'running' && (order.runId === runId || getStepMetadata().attempt > 1);
+  if (order === null || (!moved && !retried)) return { status: 'taken', runId: order?.runId ?? '' };
+  if (order.runId !== runId) await store.setRunId(orderId, runId);
   const { DEV_MODE, FORCE_FAIL_AT } = env();
   if (DEV_MODE && FORCE_FAIL_AT === 'before-vm') return { status: 'forced' };
   return { status: 'started', request: order.request };
@@ -398,14 +427,25 @@ async function markStep(orderId: string, name: StepName, state: StepState): Prom
 }
 
 /**
- * Pays buy for the VM, once: the step is never run again, and payForVm does not pay on a second attempt either. The
- * permit is made here and written into the VM's script, which goes to buy and nowhere else; the store keeps its hash.
+ * What the run keeps of the VM payment: how it ended and buy's tracking URL (which cannot be had again), never the reason
+ * it gives, which can quote an error that holds the signed authorization (the payment record keeps it).
  */
-async function payVm(orderId: string): Promise<PayResult> {
+type VmPayment = { status: PayResult['status']; pollUrl: string | null };
+
+/**
+ * Pays buy for the VM, once: the step is never run again, and it does not pay when it runs again anyway. The permit is
+ * made here and written into the VM's script, which goes to buy and nowhere else; the store keeps its hash, once: a VM
+ * paid for by an earlier run of this step boots with the first permit, which nothing replaces. When there is one
+ * already, or this is not the first try, the payment is `uncertain` and the chain says whether it went out.
+ */
+async function payVm(orderId: string): Promise<VmPayment> {
   'use step';
   const { store, buy } = await getAdapters();
   const settings = env();
   await store.setStep(orderId, 'vm', 'running');
+  const again: VmPayment = { status: 'uncertain', pollUrl: null };
+  const { attempt } = getStepMetadata();
+  if (attempt > 1) return again;
   const permit = issueVmToken();
   let script: string;
   try {
@@ -415,10 +455,11 @@ async function payVm(orderId: string): Promise<PayResult> {
   } catch {
     // Nothing was paid: the service does not know where it lives or which code the VM runs.
     console.error('[vm_not_configured]', orderId, 'PUBLIC_BASE_URL, GITHUB_REPO and VERCEL_GIT_COMMIT_SHA (or VM_CODE_REF) make the VM script');
-    return { status: 'rejected', reason: 'not-configured' };
+    return { status: 'rejected', pollUrl: null };
   }
-  await store.setVmToken(orderId, permit.hash, vmTokenExpiry(new Date()));
-  return await payForVm({ orderId, script, attempt: getStepMetadata().attempt }, { store, buy, dailyCapUsd: settings.BUY_DAILY_CAP_USD });
+  if (!(await store.setVmToken(orderId, permit.hash, vmTokenExpiry(new Date())))) return again;
+  const paid = await payForVm({ orderId, script, attempt }, { store, buy, dailyCapUsd: settings.BUY_DAILY_CAP_USD });
+  return { status: paid.status, pollUrl: paid.status === 'rejected' ? null : (paid.pollUrl ?? null) };
 }
 payVm.maxRetries = 0;
 
@@ -435,6 +476,20 @@ async function lookUpVmPayment(orderId: string): Promise<{ settlement: Authoriza
   if (validBefore === undefined) return { settlement, waitMs: null };
   const finalAt = (Number(validBefore) + Number(SETTLEMENT_GRACE_SECONDS)) * 1000;
   return { settlement, waitMs: Math.max(finalAt - Date.now(), 0) };
+}
+
+/**
+ * The chosen track, if it still covers the video the render makes (the edit list moved to the track's tempo) from its
+ * first beat, by the rule the VM applies; otherwise none, and the video goes out without music, which the order says.
+ */
+async function trackForRender(orderId: string, edl: Edl, track: ChosenTrack): Promise<ChosenTrack | null> {
+  'use step';
+  const videoSeconds = layoutScenes(retimeForBpm(edl, track.measuredBpm), 0).total / FPS;
+  if (trackCoversVideo(track, videoSeconds)) return track;
+  console.warn('[music_too_short]', orderId);
+  const { store } = await getAdapters();
+  await noMusic(store, orderId);
+  return null;
 }
 
 /** Queues a task for the VM (once per hook token) and shows its step as running. */
@@ -679,19 +734,30 @@ async function deliver(
 
 // ---------------------------------------------------------------- steps: the refund
 
-/** Signs the order's refund, or gives back the one it has. A refund that cannot be paid leaves the order `refund_failed`. */
-async function prepareOrderRefund(orderId: string, reason: Failure): Promise<{ ok: true } | { ok: false }> {
+/**
+ * Signs the order's refund, or gives back the one it has. A refund that cannot be paid leaves the order `refund_failed`.
+ * An order that is not one to refund because it was delivered (its delivery step failed after delivering it) says so,
+ * with its files.
+ */
+async function prepareOrderRefund(
+  orderId: string,
+  reason: Failure,
+): Promise<{ status: 'prepared' } | { status: 'failed' } | { status: 'delivered'; files: string[]; warnings: string[] }> {
   'use step';
   const { store, refunds } = await getAdapters();
   const prepared = await prepareRefund(orderId, reason, { store, refunds, dailyCapUsd: env().REFUND_DAILY_CAP_USD });
   if ('failed' in prepared) {
+    if (prepared.failed === 'not-refundable') {
+      const order = await store.getOrder(orderId);
+      if (order?.status === 'delivered') return { status: 'delivered', files: order.deliverables.map((file) => file.name), warnings: order.warnings };
+    }
     // The order now says why the refund failed: why the order did is kept here.
     console.error('[refund_failed]', orderId, reason, prepared.failed);
     if (prepared.failed !== 'not-refundable') await store.setStep(orderId, 'refund', 'failed');
-    return { ok: false };
+    return { status: 'failed' };
   }
   await store.setStep(orderId, 'refund', 'running');
-  return { ok: true };
+  return { status: 'prepared' };
 }
 
 /** Hands the kept refund to the node: the same bytes every time, never signed again. */

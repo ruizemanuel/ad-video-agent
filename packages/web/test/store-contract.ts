@@ -303,7 +303,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         await s.addWarning('ord_doesnotexist', 'x');
         await s.setDeliverables('ord_doesnotexist', []);
         await s.setRunId('ord_doesnotexist', 'wrun');
-        await s.setVmToken('ord_doesnotexist', 'hash', ahead(minutes(75)));
+        expect(await s.setVmToken('ord_doesnotexist', 'hash', ahead(minutes(75)))).toBe(false);
         expect(await s.getOrder('ord_doesnotexist')).toBeNull();
       });
     });
@@ -428,17 +428,26 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       it('finds the order that holds a permit by its hash', async () => {
         const order = await create();
         const expiresAt = new Date('2026-10-17T13:15:00.000Z');
-        await s.setVmToken(order.id, 'hash-1', expiresAt);
+        expect(await s.setVmToken(order.id, 'hash-1', expiresAt)).toBe(true);
         expect(await s.orderByVmTokenHash('hash-1')).toMatchObject({ id: order.id, vmTokenHash: 'hash-1', vmTokenExpiresAt: expiresAt });
         expect(await s.orderByVmTokenHash('other-hash')).toBeNull();
       });
 
-      it('stops knowing a permit once a new one replaces it', async () => {
+      it('keeps the first permit: a second one is not written, and says so, as the paid VM boots with the first', async () => {
         const order = await create();
-        await s.setVmToken(order.id, 'hash-1', ahead(minutes(75)));
-        await s.setVmToken(order.id, 'hash-2', ahead(minutes(75)));
-        expect(await s.orderByVmTokenHash('hash-1')).toBeNull();
-        expect((await s.orderByVmTokenHash('hash-2'))?.id).toBe(order.id);
+        const expiresAt = ahead(minutes(75));
+        expect(await s.setVmToken(order.id, 'hash-1', expiresAt)).toBe(true);
+        expect(await s.setVmToken(order.id, 'hash-2', ahead(minutes(80)))).toBe(false);
+        expect(await s.orderByVmTokenHash('hash-2')).toBeNull();
+        expect(await s.orderByVmTokenHash('hash-1')).toMatchObject({ id: order.id, vmTokenHash: 'hash-1', vmTokenExpiresAt: expiresAt });
+      });
+
+      it('writes the permit of one of two calls at once, and says which', async () => {
+        const order = await create();
+        const written = await Promise.all(['hash-a', 'hash-b', 'hash-c'].map((hash) => s.setVmToken(order.id, hash, ahead(minutes(75)))));
+        expect(written.filter(Boolean)).toHaveLength(1);
+        const kept = ['hash-a', 'hash-b', 'hash-c'][written.indexOf(true)] ?? '';
+        expect((await s.getOrder(order.id))?.vmTokenHash).toBe(kept);
       });
     });
 

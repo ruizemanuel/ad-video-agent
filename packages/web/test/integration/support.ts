@@ -9,6 +9,8 @@ import { layoutScenes, settledFrame, theme, timedScenePath, type Edl, type Keyfr
 import { waitForHook } from '@workflow/vitest';
 import { vi } from 'vitest';
 import { resumeHook, type Run } from 'workflow/api';
+import { hydrateResourceIO, observabilityRevivers } from 'workflow/observability';
+import { getWorld } from 'workflow/runtime';
 import { getAdapters } from '../../src/adapters';
 import type { FileBlob } from '../../src/adapters/fake/blob';
 import type { FakeBuy } from '../../src/adapters/fake/buy';
@@ -22,6 +24,8 @@ import { capturePath, keyframesPath } from '../../src/vm/tasks';
 export const USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e';
 /** Who pays the orders: a made-up address, no real wallet. */
 export const PAYER = '0x1234567890AbcdEF1234567890aBcdef12345678';
+/** The wallet buy's quote names, which the fake buy is paid at. */
+export const BUY_PAY_TO = '0x20faAca5F980E29639A0FCC6dcA6988E18ed333B';
 /** What a development order costs: 0.05 USDT. */
 export const PRICE = 50_000n;
 
@@ -106,6 +110,30 @@ export async function tasks(store: FileStore, orderId: string): Promise<VmTask[]
   const queued: VmTask[] = [];
   for (let task = await store.claimNextTask(orderId); task !== null; task = await store.claimNextTask(orderId)) queued.push(task);
   return queued;
+}
+
+/** What each step of a run was given and gave back, as the run's event log keeps it, read back into values. */
+export async function runSteps(runId: string): Promise<{ stepName: string; input: unknown; output: unknown }[]> {
+  const world = await getWorld();
+  const steps = await world.steps.list({ runId, resolveData: 'all', pagination: { limit: 1000 } });
+  return steps.data.map((step) => {
+    const { input, output } = hydrateResourceIO(step, observabilityRevivers);
+    return { stepName: step.stepName, input, output };
+  });
+}
+
+/** Everything the run's event log keeps (steps, hooks, waits, what resumed them), read back into values, as text. */
+export async function runLog(runId: string): Promise<string> {
+  const world = await getWorld();
+  const events = await world.events.list({ runId, resolveData: 'all', pagination: { limit: 1000 } });
+  const data = events.data.map((event) => hydrateResourceIO(event, observabilityRevivers).eventData);
+  const text = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => (typeof v === 'bigint' ? v.toString() : v));
+  return text({ steps: await runSteps(runId), events: data });
+}
+
+/** The output of the run's step with this name (the function's name), or undefined if it did not run. */
+export async function stepOutput(runId: string, name: string): Promise<unknown> {
+  return (await runSteps(runId)).find((step) => step.stepName.endsWith(`//${name}`))?.output;
 }
 
 // The way Chrome writes a computed color.

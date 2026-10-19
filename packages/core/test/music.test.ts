@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, chooseTrack, layoutScenes, measureTrack, musicPrompt, parseWav, type TrackMeasure } from '../src/index';
+import { EdlSchema, MAX_TRACK_SHORT_FALL_SECONDS, chooseTrack, layoutScenes, measureTrack, musicPrompt, parseWav, trackCoversVideo, type TrackMeasure } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import { clickWav, encodeWav } from './support/wav';
 
@@ -306,5 +306,24 @@ describe('musicPrompt', () => {
     expect(p).toContain('Length: 60 seconds');
     expect(p).toContain('a final hit at 1:00,');
     expect(p).not.toContain('0:60');
+  });
+});
+
+describe('trackCoversVideo', () => {
+  it('takes a track that lasts the video from its first beat', () => {
+    expect(trackCoversVideo({ seconds: 21.8, firstBeat: 0.2 }, 21.6)).toBe(true);
+  });
+
+  it('puts up with a track that falls half a second short or less, as the render does', () => {
+    expect(trackCoversVideo({ seconds: 21.1, firstBeat: 0.2 }, 21.4)).toBe(true);
+    expect(MAX_TRACK_SHORT_FALL_SECONDS).toBe(0.5);
+  });
+
+  it('refuses a track that falls more than half a second short', () => {
+    expect(trackCoversVideo({ seconds: 21.8, firstBeat: 0.2 }, 22.2)).toBe(false);
+  });
+
+  it('counts a first beat before the start of the file as the start', () => {
+    expect(trackCoversVideo({ seconds: 20, firstBeat: -0.3 }, 20.4)).toBe(true);
   });
 });

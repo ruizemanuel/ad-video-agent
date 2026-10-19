@@ -186,6 +186,20 @@ export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSe
   return { chosen, rejected };
 };
 
+/**
+ * How far short of the video a track may fall, in seconds: the render mixes to the shorter of the two, so a track that
+ * runs out cuts the video's end, and half a second of the close, which is a fade, is let through.
+ */
+export const MAX_TRACK_SHORT_FALL_SECONDS = 0.5;
+
+/**
+ * Whether a track lasts a video of `videoSeconds` from its first beat, where the render starts it (a first beat before the
+ * start of the file counts as the start), allowing MAX_TRACK_SHORT_FALL_SECONDS. The service checks it before it asks
+ * for a render with music, and the VM again before it renders.
+ */
+export const trackCoversVideo = (track: { seconds: number; firstBeat: number }, videoSeconds: number): boolean =>
+  track.seconds - Math.max(0, track.firstBeat) >= videoSeconds - MAX_TRACK_SHORT_FALL_SECONDS;
+
 // m:ss of a whole number of seconds.
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
