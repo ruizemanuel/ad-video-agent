@@ -18,6 +18,8 @@ declare module 'music-tempo' {
     readonly tempo: string;
     /** Beat times in seconds. */
     readonly beats: number[];
+    /** Onset times in seconds (the peaks of the spectral flux), from which the beats are chosen. */
+    readonly events: number[];
     /** Seconds between two beats. */
     readonly beatInterval: number;
   }
