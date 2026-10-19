@@ -29,5 +29,5 @@ enabled = true
 crons = ["3,13,23,33,43,53 * * * *"]
 
 [vars]
-# Must match PUBLIC_BASE_URL (the production domain is confirmed at the first deploy).
-RECONCILE_URL = "https://ad-video-agent.vercel.app/api/cron/reconcile"
+# Must match PUBLIC_BASE_URL: the project's public production domain (ad-video-agent.vercel.app belongs to someone else).
+RECONCILE_URL = "https://ad-video-agent-ten.vercel.app/api/cron/reconcile"
