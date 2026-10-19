@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// wrangler.toml and the Vercel side are read as text: there is no TOML parser here, and these few lines are all that is pinned.
+// wrangler.toml is read as text: there is no TOML parser here, and these few lines are all that is pinned.
 const read = (relative: string): string => readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
 const wrangler = read("../wrangler.toml");
 const setting = (name: string): string | undefined => new RegExp(String.raw`^${name}\s*=\s*(.+?)\s*$`, "m").exec(wrangler)?.[1];
@@ -27,13 +27,5 @@ describe("wrangler.toml", () => {
 
   it("never holds the secret", () => {
     expect(wrangler).not.toMatch(/^CRON_SECRET\s*=/m);
-  });
-
-  it("leaves Vercel's daily backstop a minute of its own", () => {
-    const backstop = /path: '\/api\/cron\/reconcile', schedule: '(\d+) \d+ \* \* \*'/.exec(read("../../web/vercel.ts"));
-    expect(backstop, "the daily reconcile cron in packages/web/vercel.ts").not.toBeNull();
-    const workerMinutes = (setting("crons") ?? "").replaceAll(/["[\]]/g, "").split(" ")[0]?.split(",");
-    expect(workerMinutes).toHaveLength(6);
-    expect(workerMinutes).not.toContain(backstop?.[1]);
   });
 });

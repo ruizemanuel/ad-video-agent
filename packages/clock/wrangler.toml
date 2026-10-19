@@ -4,6 +4,10 @@
 # the 10-minute clock and Vercel's own daily cron (packages/web/vercel.ts) stays as a backstop. The route takes both: GET
 # with `Authorization: Bearer <CRON_SECRET>`.
 #
+# A run's log line holds only how many orders each list of the route's answer has, never their ids (an order id lets
+# whoever has it read the order's status). A green run means the route answered 2xx with its summary, not that the pass
+# was clean: what went wrong with one order is in Vercel's logs, as [reconcile_error], [order_stuck] or [refund_failed].
+#
 # Secret: CRON_SECRET, the same value Vercel has, set with `wrangler secret put CRON_SECRET` (never in this file).
 # Deploy from the repository's root: pnpm dlx wrangler@4.151.2 deploy --config packages/clock/wrangler.toml
 # (wrangler is not a dependency of this repository; 4.151.2 was the latest on npm on 19/10/2026).
@@ -19,7 +23,8 @@ preview_urls = false
 [observability]
 enabled = true
 
-# Every 10 minutes, off the top of the hour (the busiest minute) and off the minute of Vercel's daily backstop.
+# Every 10 minutes, off the top of the hour (the busiest minute). Vercel's daily backstop is kept off these minutes too
+# (best effort: on Hobby, Vercel fires a cron anywhere inside its hour).
 [triggers]
 crons = ["3,13,23,33,43,53 * * * *"]
 

@@ -7,7 +7,10 @@ const SCHEDULED_AT = Date.UTC(2026, 9, 19, 12, 13, 0);
 const CRON = "3,13,23,33,43,53 * * * *";
 const controller = { scheduledTime: SCHEDULED_AT, cron: CRON };
 const env = { RECONCILE_URL: URL_OF_ROUTE, CRON_SECRET: SECRET };
-const SUMMARY = '{"started":[],"unpaid":[],"refundFailed":[],"runLost":[]}';
+// What the route answers (ReconcileResult in packages/web): the ids of the orders it dealt with. An order id is enough to
+// read the order's status and its delivery links, so no id may reach the log.
+const IDS = ["ord_2n7q1ghtv5k3m8aacdkx9p4w", "ord_7c0e8r2u4b6y1d5j3f9s8g2h", "ord_5w9t3k1m7p2x6z4v8n0q5r3e"];
+const SUMMARY = JSON.stringify({ started: [IDS[0]], unpaid: [], refundFailed: [IDS[1], IDS[2]], runLost: [] });
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -35,7 +38,7 @@ describe("the reconcile clock", () => {
     expect(init?.headers).toEqual({ authorization: `Bearer ${SECRET}`, "user-agent": "ad-video-reconcile-clock" });
   });
 
-  it("gives the call a time limit just above the route's 300 s", async () => {
+  it("gives the call a time limit just above Vercel's default 300 s on this plan (the route sets no maxDuration)", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
 
     await clock.scheduled(controller, env);
@@ -75,10 +78,36 @@ describe("the reconcile clock", () => {
     expect(console.log).not.toHaveBeenCalled();
   });
 
-  it("logs one line with the scheduled time, the cron and the answer, and never the secret", async () => {
+  it("logs one line with the scheduled time, the cron and how many orders each list holds", async () => {
     await expect(clock.scheduled(controller, env)).resolves.toBeUndefined();
 
-    expect(console.log).toHaveBeenCalledExactlyOnceWith(`reconcile for 2026-10-19T12:13:00.000Z (${CRON}): ${SUMMARY}`);
-    expect(String(vi.mocked(console.log).mock.calls[0]?.[0])).not.toContain(SECRET);
+    expect(console.log).toHaveBeenCalledExactlyOnceWith(`reconcile for 2026-10-19T12:13:00.000Z (${CRON}): started=1 unpaid=0 refundFailed=2 runLost=0`);
+  });
+
+  it("never logs an order id or the secret", async () => {
+    await clock.scheduled(controller, env);
+
+    const line = String(vi.mocked(console.log).mock.calls[0]?.[0]);
+    for (const id of IDS) expect(line).not.toContain(id);
+    expect(line).not.toContain("ord_");
+    expect(line).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["not JSON", "<html>Bad gateway from somewhere</html>"],
+    ["an empty body", ""],
+    ["JSON that is not an object", '"started"'],
+    ["null", "null"],
+    ["a list missing", JSON.stringify({ started: [], unpaid: [], refundFailed: [] })],
+    ["a list that is not a list", JSON.stringify({ started: 3, unpaid: [], refundFailed: [], runLost: [] })],
+    ["a list that is an object", JSON.stringify({ started: {}, unpaid: [], refundFailed: [], runLost: [] })],
+  ])("fails the run when a 2xx answer is %s, without quoting the body", async (_name, body) => {
+    fetchMock.mockResolvedValue(new Response(body, { status: 200 }));
+
+    const error = await clock.scheduled(controller, env).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("The reconcile answered 200 with something other than its summary of four lists");
+    expect(console.log).not.toHaveBeenCalled();
   });
 });
