@@ -64,8 +64,20 @@ export async function shoot(
   for (const b of await page.evaluate(inPageBoxes, true, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
 }
 
-/** The shots the director is shown: those of the phone (the video is vertical), without the full-page ones, which are too tall to read. */
-export const shotsForDirector = (shots: readonly Shot[]): Shot[] => shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'));
+/** The most pictures the director is shown: each is a part of a billed model call, and a site can have many sections. */
+export const MAX_DIRECTOR_IMAGES = 20;
+
+/** Whether a shot is of an extra page (`x<n>-`) rather than of the site's own. */
+const ofExtraPage = (shot: Shot): boolean => /^x\d+-/.test(shot.id);
+
+/**
+ * The shots the director is shown: those of the phone (the video is vertical), without the full-page ones, which are too
+ * tall to read; at most MAX_DIRECTOR_IMAGES, the site's own page first and then the extra pages, each in its order.
+ */
+export const shotsForDirector = (shots: readonly Shot[]): Shot[] => {
+  const phone = shots.filter((s) => s.viewport === 'mobile' && !s.id.endsWith('-full'));
+  return [...phone.filter((s) => !ofExtraPage(s)), ...phone.filter(ofExtraPage)].slice(0, MAX_DIRECTOR_IMAGES);
+};
 
 /** Writes `director/<shot id>.jpg` for each shot the director is shown. */
 export async function makeDirectorJpegs(runDir: string, shots: readonly Shot[]): Promise<void> {

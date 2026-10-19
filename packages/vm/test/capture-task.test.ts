@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureResult, TaskEnvelope } from '@app/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { capture, captureTask, parseCaptureInput, pickExtraPages } from '../src/capture';
+import { capture, captureTask, checkExtraPage, ExtraPageLeftOut, parseCaptureInput, pickExtraPages } from '../src/capture';
 
 const OK: CaptureResult = { ok: true, metadataBlocked: true, sections: 2, shots: 3 };
 const TARGET = 'https://store.example/orders/o1/capture.json?signature=SECRET';
@@ -74,6 +74,28 @@ describe('pickExtraPages', () => {
     const { pages, ignored } = pickExtraPages('https://x.example/', [], ['file:///etc/passwd', 'ftp://x.example/', 'javascript:alert(1)', 'nothing', 'https://x.example/ok']);
     expect(pages).toEqual(['https://x.example/ok']);
     expect(ignored).toBe(4);
+  });
+});
+
+describe('checkExtraPage', () => {
+  /** A page as the browser opened it, that shows this title and text. */
+  const opened = (title: string, text: string) => ({ evaluate: vi.fn(async () => ({ title, text })) });
+  const content = 'Our shop sells handmade mugs and plates, shipped in two days to the whole country. '.repeat(5);
+
+  it('lets through a page that loaded well', async () => {
+    await expect(checkExtraPage(opened('Mugs', content), 200)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['a challenge', 'Just a moment...', 'Checking your browser', 200],
+    ['an access-denied page', 'Access denied', 'You do not have permission', 403],
+    ['an error with no text', '', '', 404],
+  ])('leaves out %s, which is not the site, saying why', async (_label, title, text, status) => {
+    await expect(checkExtraPage(opened(title, text), status)).rejects.toThrow(ExtraPageLeftOut);
+  });
+
+  it.each([404, 500, 301])('leaves out a page that answered HTTP %s, even with text on it', async (status) => {
+    await expect(checkExtraPage(opened('Not found', content), status)).rejects.toThrow(`HTTP ${status}`);
   });
 });
 

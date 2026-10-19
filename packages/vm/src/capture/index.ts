@@ -126,6 +126,30 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
 
 type PageOutcome = { blocked: true } | { blocked: false; anchors: Anchor[] };
 
+/** An extra page that is not one to film: the capture leaves it out, says why in its log, and goes on. */
+export class ExtraPageLeftOut extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ExtraPageLeftOut';
+  }
+}
+
+type Seen = { title: string; text: string };
+
+/** What the page shows to read whether it is a wall: its title and its text. Runs in the page. */
+const inPageSeen = (): Seen => ({ title: document.title, text: document.body?.innerText ?? '' });
+
+/**
+ * Throws ExtraPageLeftOut for an extra page that is a wall for automated visitors (a challenge, an access-denied page)
+ * or that did not answer with a 2xx: neither is the product. The site's own page is checked apart (a wall there fails the
+ * capture); an extra page is best effort, so one that fails is only left out.
+ */
+export async function checkExtraPage(page: { evaluate(read: () => Seen): Promise<Seen> }, status: number): Promise<void> {
+  const seen = await page.evaluate(inPageSeen);
+  if (detectBlocked({ ...seen, status })) throw new ExtraPageLeftOut('it shows a challenge or an access-denied page');
+  if (status < 200 || status >= 300) throw new ExtraPageLeftOut(`it answered HTTP ${status}`);
+}
+
 /**
  * One page, at the desktop size and then at the phone's: its text, its shots and boxes (and, for the site's own page,
  * the brand). `prefix` is empty for the site and `x<n>-` for an extra page.
@@ -140,9 +164,11 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   try {
     lap(`${prefix}open-desktop`);
     if (own) {
-      const seen = await desktop.page.evaluate(() => ({ title: document.title, text: document.body?.innerText ?? '' }));
+      const seen = await desktop.page.evaluate(inPageSeen);
       if (detectBlocked({ ...seen, status: desktop.status })) return { blocked: true };
       anchors = await desktop.page.evaluate(inPageAnchors);
+    } else {
+      await checkExtraPage(desktop.page, desktop.status);
     }
     text = await desktop.page.evaluate(inPageExtractText);
     const offset = site.sections.length + site.extraSections.length;
@@ -225,8 +251,9 @@ export function pickExtraPages(mainUrl: string, demoLinks: readonly string[], ex
 
 /**
  * Captures the site into `runDir`. A challenge page instead of the site is `blocked`, an address that cannot be
- * reached is `unreachable`. The extra pages (demo links the site shows, `extraUrls`) are best effort: one that fails is
- * left out and noted. `metadataBlocked` says whether this VM is shut away from the cloud's metadata server.
+ * reached is `unreachable`. The extra pages (demo links the site shows, `extraUrls`) are best effort: one that fails, is
+ * a wall for automated visitors or answers with an error (see checkExtraPage) is left out and noted. `metadataBlocked`
+ * says whether this VM is shut away from the cloud's metadata server.
  */
 export async function capture(input: CaptureInput, runDir: string): Promise<CaptureResult> {
   // The browser would open a file: address as readily as a web one.
