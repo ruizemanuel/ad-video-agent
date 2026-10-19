@@ -788,6 +788,29 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.runsOverdue(ago(minutes(1)), 10)).toEqual([]);
       });
 
+      it('pages through the overdue runs: after a cursor come the next ones by payment, the id settling a tie', async () => {
+        const at = ago(minutes(10));
+        const tied: string[] = [];
+        for (let k = 0; k < 3; k++) {
+          const order = await create();
+          expect(await s.transition(order.id, 'paid', { paidAt: at })).toBe(true);
+          await s.setRunId(order.id, `wrun_tied_${k}`);
+          expect(await s.transition(order.id, 'running')).toBe(true);
+          tied.push(order.id);
+        }
+        const later = await create();
+        await s.transition(later.id, 'paid', { paidAt: new Date(at.getTime() + 1000) });
+        await s.setRunId(later.id, 'wrun_later');
+        const inOrder = [...tied].sort();
+        const page = (orders: Order[]) => orders.map((o) => o.id);
+
+        const first = await s.runsOverdue(ahead(minutes(1)), 2);
+        expect(page(first)).toEqual(inOrder.slice(0, 2));
+        const last = first.at(-1)!;
+        expect(page(await s.runsOverdue(ahead(minutes(1)), 10, { paidAt: last.paidAt!, id: last.id }))).toEqual([inOrder[2], later.id]);
+        expect(await s.runsOverdue(ahead(minutes(1)), 10, { paidAt: new Date(at.getTime() + 1000), id: later.id })).toEqual([]);
+      });
+
       describe('at most as many as asked, the oldest first', () => {
         const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
         /** Three orders, each made (and moved through its route) a little after the one before. */

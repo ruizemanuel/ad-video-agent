@@ -187,6 +187,9 @@ export type PrecheckResult =
   | { ok: true; thin: boolean | null; demoLinks: string[] }
   | { ok: false; code: 'invalid_url' | 'unreachable' | 'blocked' | 'login_wall' | 'inadmissible'; reason: string };
 
+/** Where a list of paid orders, by payment and then id, goes on from: the payment time and the id of its last order. */
+export type OrderCursor = { paidAt: Date; id: string };
+
 /** `buy` is money out of the buy wallet; `card` is what models and music cost. */
 export type CostKind = 'buy' | 'card';
 
@@ -260,8 +263,11 @@ export interface OrderStore {
   ordersAwaitingSettlement(olderThan: Date, limit: number): Promise<Order[]>;
   /** The orders `paid` with no run, paid before `olderThan`. */
   paidWithoutRun(olderThan: Date, limit: number): Promise<Order[]>;
-  /** The orders whose run should be over: `paid` with a run, or `running`, paid before `paidBefore`, by their payment. */
-  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]>;
+  /**
+   * The orders whose run should be over: `paid` with a run, or `running`, paid before `paidBefore`, by their payment and
+   * then their id. With `after`, those that come after that order in this order: the next page.
+   */
+  runsOverdue(paidBefore: Date, limit: number, after?: OrderCursor): Promise<Order[]>;
   /** The orders `refund_failed`. */
   refundFailures(limit: number): Promise<Order[]>;
   /** The cleanup's: the orders `delivered`, `refunded` or `unpaid` made before `createdBefore`, oldest first. */

@@ -16,9 +16,11 @@ import { cleanup } from '../src/maintenance/cleanup';
 import {
   AWAITING_SETTLEMENT_PER_PASS,
   OVERDUE_RUNS_PER_PASS,
+  OVERDUE_RUNS_SCANNED_PER_PASS,
   PAID_WITHOUT_RUN_PER_PASS,
   reconcile,
   REFUND_FAILURES_PER_PASS,
+  RUN_DEFER_CEILING_MS,
   STALLED_REFUNDS_PER_PASS,
   UNSIGNED_REFUNDS_PER_PASS,
   type ReconcileDeps,
@@ -411,18 +413,84 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', 'unreadable');
   });
 
-  it.each(['running', 'pending'])('leaves alone, and logs every pass, an order whose run says it is %s', async (run) => {
+  it('leaves alone, and logs every pass, an order whose run says it is running', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const order = await taken();
-    runs.set('wrun_lost', run);
+    runs.set('wrun_lost', 'running');
 
-    for (const now of [after(2 * HOUR + MINUTE), after(2 * HOUR + 11 * MINUTE)]) {
+    for (const now of [after(2 * HOUR + MINUTE), after(2 * HOUR + 11 * MINUTE), after(RUN_DEFER_CEILING_MS - MINUTE)]) {
       logged.mockClear();
       expect((await reconcile(deps(), now)).runLost).toEqual([]);
-      expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', run);
+      expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', 'running');
     }
     expect(await statusOf(order)).toBe('running');
     expect(refunds.prepareCalls).toBe(0);
+  });
+
+  it('refunds an order whose run is still pending: its first step never ran, and a run that starts later finds the order taken', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken('paid');
+    runs.set('wrun_lost', 'pending');
+
+    expect((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'run-lost' });
+    expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'paid', 'pending');
+  });
+
+  it('refunds an order whose run still says it is running a day after the payment: no live run waits that long', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'running');
+
+    expect(RUN_DEFER_CEILING_MS).toBe(24 * HOUR);
+    expect((await reconcile(deps(), after(RUN_DEFER_CEILING_MS + MINUTE))).runLost).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'run-lost' });
+    expect(refunds.broadcasts).toHaveLength(1);
+    expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'running', 'running');
+  });
+
+  it('does not let orders whose run is still at work use up the pass: a lost one paid after them is refunded in the same pass', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const busy: Order[] = [];
+    for (let k = 0; k <= OVERDUE_RUNS_PER_PASS; k++) {
+      busy.push(await taken('running', `wrun_busy_${k}`));
+      runs.set(`wrun_busy_${k}`, 'running');
+    }
+    const lost = await taken('running', 'wrun_lost');
+    runs.set('wrun_lost', 'failed');
+
+    expect((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost).toEqual([lost.id]);
+    expect(await statusOf(lost)).toBe('refunding');
+    for (const order of busy) expect(await statusOf(order)).toBe('running');
+  });
+
+  it('looks at a bounded number of overdue orders in one pass, however many are still at work', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // More overdue orders than one pass may look at, every one with a run at work: a list the store pages through.
+    const overdue: Order[] = Array.from({ length: OVERDUE_RUNS_SCANNED_PER_PASS + 25 }, (_, k) => ({
+      ...({} as Order),
+      id: `ord_${String(k).padStart(24, '0')}`,
+      status: 'running',
+      runId: `wrun_${k}`,
+      paidAt: new Date(Date.now() - 3 * HOUR + k),
+    }));
+    const pages = vi.fn(async (paidBefore: Date, limit: number, cursor?: { paidAt: Date; id: string }) =>
+      overdue.filter((o) => o.paidAt! < paidBefore && (cursor === undefined || o.paidAt! > cursor.paidAt || (o.paidAt!.getTime() === cursor.paidAt.getTime() && o.id > cursor.id))).slice(0, limit),
+    );
+    vi.spyOn(store, 'runsOverdue').mockImplementation(pages);
+    const asked = vi.fn(async (_runId: string) => 'running' as const);
+
+    expect((await reconcile(deps(buy, { runStatus: asked }), after(MINUTE))).runLost).toEqual([]);
+    expect(OVERDUE_RUNS_SCANNED_PER_PASS).toBeGreaterThan(OVERDUE_RUNS_PER_PASS);
+    expect(OVERDUE_RUNS_SCANNED_PER_PASS).toBeLessThanOrEqual(200);
+    // It asked about the oldest ones, each once, and about no more than it may.
+    expect(asked.mock.calls.map(([runId]) => runId)).toEqual(overdue.slice(0, OVERDUE_RUNS_SCANNED_PER_PASS).map((o) => o.runId));
+    // Page after page, each picking up after the last order of the one before, none longer than a pass's share.
+    const cursors = pages.mock.calls.map((call) => call[2]?.id ?? null);
+    expect(cursors).toEqual(
+      Array.from({ length: OVERDUE_RUNS_SCANNED_PER_PASS / OVERDUE_RUNS_PER_PASS }, (_, k) => (k === 0 ? null : overdue[k * OVERDUE_RUNS_PER_PASS - 1]!.id)),
+    );
+    for (const call of pages.mock.calls) expect(call[1]).toBeLessThanOrEqual(OVERDUE_RUNS_PER_PASS);
   });
 
   it('leaves alone an order paid less than two hours ago, without asking about its run', async () => {
@@ -504,7 +572,8 @@ describe('reconcile: one pass', () => {
     for (const name of ['stalledRefunds', 'unsignedRefunds', 'runsOverdue', 'refundFailures', 'ordersAwaitingSettlement', 'paidWithoutRun'] as const) {
       const real = (store[name] as (...args: unknown[]) => Promise<Order[]>).bind(store);
       vi.spyOn(store, name).mockImplementation((async (...args: unknown[]) => {
-        calls.push([name, args.at(-1)]);
+        // The limit comes after the cut, but for the refund failures, which have no cut.
+        calls.push([name, name === 'refundFailures' ? args[0] : args[1]]);
         return real(...args);
       }) as never);
     }

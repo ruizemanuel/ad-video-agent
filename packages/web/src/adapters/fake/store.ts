@@ -14,6 +14,7 @@ import {
   type NewRefund,
   type NewVmTask,
   type Order,
+  type OrderCursor,
   type OrderStatus,
   type OrderStore,
   type PaymentPatch,
@@ -163,10 +164,18 @@ export class FileStore implements OrderStore {
     return (await this.all<Order>('orders')).filter(keep).sort(byAge);
   }
 
-  /** The orders `keep` takes that were paid before `t`, the earliest payment first, `limit` at most. */
-  private async paidBefore(t: Date, limit: number, keep: (order: Order) => boolean): Promise<Order[]> {
-    const paid = (await this.all<Order>('orders')).filter((o) => keep(o) && o.paidAt !== null && o.paidAt < t);
-    return paid.sort((a, b) => (a.paidAt?.getTime() ?? 0) - (b.paidAt?.getTime() ?? 0)).slice(0, limit);
+  /**
+   * The orders `keep` takes that were paid before `t`, by payment and then id, `limit` at most; with `after`, only those
+   * that come after that cursor.
+   */
+  private async paidBefore(t: Date, limit: number, keep: (order: Order) => boolean, after?: OrderCursor): Promise<Order[]> {
+    const position = (o: Order): [number, string] => [o.paidAt?.getTime() ?? 0, o.id];
+    const compare = ([at, id]: [number, string], [otherAt, otherId]: [number, string]): number => at - otherAt || (id < otherId ? -1 : id > otherId ? 1 : 0);
+    const from: [number, string] | undefined = after === undefined ? undefined : [after.paidAt.getTime(), after.id];
+    const paid = (await this.all<Order>('orders')).filter(
+      (o) => keep(o) && o.paidAt !== null && o.paidAt < t && (from === undefined || compare(position(o), from) > 0),
+    );
+    return paid.sort((a, b) => compare(position(a), position(b))).slice(0, limit);
   }
 
   // Orders.
@@ -470,8 +479,8 @@ export class FileStore implements OrderStore {
     return this.locked(() => this.paidBefore(olderThan, limit, (o) => o.status === 'paid' && o.runId === null));
   }
 
-  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]> {
-    return this.locked(() => this.paidBefore(paidBefore, limit, (o) => (o.status === 'paid' && o.runId !== null) || o.status === 'running'));
+  runsOverdue(paidBefore: Date, limit: number, after?: OrderCursor): Promise<Order[]> {
+    return this.locked(() => this.paidBefore(paidBefore, limit, (o) => (o.status === 'paid' && o.runId !== null) || o.status === 'running', after));
   }
 
   ordersToExpire(createdBefore: Date): Promise<Order[]> {

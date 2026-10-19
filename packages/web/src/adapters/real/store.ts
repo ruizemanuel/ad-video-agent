@@ -13,6 +13,7 @@ import {
   type NewRefund,
   type NewVmTask,
   type Order,
+  type OrderCursor,
   type OrderStatus,
   type OrderStore,
   type PaymentPatch,
@@ -339,12 +340,13 @@ export class DrizzleStore implements OrderStore {
       .limit(limit);
   }
 
-  runsOverdue(paidBefore: Date, limit: number): Promise<Order[]> {
+  runsOverdue(paidBefore: Date, limit: number, after?: OrderCursor): Promise<Order[]> {
+    const next = after === undefined ? undefined : or(gt(orders.paidAt, after.paidAt), and(eq(orders.paidAt, after.paidAt), gt(orders.id, after.id)));
     return this.db
       .select()
       .from(orders)
-      .where(and(or(and(eq(orders.status, 'paid'), isNotNull(orders.runId)), eq(orders.status, 'running')), lt(orders.paidAt, paidBefore)))
-      .orderBy(asc(orders.paidAt))
+      .where(and(or(and(eq(orders.status, 'paid'), isNotNull(orders.runId)), eq(orders.status, 'running')), lt(orders.paidAt, paidBefore), next))
+      .orderBy(asc(orders.paidAt), asc(orders.id))
       .limit(limit);
   }
 

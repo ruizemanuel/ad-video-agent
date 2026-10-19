@@ -12,7 +12,7 @@
 // Each pass takes the oldest orders first, a bounded number of them, and the refunds' passes go before the payments'.
 import { markPaidAndStart, startRun, type RunStatus } from '../payments/orders';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
-import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type Order, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
+import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type Order, type OrderCursor, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
 
 const MINUTE_MS = 60_000;
 /** How old an order has to be before this looks at it: the request that made it has had time to finish. */
@@ -34,16 +34,27 @@ export const UNSIGNED_REFUND_AFTER_MS = 2 * 60 * MINUTE_MS;
 // passes that follow, never all in one.
 export const STALLED_REFUNDS_PER_PASS = 20;
 export const UNSIGNED_REFUNDS_PER_PASS = 50;
+/** The overdue orders one pass refunds (or tries to) at most. Those whose run is still at work do not count. */
 export const OVERDUE_RUNS_PER_PASS = 10;
+/**
+ * The overdue orders one pass looks at at most, each with a read of its run: those whose run is still at work are passed
+ * over, and the pass reads on past them, oldest first, up to this.
+ */
+export const OVERDUE_RUNS_SCANNED_PER_PASS = 100;
 export const REFUND_FAILURES_PER_PASS = 50;
 export const AWAITING_SETTLEMENT_PER_PASS = 25;
 export const PAID_WITHOUT_RUN_PER_PASS = 25;
 
+/**
+ * How long after its payment a run that says it is `running` still holds its order's refund back. Far past every wait of
+ * a live run (the VM tasks, the music, the reviews, the refund's own watch, a step retried later): a run still `running`
+ * a day on has lost its way (a wake-up that never came), and the order is refunded all the same. That is safe: a run
+ * that goes on cannot deliver a `refunding` order, and the refund it would sign is the one kept here.
+ */
+export const RUN_DEFER_CEILING_MS = 24 * 60 * MINUTE_MS;
+
 /** Why the order of a run that was lost is refunded: its `failureReason`, and its refund's. */
 const RUN_LOST = 'run-lost';
-
-/** What a run still at work reports. */
-const AT_WORK: readonly RunStatus[] = ['pending', 'running'];
 
 export type ReconcileDeps = {
   store: Pick<
@@ -134,28 +145,63 @@ async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' 
 /**
  * A paid order whose run should be over and has not let go of it: the run died with the order still `paid` or `running`
  * (the platform failed or cancelled it, the store was down for longer than its refund's watch, Workflow failed before the
- * first step). It is logged, and refunded as `run-lost` unless its run reports it is still at work: the order moves to
- * `refunding` and its refund is signed, kept and sent, as the flow does it. A refund that cannot be paid leaves it
- * `refund_failed` (the pass after this one logs it); the pass for stalled refunds looks the refund up later. A run
- * that cannot be asked does not hold the refund up: two hours after the payment, no run is still at work on its order,
- * and if one were, it would find the refund kept here and send the same one.
+ * first step and the run stays `pending`). It is logged, and refunded as `run-lost` unless its run reports `running`,
+ * and then only until RUN_DEFER_CEILING_MS after the payment: the order moves to `refunding` and its refund is signed,
+ * kept and sent, as the flow does it. A refund that cannot be paid leaves it `refund_failed` (the pass after this one
+ * logs it); the pass for stalled refunds looks the refund up later. A run that is `pending`, or cannot be asked, does not
+ * hold the refund up: two hours after the payment, no run that has started is still waiting to, and a run that starts
+ * after this only takes a `paid` order (it ends as a duplicate); one that was at work after all finds the refund kept
+ * here and sends the same one.
+ *
+ * `deferred`: its run is at work, and the order was left as it was. `refunded`: this moved the order on (its refund was
+ * signed and sent, or could not be paid). `tried`: anything else (it moved on meanwhile, or something failed and was
+ * logged): the order was dealt with for this pass.
  */
-async function refundLostRun(order: Order, deps: ReconcileDeps): Promise<boolean> {
+async function refundLostRun(order: Order, deps: ReconcileDeps, now: Date): Promise<'deferred' | 'refunded' | 'tried'> {
   const { store, refunds, refundDailyCapUsd, runStatus } = deps;
-  let refunded = false;
+  let outcome: 'deferred' | 'refunded' | 'tried' = 'tried';
   await attempt(order.id, async () => {
     const run = order.runId === null ? 'missing' : await runStatus(order.runId);
     console.error('[order_stuck]', order.id, order.status, run);
-    if (AT_WORK.includes(run)) return;
+    const pastCeiling = order.paidAt !== null && order.paidAt.getTime() <= now.getTime() - RUN_DEFER_CEILING_MS;
+    if (run === 'running' && !pastCeiling) {
+      outcome = 'deferred';
+      return;
+    }
     const prepared = await prepareRefund(order.id, RUN_LOST, { store, refunds, dailyCapUsd: refundDailyCapUsd });
     // Its run moved it on meanwhile (delivered it, or refunded it): nothing of it is this pass's.
     if ('failed' in prepared && prepared.failed === 'not-refundable') return;
-    refunded = true;
+    outcome = 'refunded';
     if ('failed' in prepared) return;
     await store.setStep(order.id, 'refund', 'running');
     await broadcastRefund(order.id, { store, refunds });
   });
-  return refunded;
+  return outcome;
+}
+
+/**
+ * The pass over the paid orders whose run should be over, oldest payment first, page after page: an order whose run is
+ * still at work is passed over without using up the pass, until OVERDUE_RUNS_PER_PASS orders were dealt with, the list
+ * ends, or OVERDUE_RUNS_SCANNED_PER_PASS orders were looked at.
+ */
+async function refundLostRuns(deps: ReconcileDeps, now: Date, paidBefore: Date, result: ReconcileResult): Promise<void> {
+  let dealt = 0;
+  let scanned = 0;
+  let after: OrderCursor | undefined;
+  while (dealt < OVERDUE_RUNS_PER_PASS && scanned < OVERDUE_RUNS_SCANNED_PER_PASS) {
+    const asked = Math.min(OVERDUE_RUNS_PER_PASS, OVERDUE_RUNS_SCANNED_PER_PASS - scanned);
+    const page = await deps.store.runsOverdue(paidBefore, asked, after);
+    for (const order of page) {
+      scanned += 1;
+      const outcome = await refundLostRun(order, deps, now);
+      if (outcome === 'refunded') result.runLost.push(order.id);
+      if (outcome !== 'deferred') dealt += 1;
+      if (dealt === OVERDUE_RUNS_PER_PASS) return;
+    }
+    const last = page.at(-1);
+    if (page.length < asked || last === undefined || last.paidAt === null) return;
+    after = { paidAt: last.paidAt, id: last.id };
+  }
 }
 
 export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
@@ -178,9 +224,7 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
   }
   // After the unsigned refunds: an order whose refund this pass moved to `refunding` and then could not sign (the chain
   // could not be read) is handed to a person by the next pass, as any unsigned refund is, and not by this one.
-  for (const order of await store.runsOverdue(runsOverBefore, OVERDUE_RUNS_PER_PASS)) {
-    if (await refundLostRun(order, deps)) result.runLost.push(order.id);
-  }
+  await refundLostRuns(deps, now, runsOverBefore, result);
   // After every pass that may hand an order to a person, so that it is in this pass's log.
   for (const order of await store.refundFailures(REFUND_FAILURES_PER_PASS)) {
     if (await landedLate(order.id, { store, refunds })) continue;
