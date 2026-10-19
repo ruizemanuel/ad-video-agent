@@ -249,6 +249,15 @@ export class FileStore implements OrderStore {
     return this.changeOrder(id, (order) => ({ ...order, runId }));
   }
 
+  setRunIdIfNone(id: string, runId: string): Promise<boolean> {
+    return this.locked(async () => {
+      const order = await this.read<Order>('orders', id);
+      if (!order || order.runId !== null) return false;
+      await this.write('orders', id, { ...order, runId });
+      return true;
+    });
+  }
+
   setVmToken(orderId: string, hash: string, expiresAt: Date): Promise<boolean> {
     return this.locked(async () => {
       const order = await this.read<Order>('orders', orderId);

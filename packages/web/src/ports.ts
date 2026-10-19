@@ -205,6 +205,13 @@ export interface OrderStore {
   setDeliverables(id: string, list: Deliverable[]): Promise<void>;
   /** Not in the plan's list: a paid order has to remember its run before the flow moves it to `running`. */
   setRunId(id: string, runId: string): Promise<void>;
+  /**
+   * Keeps `runId` only if the order has no run id yet, in one step: of several calls at once, one writes and says true;
+   * the rest, and a call for an order that does not exist, leave everything as it is and say false. What starts a run
+   * from outside the flow (the paying request, the reconciliation) uses it, so a duplicate run it started never takes the
+   * place of the run that holds the order; only the flow itself, through `setRunId`, overwrites.
+   */
+  setRunIdIfNone(id: string, runId: string): Promise<boolean>;
 
   /** `usd` is kept to the millionth of a dollar. An order id of 'precheck' is for what the free pre-check costs. */
   addCost(orderId: string, item: string, usd: number, kind: CostKind): Promise<void>;

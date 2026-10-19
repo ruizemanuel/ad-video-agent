@@ -115,6 +115,16 @@ export class DrizzleStore implements OrderStore {
     await this.db.update(orders).set({ runId }).where(eq(orders.id, id));
   }
 
+  // One statement: of several calls at once, only one finds the column empty.
+  async setRunIdIfNone(id: string, runId: string): Promise<boolean> {
+    const written = await this.db
+      .update(orders)
+      .set({ runId })
+      .where(and(eq(orders.id, id), isNull(orders.runId)))
+      .returning({ id: orders.id });
+    return written.length > 0;
+  }
+
   async addCost(orderId: string, item: string, usd: number, kind: CostKind): Promise<void> {
     await this.db.insert(costs).values({ orderId, item, usd: roundUsd(usd).toFixed(6), kind, createdAt: new Date() });
   }

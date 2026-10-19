@@ -69,7 +69,7 @@ export type ReconcileDeps = {
     | 'getOrder'
     | 'transition'
     | 'setStep'
-    | 'setRunId'
+    | 'setRunIdIfNone'
     | 'getRefund'
     | 'insertRefund'
     | 'updateRefund'

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { FileStore } from '../src/adapters/fake/store';
-import { markPaidAndStart } from '../src/payments/orders';
+import { markPaidAndStart, startRun } from '../src/payments/orders';
 import { formatPrice, routeConfig, TOKENS } from '../src/payments/x402';
 import { orderWorkflow } from '../src/workflows/order';
 
@@ -109,5 +109,55 @@ describe('markPaidAndStart', () => {
     expect(await markPaidAndStart({ asset: TOKENS.USDT.address, payer, nonce, txHash }, { store })).toBe('already');
     expect(start).not.toHaveBeenCalled();
     expect((await store.getOrder(order.id))!.status).toBe('unpaid');
+  });
+});
+
+describe('startRun', () => {
+  const dirs: string[] = [];
+  afterAll(async () => {
+    await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  let store: FileStore;
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const dir = await mkdtemp(join(tmpdir(), 'start-run-'));
+    dirs.push(dir);
+    store = new FileStore(dir);
+  });
+
+  const seed = async () => {
+    const { order } = await store.createOrder({
+      request: { url: 'https://example.com', audio: 'music' },
+      network: 'eip155:42220',
+      asset: TOKENS.USDT.address,
+      payer: '0x1234567890AbcdEF1234567890aBcdef12345678',
+      amount: 5_000_000n,
+      nonce: `0x${'AB'.repeat(32)}`,
+      validAfter: 0n,
+      validBefore: 1_790_000_000n,
+    });
+    await store.transition(order.id, 'paid');
+    return order;
+  };
+
+  it("keeps the id of the run it started on an order that has none", async () => {
+    const order = await seed();
+    await startRun(order.id, store);
+    expect(start).toHaveBeenCalledWith(orderWorkflow, [order.id]);
+    expect((await store.getOrder(order.id))?.runId).toBe('wrun_unit');
+  });
+
+  it("never writes over the id of a run that got there first (an overlapping reconciliation's duplicate)", async () => {
+    const order = await seed();
+    // While this call is starting its run, another one starts its own and keeps its id.
+    vi.mocked(start).mockImplementationOnce(async () => {
+      await store.setRunIdIfNone(order.id, 'wrun_real');
+      return { runId: 'wrun_duplicate' } as Awaited<ReturnType<typeof start>>;
+    });
+
+    await startRun(order.id, store);
+
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'paid', runId: 'wrun_real' });
   });
 });

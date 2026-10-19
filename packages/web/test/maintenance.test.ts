@@ -353,6 +353,20 @@ describe('reconcile: paid orders without a run', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it("does not write over the run id of an overlapping pass that started the order's run first", async () => {
+    const order = await paid();
+    // This pass read the order with no run; before it keeps its run's id, another pass starts a run and keeps its own.
+    vi.mocked(start).mockImplementationOnce(async () => {
+      await store.setRunIdIfNone(order.id, 'wrun_real');
+      return { runId: 'wrun_duplicate' } as Awaited<ReturnType<typeof start>>;
+    });
+
+    await reconcile(deps(), after(6 * MINUTE));
+
+    // Its duplicate ends as one; had the id been overwritten, the run still at work would be refunded as lost.
+    expect((await store.getOrder(order.id))!.runId).toBe('wrun_real');
+  });
+
   it('goes on with the other orders when a run cannot be started for one', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const first = await paid();

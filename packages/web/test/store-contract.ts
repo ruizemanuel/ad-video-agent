@@ -260,6 +260,32 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         await s.setRunId(order.id, 'wrun_abc');
         expect(await s.getOrder(order.id)).toMatchObject({ status: 'paid', runId: 'wrun_abc' });
       });
+
+      it('records a run id only while the order has none: the first write wins', async () => {
+        const order = await orderIn('paid');
+        expect(await s.setRunIdIfNone(order.id, 'wrun_first')).toBe(true);
+        expect(await s.setRunIdIfNone(order.id, 'wrun_second')).toBe(false);
+        expect(await s.getOrder(order.id)).toMatchObject({ status: 'paid', runId: 'wrun_first' });
+      });
+
+      it('leaves a run id that setRunId wrote when a conditional write comes after it', async () => {
+        const order = await orderIn('paid');
+        await s.setRunId(order.id, 'wrun_flow');
+        expect(await s.setRunIdIfNone(order.id, 'wrun_reconcile')).toBe(false);
+        expect((await s.getOrder(order.id))?.runId).toBe('wrun_flow');
+      });
+
+      it('writes one run id when several come at once, and says yes to one only', async () => {
+        const order = await orderIn('paid');
+        const results = await Promise.all(['wrun_a', 'wrun_b', 'wrun_c'].map((runId) => s.setRunIdIfNone(order.id, runId)));
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect(['wrun_a', 'wrun_b', 'wrun_c'][results.indexOf(true)]).toBe((await s.getOrder(order.id))?.runId);
+      });
+
+      it('says no to a conditional run id for an order that does not exist', async () => {
+        expect(await s.setRunIdIfNone('ord_doesnotexist', 'wrun')).toBe(false);
+        expect(await s.getOrder('ord_doesnotexist')).toBeNull();
+      });
     });
 
     describe('steps, warnings and deliverables', () => {

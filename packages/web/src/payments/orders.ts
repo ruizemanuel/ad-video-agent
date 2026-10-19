@@ -13,15 +13,21 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long the delivery links work, from the delivery. */
 const LINK_DAYS = 30;
 
-export type MarkPaidDeps = { store: Pick<OrderStore, 'findOrderByPayment' | 'transition' | 'setStep' | 'setRunId'> };
+export type MarkPaidDeps = { store: Pick<OrderStore, 'findOrderByPayment' | 'transition' | 'setStep' | 'setRunIdIfNone'> };
 
 /** A payment that was found settled. `txHash` is null when it was found on the chain, which does not say which transaction. */
 export type FoundPayment = Pick<SettledPayment, 'asset' | 'payer' | 'nonce'> & { txHash: string | null };
 
-/** Starts the run of a paid order and keeps its id. The caller has the right to start it: nothing here checks. */
-export async function startRun(orderId: string, store: Pick<OrderStore, 'setRunId'>): Promise<void> {
+/**
+ * Starts the run of a paid order and keeps its id, unless the order already has one. The caller has the right to start
+ * it: nothing here checks. Two callers can start a run for the same order (two reconciliations at once); the second run
+ * ends as a duplicate (see orderWorkflow), and its id must not take the place of the run that holds the order, or the
+ * reconciliation would take that run for lost. So the id is kept only if none is there, and the loser leaves the order
+ * as it is.
+ */
+export async function startRun(orderId: string, store: Pick<OrderStore, 'setRunIdIfNone'>): Promise<void> {
   const run = await start(orderWorkflow, [orderId]);
-  await store.setRunId(orderId, run.runId);
+  await store.setRunIdIfNone(orderId, run.runId);
 }
 
 /**

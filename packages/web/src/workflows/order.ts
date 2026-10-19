@@ -411,7 +411,8 @@ async function startOrder(
   const moved = await store.transition(orderId, 'running', { runId });
   const order = await store.getOrder(orderId);
   // A second try of this step finds the order taken already, by this run: it holds the order's token, so no other run
-  // can have taken it, whatever run id a reconciliation wrote since (setRunId is unconditional). It writes its own back.
+  // can have taken it, whatever run id was written since (startRun only writes one where there is none; setRunId, which
+  // this uses, is unconditional). It writes its own back.
   const retried = !moved && order?.status === 'running' && (order.runId === runId || getStepMetadata().attempt > 1);
   if (order === null || (!moved && !retried)) return { status: 'taken', runId: order?.runId ?? '' };
   if (order.runId !== runId) await store.setRunId(orderId, runId);
