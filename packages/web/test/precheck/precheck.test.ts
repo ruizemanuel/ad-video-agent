@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { FakeLlm } from '../../src/adapters/fake/llm';
 import { FileStore } from '../../src/adapters/fake/store';
 import { FetchFailed, type FetchedPage } from '../../src/precheck/fetch-page';
-import { precheck, PRECHECK_MAX_AGE_MS, type PrecheckDeps } from '../../src/precheck/precheck';
+import { precheck, PrecheckCapReached, PRECHECK_MAX_AGE_MS, type PrecheckDeps } from '../../src/precheck/precheck';
 import { UrlRejected } from '../../src/precheck/url-guard';
 import { ModelOutputInvalid } from '../../src/ports';
 
@@ -38,7 +38,8 @@ beforeEach(async () => {
   llm = new FakeLlm();
   fetchPage = vi.fn<PrecheckDeps['fetchPage']>();
   serve(richHtml);
-  deps = { store, llm, fetchPage };
+  // What the checks may cost in a day: PRECHECK_DAILY_CAP_USD's default.
+  deps = { store, llm, fetchPage, dailyCapUsd: 2 };
 });
 
 describe('precheck', () => {
@@ -276,5 +277,50 @@ describe('precheck', () => {
       expect(put).toHaveBeenCalledExactlyOnceWith(expect.any(String), good);
       expect(fetchPage).toHaveBeenCalledTimes(5);
     });
+  });
+});
+
+describe('the daily cap on what the checks cost', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks no model once what the checks cost today reaches the cap, keeps nothing, and asks again once it allows', async () => {
+    await store.addCost('precheck', 'llm:classify', 2, 'card');
+    await expect(precheck(U, deps)).rejects.toBeInstanceOf(PrecheckCapReached);
+    expect(llm.calls.classifySite).toBe(0);
+
+    expect(await precheck(U, { ...deps, dailyCapUsd: 3 })).toMatchObject({ ok: true });
+    expect(llm.calls.classifySite).toBe(1);
+  });
+
+  it('still answers what it already judged, which costs nothing', async () => {
+    expect(await precheck(U, deps)).toMatchObject({ ok: true });
+    await store.addCost('precheck', 'llm:classify', 2, 'card');
+    expect(await precheck(U, deps)).toMatchObject({ ok: true });
+    expect(llm.calls.classifySite).toBe(1);
+  });
+
+  it('still refuses, for free, a page that needs no model to refuse', async () => {
+    await store.addCost('precheck', 'llm:classify', 2, 'card');
+    serve(loginHtml);
+    expect(await precheck(U, deps)).toMatchObject({ ok: false, code: 'login_wall' });
+  });
+
+  it('counts only what the checks cost since the start of the day, UTC, and not what the orders cost', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-18T23:59:00Z') });
+    await store.addCost('precheck', 'llm:classify', 2, 'card');
+    await store.addCost('ord_someorder', 'llm:director', 5, 'card');
+    vi.setSystemTime(new Date('2026-10-19T00:01:00Z'));
+    await store.addCost('ord_someorder', 'llm:director', 5, 'card');
+    expect(await precheck(U, deps)).toMatchObject({ ok: true });
+  });
+
+  it('says when to try again: at the start of the next day, UTC', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-18T23:00:00Z') });
+    await store.addCost('precheck', 'llm:classify', 2, 'card');
+    const error = await precheck(U, deps).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PrecheckCapReached);
+    expect((error as PrecheckCapReached).retryAfterSeconds).toBe(3600);
   });
 });

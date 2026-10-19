@@ -66,6 +66,11 @@ const schema = z
     SPEND_CAP_PER_ORDER_USD: blank(positive.default(2.5)),
     BUY_DAILY_CAP_USD: blank(positive.default(2)),
     REFUND_DAILY_CAP_USD: blank(positive.default(10)),
+    /**
+     * What the free pre-check's model calls may cost in a UTC day, every quote together: anyone can ask for one. A small
+     * model's verdict costs well under a tenth of a cent, so the default is thousands of new sites a day.
+     */
+    PRECHECK_DAILY_CAP_USD: blank(positive.default(2)),
     CELO_RPC_URL: blank(httpUrl.default('https://forno.celo.org')),
     /**
      * The ERC-8021 tag. The hackathon assigns it, so it is optional: without it, nothing is tagged. Its format is the

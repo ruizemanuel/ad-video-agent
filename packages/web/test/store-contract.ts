@@ -341,6 +341,16 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.buySpendSince(ago(minutes(1)))).toBe(0);
       });
 
+      it('sums what the pre-check cost since a date, and no order\'s costs', async () => {
+        const order = await create();
+        await s.addCost('precheck', 'llm:classify', 0.0004, 'card');
+        await s.addCost('precheck', 'llm:classify', 0.0007, 'card');
+        await s.addCost(order.id, 'llm:director', 0.2, 'card');
+        await s.addCost(order.id, 'buy:vm', 0.067, 'buy');
+        expect(await s.precheckSpendSince(ago(minutes(1)))).toBe(0.0011);
+        expect(await s.precheckSpendSince(ahead(minutes(1)))).toBe(0);
+      });
+
       it('rounds to the millionth of a dollar, so a sum is the same on every store', async () => {
         const order = await create();
         for (let i = 0; i < 10; i++) await s.addCost(order.id, 'llm:x', 0.1, 'card');

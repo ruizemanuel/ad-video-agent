@@ -274,6 +274,10 @@ export class FileStore implements OrderStore {
     return this.locked(() => this.sumCosts((cost) => cost.kind === 'buy' && cost.createdAt >= t));
   }
 
+  precheckSpendSince(t: Date): Promise<number> {
+    return this.locked(() => this.sumCosts((cost) => cost.orderId === 'precheck' && cost.kind === 'card' && cost.createdAt >= t));
+  }
+
   // Payments.
 
   insertPaymentIntent(r: NewPaymentIntent): Promise<boolean> {

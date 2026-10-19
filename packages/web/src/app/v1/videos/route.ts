@@ -1,7 +1,8 @@
 // POST /v1/videos: order an ad video for a website. Without a payment it is a free quote: the body is checked, the
-// site goes through the pre-check, and the answer is a 402 with the price (or a 400/422 that asks for nothing). With
-// an x402 payment that the facilitator verifies, the order is made and the answer is 202 with where to follow it;
-// only then is the payment settled, and only a settled payment starts the order's run.
+// site and each of its extra pages go through the pre-check, and the answer is a 402 with the price (or a 400/422 that
+// asks for nothing, or a 503 when the check cannot be made now). With an x402 payment that the facilitator verifies, the
+// order is made and the answer is 202 with where to follow it; only then is the payment settled, and only a settled
+// payment starts the order's run.
 import { OrderRequestSchema } from '@app/core';
 import { decodePaymentSignatureHeader } from '@x402/core/http';
 import { withX402 } from '@x402/next';
@@ -9,15 +10,55 @@ import { NextRequest, NextResponse } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
 import { authorizationWindowProblem, createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
-import { precheck } from '../../../precheck/precheck';
-import { ModelOutputInvalid, type OrderRequest, type PrecheckResult } from '../../../ports';
+import { precheck, PrecheckCapReached, type PrecheckDeps } from '../../../precheck/precheck';
+import { ModelCallFailed, ModelOutputInvalid, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
 
 const ROUTE = '/v1/videos';
 const THIN_HINT = 'Your site shows little of the product. Adding up to 3 public pages of the app as extraUrls makes a better video.';
+/** When to ask again after the classifier failed: a minute. */
+const MODEL_RETRY_AFTER_SECONDS = 60;
 
 const NO_STORE = { 'cache-control': 'no-store' };
-const refuse = (status: number, error: string, reason: string): Response => Response.json({ error, reason }, { status, headers: NO_STORE });
+const refuse = (status: number, error: string, reason: string, headers: Record<string, string> = {}): Response =>
+  Response.json({ error, reason }, { status, headers: { ...NO_STORE, ...headers } });
+
+/** The 503 for a check that cannot be made now, with when to try again; null for an error that is not one of those. */
+function checkUnavailable(error: unknown): Response | null {
+  if (error instanceof PrecheckCapReached) {
+    const reason = 'The free site check has reached its limit for today. Try again after the time in Retry-After.';
+    return refuse(503, 'precheck_unavailable', reason, { 'retry-after': String(error.retryAfterSeconds) });
+  }
+  // The classifier answered with something that did not fit, or did not answer: there is no verdict, so no price yet.
+  if (error instanceof ModelOutputInvalid || error instanceof ModelCallFailed) {
+    return refuse(503, 'precheck_unavailable', 'The site could not be checked right now. Try again in a minute.', { 'retry-after': String(MODEL_RETRY_AFTER_SECONDS) });
+  }
+  return null;
+}
+
+/**
+ * The site and then each of its extra pages through the pre-check (each kept a day, as the site is), until one fails.
+ * The site's own result, or the answer that refuses the order: a 422 that names the page that failed, or a 503.
+ */
+async function checkPages(order: OrderRequest, deps: PrecheckDeps): Promise<{ ok: true; site: Extract<PrecheckResult, { ok: true }> } | { ok: false; answer: Response }> {
+  const pages = [order.url, ...(order.extraUrls ?? [])];
+  let site: Extract<PrecheckResult, { ok: true }> | undefined;
+  for (const [index, url] of pages.entries()) {
+    let check: PrecheckResult;
+    try {
+      check = await precheck(url, deps);
+    } catch (error) {
+      const answer = checkUnavailable(error);
+      if (answer === null) throw error;
+      return { ok: false, answer };
+    }
+    // The reasons are written for the client; an extra page's says which one it is.
+    if (!check.ok) return { ok: false, answer: refuse(422, check.code, index === 0 ? check.reason : `extraUrls[${index - 1}] (${url}): ${check.reason}`) };
+    site ??= check;
+  }
+  if (site === undefined) throw new Error('The order has no site to check.');
+  return { ok: true, site };
+}
 
 type ParsedBody = { ok: true; order: OrderRequest } | { ok: false; reason: string };
 
@@ -113,17 +154,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!body.ok) return refuse(400, 'invalid_request', body.reason);
   if (body.order.audio === 'voice') return refuse(400, 'voice_not_available_yet', 'Voice-over is not available yet. Ask for audio "music" or "none".');
 
-  // Before any payment is looked at: a site that fails the check is never charged.
+  // Before any payment is looked at: a site, or an extra page, that fails the check is never charged.
   const deps = await videosDeps();
-  let check: PrecheckResult;
-  try {
-    check = await precheck(body.order.url, { store: deps.store, llm: deps.llm, fetchPage: deps.fetchPage });
-  } catch (error) {
-    // The classifier answered with something that did not fit: the check could not be made, so there is no price yet.
-    if (error instanceof ModelOutputInvalid) return refuse(503, 'precheck_unavailable', 'The site could not be checked right now. Try again in a minute.');
-    throw error;
-  }
-  if (!check.ok) return refuse(422, check.code, check.reason);
+  const checked = await checkPages(body.order, { store: deps.store, llm: deps.llm, fetchPage: deps.fetchPage, dailyCapUsd: settings.PRECHECK_DAILY_CAP_USD });
+  if (!checked.ok) return checked.answer;
+  const check = checked.site;
 
   const res = await paidHandler(deps, settings)(request);
   // Only this request's own verified payment made an order: a payment the facilitator refused never got this far.

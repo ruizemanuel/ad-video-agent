@@ -207,6 +207,8 @@ export interface OrderStore {
   addCost(orderId: string, item: string, usd: number, kind: CostKind): Promise<void>;
   orderCost(orderId: string): Promise<number>;
   buySpendSince(t: Date): Promise<number>;
+  /** What the free pre-check (the costs of the order id 'precheck') cost since `t`. */
+  precheckSpendSince(t: Date): Promise<number>;
 
   /** False if the key already has an intent. */
   insertPaymentIntent(r: NewPaymentIntent): Promise<boolean>;

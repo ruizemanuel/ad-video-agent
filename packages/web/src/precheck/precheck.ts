@@ -1,7 +1,7 @@
 // The free check that runs before a client is asked to pay: the address answers, it is a real page and not a wall,
 // and the site may be made into an ad. It also says whether the site shows little of the product, which is a
 // warning to the client and never a reason to refuse. It costs one fetch and, for a site it has not seen in the last
-// 24 hours, one call to a small model.
+// 24 hours, one call to a small model: anyone can ask for it, so what those calls cost in a UTC day is capped.
 import { createHash } from 'node:crypto';
 import { detectBlocked, findDemoLinks } from '@app/core';
 import { ModelOutputInvalid, type LlmPort, type OrderStore, type PrecheckResult, type SiteClassification } from '../ports';
@@ -10,10 +10,26 @@ import { FetchFailed, type FetchedPage } from './fetch-page';
 import { UrlRejected } from './url-guard';
 
 export type PrecheckDeps = {
-  store: Pick<OrderStore, 'getPrecheck' | 'putPrecheck' | 'addCost'>;
+  store: Pick<OrderStore, 'getPrecheck' | 'putPrecheck' | 'addCost' | 'precheckSpendSince'>;
   llm: Pick<LlmPort, 'classifySite'>;
   fetchPage: (url: string) => Promise<FetchedPage>;
+  /** PRECHECK_DAILY_CAP_USD: what the classifier calls of the checks may cost in a UTC day, every check together. */
+  dailyCapUsd: number;
 };
+
+/**
+ * What the checks cost today has reached the daily cap: the model is not asked, and nothing is kept. `retryAfterSeconds`
+ * is how long until the next UTC day, when the cap starts again.
+ */
+export class PrecheckCapReached extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super('The pre-checks have reached their daily cost cap.');
+    this.name = 'PrecheckCapReached';
+  }
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const startOfUtcDay = (at: Date): Date => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
 
 /** How long an answer is kept. */
 export const PRECHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -59,6 +75,12 @@ export async function precheck(url: string, deps: PrecheckDeps): Promise<Prechec
 
   // Only a page that loaded well is judged, and only what the model judged is kept: it is what costs money. An answer
   // that did not fit was billed too, so it is recorded before it goes up (the route says the check is unavailable).
+  // Checked right before the call: several checks at once may all pass it, by a call each at most.
+  const now = new Date();
+  const today = startOfUtcDay(now);
+  if ((await deps.store.precheckSpendSince(today)) >= deps.dailyCapUsd) {
+    throw new PrecheckCapReached(Math.ceil((today.getTime() + DAY_MS - now.getTime()) / 1000));
+  }
   let verdict: SiteClassification;
   try {
     verdict = await deps.llm.classifySite({

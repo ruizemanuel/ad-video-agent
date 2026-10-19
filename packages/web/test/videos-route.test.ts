@@ -7,9 +7,10 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { getAdapters } from '../src/adapters';
 import { FakeLlm } from '../src/adapters/fake/llm';
+import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
 import { POST } from '../src/app/v1/videos/route';
-import { ModelOutputInvalid } from '../src/ports';
+import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
@@ -115,6 +116,7 @@ describe('POST /v1/videos without a payment', () => {
       const res = await POST(post({ url: site }));
       expect(res.status).toBe(503);
       expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(res.headers.get('retry-after')).toBe('60');
       expect(await res.json()).toEqual({ error: 'precheck_unavailable', reason: expect.any(String) });
       expect(await store.orderCost('precheck')).toBeCloseTo(before + 0.0007, 6);
     } finally {
@@ -123,6 +125,78 @@ describe('POST /v1/videos without a payment', () => {
     const calls = llm.calls.classifySite;
     expect((await POST(post({ url: site }))).status).toBe(402);
     expect(llm.calls.classifySite).toBe(calls + 1);
+  });
+
+  it('answers 503 with a retry hint when the classifier call fails without an answer, and asks it again next time', async () => {
+    const site = 'https://gateway-down.example/';
+    llm.classifySite = async () => {
+      throw new ModelCallFailed('classify', 'AI_APICallError', 502);
+    };
+    try {
+      const res = await POST(post({ url: site }));
+      expect(res.status).toBe(503);
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(res.headers.get('retry-after')).toBe('60');
+      expect(await res.json()).toEqual({ error: 'precheck_unavailable', reason: expect.any(String) });
+    } finally {
+      llm.classifySite = async () => ({ admissible: true, reason: 'The site is a normal business site.', usd: 0.0004 });
+    }
+    expect((await POST(post({ url: site }))).status).toBe(402);
+  });
+
+  it("answers 503, saying when to try again, once the day's checks have cost PRECHECK_DAILY_CAP_USD, and asks no model", async () => {
+    // A store of its own: the cap is over every check of the day.
+    const spent = new FileStore(await mkdtemp(join(tmpdir(), 'videos-route-cap-')));
+    await spent.addCost('precheck', 'llm:classify', 2, 'card');
+    setVideosDeps({ ...deps, store: spent });
+    try {
+      const calls = llm.calls.classifySite;
+      const res = await POST(post({ url: 'https://over-the-cap.example/' }));
+      expect(res.status).toBe(503);
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(await res.json()).toEqual({ error: 'precheck_unavailable', reason: expect.any(String) });
+      const retryAfter = Number(res.headers.get('retry-after'));
+      expect(Number.isInteger(retryAfter) && retryAfter > 0 && retryAfter <= 24 * 3600).toBe(true);
+      expect(llm.calls.classifySite).toBe(calls);
+    } finally {
+      setVideosDeps(deps);
+    }
+  });
+
+  describe('the extra pages', () => {
+    it('checks each one before asking for a payment, and answers 422 naming the one that fails', async () => {
+      const res = await POST(post({ url: U, extraUrls: ['https://rich.example/app', 'https://login.example/account'] }));
+      expect(res.status).toBe(422);
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      const body = (await res.json()) as { reason: string };
+      expect(body).toEqual({ error: 'login_wall', reason: expect.stringContaining('extraUrls[1] (https://login.example/account)') });
+      expect(body.reason).toMatch(/login/i);
+    });
+
+    it('asks for the payment when every one passes, and checks each one once a day, as the site', async () => {
+      const order = { url: 'https://main-with-extras.example/', extraUrls: ['https://rich.example/pricing', 'https://extras.example/app'] };
+      const calls = llm.calls.classifySite;
+      expect((await POST(post(order))).status).toBe(402);
+      for (const url of order.extraUrls) expect(fetchPage).toHaveBeenCalledWith(url);
+      expect(llm.calls.classifySite).toBe(calls + 3);
+
+      expect((await POST(post(order))).status).toBe(402);
+      expect(llm.calls.classifySite).toBe(calls + 3);
+    });
+
+    it('answers 503 when an extra page cannot be checked, as for the site', async () => {
+      llm.classifySite = async (input) => {
+        if (input.url.includes('flaky')) throw new ModelCallFailed('classify', 'AI_APICallError');
+        return { admissible: true, reason: 'ok', usd: 0.0004 };
+      };
+      try {
+        const res = await POST(post({ url: U, extraUrls: ['https://flaky.example/app'] }));
+        expect(res.status).toBe(503);
+        expect(res.headers.get('retry-after')).toBe('60');
+      } finally {
+        llm.classifySite = async () => ({ admissible: true, reason: 'The site is a normal business site.', usd: 0.0004 });
+      }
+    });
   });
 
   it('answers 402 with USDT and USDC at PRICE_ATOMIC and the thin-site hint', async () => {
@@ -330,6 +404,15 @@ describe('POST /v1/videos with a payment', () => {
   it('never looks at the payment of a site that fails the pre-check, so it is never charged', async () => {
     const headers = await pay();
     const res = await POST(post({ url: 'https://login.example/' }, headers));
+    expect(res.status).toBe(422);
+    expect(facilitator.calls.verify).toBe(0);
+    expect(facilitator.calls.settle).toBe(0);
+    expect(await orderOf(headers)).toBeNull();
+  });
+
+  it('never looks at the payment when an extra page fails the pre-check, so it is never charged', async () => {
+    const headers = await pay();
+    const res = await POST(post({ url: U, extraUrls: ['https://login.example/'] }, headers));
     expect(res.status).toBe(422);
     expect(facilitator.calls.verify).toBe(0);
     expect(facilitator.calls.settle).toBe(0);
