@@ -23,7 +23,7 @@ Requires Node 24 and pnpm 12.14.0 (the `packageManager` field in `package.json` 
 pnpm install
 pnpm typecheck
 pnpm test                # unit tests of every package
-pnpm test:integration    # the order workflow on the Workflow runtime, with fake adapters
+pnpm test:integration    # the order workflow on the Workflow runtime, and the payment route built and served by next start, with fake adapters
 pnpm --filter @app/core test
 pnpm --filter @app/vm test:browser   # opt-in: a real Chrome (downloaded on the first run) against a local site, and the real ffmpeg
 ```

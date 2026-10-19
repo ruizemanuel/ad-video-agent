@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodePaymentRequiredHeader, decodePaymentSignatureHeader } from '@x402/core/http';
+import { NextRequest } from 'next/server';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { getAdapters } from '../src/adapters';
@@ -15,6 +16,7 @@ import { TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
 import { FAKE_SETTLE_TX, FakeFacilitator } from './support/fake-facilitator';
+import { requestFromNext } from './support/next-request';
 import { pay as payFor, type PaymentHeaders, type PayOptions } from './support/pay';
 
 vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_test' })) }));
@@ -53,8 +55,9 @@ const fetchPage = vi.fn(async (url: string): Promise<FetchedPage> => {
 const deps = { store, llm, fetchPage, facilitator };
 setVideosDeps(deps);
 
+// Each request reaches the route the way Next hands it over in production: see requestFromNext.
 const post = (body: unknown, headers: Record<string, string> = {}) =>
-  new Request(`${BASE}/v1/videos`, {
+  requestFromNext(`${BASE}/v1/videos`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -78,6 +81,16 @@ beforeEach(() => {
 });
 
 describe('POST /v1/videos without a payment', () => {
+  it('reads the request as Next hands it over, never making a new request from it', async () => {
+    // In production this request is not of the class `next/server` gives the route, and no request can be made from it.
+    const request = post({ url: 'nope' });
+    expect(request).not.toBeInstanceOf(NextRequest);
+    expect(() => new Request(request)).toThrow('Cannot read private member #state');
+    const res = await POST(request);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_request' });
+  });
+
   it('answers 400 without a 402 for an invalid body', async () => {
     const res = await POST(post({ url: 'nope' }));
     expect(res.status).toBe(400);

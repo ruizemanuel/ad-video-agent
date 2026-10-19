@@ -3,7 +3,8 @@ import { defineConfig } from 'vitest/config';
 
 // The order workflow from start to end, run in-process by the Workflow SDK's test world: its directives compiled, its
 // steps on the fake adapters (AD_AGENT_ADAPTERS=fake, files in a temporary FAKE_DIR) and the VM played by the test, which
-// resumes the task hooks. Nothing reaches the network, a model, the chain or a VM.
+// resumes the task hooks. And POST /v1/videos as the built app answers it (`next build`, then `next start`), on the same
+// fake adapters. Nothing reaches the network, a model, the chain or a VM.
 export default defineConfig({
   plugins: [workflow()],
   test: {

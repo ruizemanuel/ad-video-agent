@@ -6,7 +6,7 @@
 import { OrderRequestSchema } from '@app/core';
 import { decodePaymentSignatureHeader } from '@x402/core/http';
 import { withX402 } from '@x402/next';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
 import { authorizationWindowProblem, createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
@@ -146,8 +146,9 @@ async function jsonObject(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
-export async function POST(req: Request): Promise<Response> {
-  const request = req instanceof NextRequest ? req : new NextRequest(req);
+// The request is used as Next hands it over, never copied into a new one: Next makes it with another NextRequest class
+// than the one this file would import, and wraps it in a Proxy that a new Request cannot be made from.
+export async function POST(request: NextRequest): Promise<Response> {
   const settings = env();
 
   const body = await readBody(request);
