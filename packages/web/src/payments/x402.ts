@@ -18,8 +18,20 @@ export { TOKENS, type TokenSymbol } from './tokens';
 
 const SYMBOLS = Object.keys(TOKENS) as TokenSymbol[];
 
-/** How long a signed payment may wait to be settled. */
-const MAX_TIMEOUT_SECONDS = 300;
+/** How long a signed payment may wait to be settled: the offer's maxTimeoutSeconds. */
+export const MAX_TIMEOUT_SECONDS = 300;
+
+/**
+ * How far ahead of this server's clock a client's may run. x402 clients sign validBefore as their now plus the offer's
+ * maxTimeoutSeconds, so one up to this much later is still an honest client's.
+ */
+export const CLIENT_CLOCK_SKEW_SECONDS = 60;
+
+/**
+ * How far in the future validAfter may be: not at all. The facilitator refuses an authorization whose validAfter is past
+ * its clock (@x402/evm 2.28.0, exact scheme: no skew), and x402 clients sign 0 or a moment in the past.
+ */
+export const VALID_AFTER_SKEW_SECONDS = 0;
 
 /** Atomic units of a 6-decimal token as a plain amount: 5000000 is "5", 50000 is "0.05". */
 export function formatPrice(atomic: bigint): string {
@@ -92,6 +104,21 @@ export function readSignedPayment(payment: PaymentPayload | DeepReadonly<Payment
     validAfter: BigInt(validAfter),
     validBefore: BigInt(validBefore),
   };
+}
+
+/**
+ * Why the authorization's time window is not one the service takes, for the client, or null. It has to be valid now and
+ * for no longer than the offer asks: an authorization that lives long could still settle long after the order was made,
+ * past where the reconciliation looks for its settlement (the hour before the earlier of validBefore and now), and keep
+ * it asking the chain about it until then.
+ */
+export function authorizationWindowProblem(payment: Pick<SignedPayment, 'validAfter' | 'validBefore'>, nowSeconds: number): string | null {
+  const now = BigInt(Math.floor(nowSeconds));
+  if (payment.validAfter > now + BigInt(VALID_AFTER_SKEW_SECONDS)) return 'The payment authorization is not valid yet: its validAfter is in the future.';
+  if (payment.validBefore > now + BigInt(MAX_TIMEOUT_SECONDS + CLIENT_CLOCK_SKEW_SECONDS)) {
+    return `The payment authorization is valid for too long: its validBefore may be at most ${MAX_TIMEOUT_SECONDS} seconds (maxTimeoutSeconds) from now.`;
+  }
+  return null;
 }
 
 /** A payment the facilitator settled: what finds its order, and the transaction that moved the tokens. */

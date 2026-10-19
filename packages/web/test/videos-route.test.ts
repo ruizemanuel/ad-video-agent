@@ -271,6 +271,38 @@ describe('POST /v1/videos with a payment', () => {
     expect(await orderOf(headers)).toBeNull();
   });
 
+  describe('the time window of the authorization', () => {
+    const now = () => Math.floor(Date.now() / 1000);
+    /** The offer gives a signed payment 300 s to be settled, and the client's clock may be a minute ahead. */
+    const LONGEST = 300 + 60;
+
+    /** Posts a payment whose authorization says these times, and expects it refused before anything was charged. */
+    const refused = async (times: { validAfter?: string; validBefore?: string }) => {
+      const headers = await pay({ url: U }, { times });
+      const res = await POST(post({ url: U }, headers));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_payment', reason: expect.any(String) });
+      expect(res.headers.get('Content-Location')).toBeNull();
+      expect(facilitator.calls.settle).toBe(0);
+      expect(start).not.toHaveBeenCalled();
+      expect(await orderOf(headers)).toBeNull();
+    };
+
+    it('refuses an authorization valid for longer than the offer asks, and never settles it', async () => {
+      await refused({ validBefore: String(now() + LONGEST + 5) });
+      await refused({ validBefore: String(now() + 365 * 24 * 3600) });
+    });
+
+    it('refuses an authorization that is not valid yet, and never settles it', async () => {
+      await refused({ validAfter: String(now() + 30) });
+    });
+
+    it('takes an authorization valid for up to a minute more than the offer asks, from a client whose clock is ahead', async () => {
+      const headers = await pay({ url: U }, { times: { validAfter: String(now()), validBefore: String(now() + LONGEST - 5) } });
+      expect((await POST(post({ url: U }, headers))).status).toBe(202);
+    });
+  });
+
   it('logs a settled payment that has no order, without starting anything', async () => {
     // A store that cannot find the order the request has just made: the settlement then belongs to no order.
     const forgetful = new Proxy(store, {

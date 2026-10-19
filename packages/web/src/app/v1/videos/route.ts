@@ -8,7 +8,7 @@ import { withX402 } from '@x402/next';
 import { NextRequest, NextResponse } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
-import { createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
+import { authorizationWindowProblem, createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
 import { precheck } from '../../../precheck/precheck';
 import { ModelOutputInvalid, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
@@ -53,7 +53,9 @@ const ordersOfRequests = new WeakMap<Request, OrderLink>();
 
 /**
  * Makes the order of a verified payment. The same payment always gives the same order, so a client that sends it
- * again gets the order it already has. An answer of 400 or more cancels the settlement, so nothing is charged.
+ * again gets the order it already has. An answer of 400 or more cancels the settlement, so nothing is charged: a payment
+ * that is not one the service takes, or whose authorization is not valid yet or is valid for longer than the offer asks,
+ * makes no order.
  */
 const createOrder =
   (deps: VideosDeps, settings: Env) =>
@@ -63,6 +65,8 @@ const createOrder =
       const reason = 'The payment must be a USDT or USDC authorization on Celo for the full price, to the address the quote names.';
       return NextResponse.json({ error: 'invalid_payment', reason }, { status: 400, headers: NO_STORE });
     }
+    const window = authorizationWindowProblem(payment, Date.now() / 1000);
+    if (window !== null) return NextResponse.json({ error: 'invalid_payment', reason: window }, { status: 400, headers: NO_STORE });
     const body = await readBody(request);
     if (!body.ok) return NextResponse.json({ error: 'invalid_request', reason: body.reason }, { status: 400, headers: NO_STORE });
     const { order } = await deps.store.createOrder({ request: body.order, ...payment });

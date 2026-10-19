@@ -16,6 +16,11 @@ export type PayOptions = {
    * accept the offer the server made.
    */
   signed?: { amount?: string; payTo?: string };
+  /**
+   * Times the client writes into the authorization in place of the ones it signed (unix seconds, as text). The signature
+   * no longer matches them: the test facilitator does not check it, so this shows what the service itself checks.
+   */
+  times?: { validAfter?: string; validBefore?: string };
 };
 
 export async function pay(res402: Response, options: PayOptions = {}): Promise<PaymentHeaders> {
@@ -26,7 +31,7 @@ export async function pay(res402: Response, options: PayOptions = {}): Promise<P
     .register('eip155:42220', new ExactEvmScheme(privateKeyToAccount(generatePrivateKey())))
     // The client's own cap is US$ 1 a payment, and the service costs more.
     .setSpendControls({ maxAmountPerPayment: '$100' });
-  const { asset, signed } = options;
+  const { asset, signed, times } = options;
   if (asset !== undefined) client.registerPolicy((_version, offers) => offers.filter((offer) => offer.asset.toLowerCase() === asset.toLowerCase()));
 
   const toSign: PaymentRequired =
@@ -36,6 +41,10 @@ export async function pay(res402: Response, options: PayOptions = {}): Promise<P
     const offer = required.accepts.find((candidate) => candidate.asset === payload.accepted.asset);
     if (offer === undefined) throw new Error('The signed payment names a token the server did not offer.');
     payload.accepted = offer;
+  }
+  if (times !== undefined) {
+    const { authorization } = payload.payload as { authorization: { validAfter: string; validBefore: string } };
+    Object.assign(authorization, times);
   }
   return { 'PAYMENT-SIGNATURE': encodePaymentSignatureHeader(payload) };
 }
