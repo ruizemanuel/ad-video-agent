@@ -39,9 +39,31 @@ describe('DIRECTOR_SYSTEM', () => {
   });
 
   it('states the limits validateEdl checks on the new pieces', () => {
-    // WordCycle: a beat per word plus one. atBeat: from beat 2 on. EndCard: 6 beats, 4 at the very least.
-    for (const rule of ['at least one beat per word plus one', '`atBeat` is 2 or later', 'It lasts 6 beats (never fewer than 4)', 'exactly the `host`'])
-      expect(DIRECTOR_SYSTEM).toContain(rule);
+    // atBeat: from beat 2 on. EndCard: 6 beats, 4 at the very least. (WordCycle: see below.)
+    for (const rule of ['`atBeat` is 2 or later', 'It lasts 6 beats (never fewer than 4)', 'exactly the `host`']) expect(DIRECTOR_SYSTEM).toContain(rule);
+  });
+
+  describe('WordCycle', () => {
+    // The prompts wrap their lines: the rules are read as a sentence.
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+
+    it.each([
+      ['the director', DIRECTOR_SYSTEM],
+      ['the corrector', PATCH_SYSTEM],
+    ])('tells %s the words stay two beats each and the scene lasts two beats per word plus one', (_, system) => {
+      const rules = flat(system);
+      expect(rules).toContain('then 2 or 3 lines of one word');
+      expect(rules).toContain('spread evenly over the scene, two beats each at least');
+      expect(rules).toContain('at least two beats per word plus one (5 beats for 2 words, 7 for 3)');
+    });
+
+    it('no longer allows 4 or 5 words, or a beat per word', () => {
+      for (const rules of [flat(DIRECTOR_SYSTEM), flat(PATCH_SYSTEM)]) {
+        expect(rules).not.toContain('2 to 5 lines of one word');
+        expect(rules).not.toContain('one beat per word plus one');
+        expect(rules).not.toContain('Word k comes in on beat k + 1');
+      }
+    });
   });
 
   it('gives the rhythm and the tempo ranges by energy', () => {

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
-import { FORMATS, layoutScenes, settledFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
+import { beatsToFrames, FORMATS, layoutScenes, settledFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveFont } from '../../src/capture/fonts';
 import { runFfmpeg } from '../../src/render/ffmpeg';
@@ -19,6 +19,7 @@ import { readClips, type ClippedLine, type Rect } from './support/clips';
 
 const BPM = 90;
 const PREFIX = 'play with';
+// Three words over 8 beats: each holds 2 beats (they come in on beats 1, 3 and 5) and the last keeps the rest of the scene.
 // Words with deep descenders ("Pago": g; "playa": p and y), and a third so that the cycle goes on. "Pago" starts under the
 // p of the prefix, whose descender hangs down into the mask: the word that rolls out rises right through it.
 const WORDS = ['Pago', 'playa', 'links'];
@@ -199,6 +200,25 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
     });
   });
 
+  describe('the hold of the words', () => {
+    // The cycle starts the video, so a beat of the video is a frame of the scene.
+    const beat = (b: number): number => beatsToFrames(b, BPM);
+    const wordsOn = async (frame: number): Promise<string[]> => {
+      const shot = await shoot(siteWith(fonts['Inter']!, 1.12), frame);
+      return shot.lines.map((line) => line.text).filter((text) => WORDS.includes(text));
+    };
+
+    it('keeps each word on screen until its two beats are over, and the last one to the end of the scene', async () => {
+      expect(await wordsOn(beat(1) - 1), 'before beat 1').toEqual([]);
+      expect(await wordsOn(beat(1) + 12), 'word 0, in on beat 1').toEqual(['Pago']);
+      expect(await wordsOn(beat(3) - 1), 'word 0, the frame before beat 3').toEqual(['Pago']);
+      expect(await wordsOn(beat(3) + 12), 'word 1, in on beat 3').toEqual(['playa']);
+      expect(await wordsOn(beat(5) - 1), 'word 1, the frame before beat 5').toEqual(['playa']);
+      expect(await wordsOn(beat(5) + 12), 'word 2, in on beat 5').toEqual(['links']);
+      expect(await wordsOn(timed.duration - 1), 'word 2, the last frame of the scene').toEqual(['links']);
+    });
+  });
+
   describe('against the prefix', () => {
     const site = () => siteWith(fonts['Inter']!, 0.94);
 
@@ -226,7 +246,7 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
         }
         return changed;
       };
-      // Word 0 rolls out as word 1 rolls in: the frames from just before beat 2, a little longer than the roll lasts.
+      // Word 0 rolls out as word 1 rolls in: the frames from just before its beat (3), a little longer than the roll lasts.
       const rolling = Array.from({ length: 8 }, (_, i) => wordEnterFrame(1, timed, BPM) - 1 + i);
       for (const frame of rolling) {
         const shot = await shoot(site(), frame);

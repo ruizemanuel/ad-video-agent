@@ -305,21 +305,33 @@ describe('validateEdl: structure', () => {
   });
 
   describe('WordCycle', () => {
-    it('requires WordCycle to have a framing prefix plus 2 to 5 words', () => {
+    it('requires WordCycle to have a framing prefix plus 2 or 3 words', () => {
       structure(wordCycle(['MP']));
-      // Six words, given the 7 beats they would need.
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito', 'Cheque'], framing('Pagá con'), 7));
+      // Four words, given the 8 beats a scene lasts at most: they cannot hold two beats each.
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 8));
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8));
       structure(wordCycle(['MP', 'Transferencia'], claimLine('Pagá con', 'c5')));
       clean(wordCycle(['MP', 'Transferencia']));
-      clean(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito']));
+      clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 7));
+    });
+    it('says what it wants when a WordCycle has too many words, and does not ask for beats a scene cannot last', () => {
+      const four = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 8));
+      expect(four.map((p) => p.detail)).toEqual(['WordCycle needs 2 or 3 words after its framing line, got 4']);
     });
     it('flags a WordCycle without lines', () => expect(rules(inBody({ piece: 'WordCycle', beats: 6, lines: [] }))).toEqual(['structure', 'structure']));
-    it('requires a beat per word plus one, so that every word comes in on its beat within the scene', () => {
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 3));
-      clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 4));
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 5));
-      clean(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 6));
-      expect(problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 3)).map((p) => p.where)).toEqual(['body[0]']);
+    it('requires two beats per word plus one, so that every word stays on screen for two beats within the scene', () => {
+      structure(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 4));
+      clean(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 5));
+      structure(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6));
+      clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 7));
+      clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 8));
+      expect(problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6)).map((p) => p.where)).toEqual(['body[0]']);
+    });
+    it('names the minimum in the message', () => {
+      const [short] = problemsOf(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 4));
+      expect(short?.detail).toBe('WordCycle needs two beats per word plus one (5), got 4');
+      const [three] = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6));
+      expect(three?.detail).toBe('WordCycle needs two beats per word plus one (7), got 6');
     });
   });
 

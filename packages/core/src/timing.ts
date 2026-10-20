@@ -13,15 +13,18 @@ export const MIN_AT_BEAT = 2;
 /** The shortest EndCard: its two steps (the brand, then the button that is pressed) need the room. */
 export const MIN_ENDCARD_BEATS = 4;
 
+/** The fewest beats a WordCycle of `words` words may last: each word holds two beats, and the first comes in on beat 1, after one beat of the prefix alone. */
+export const wordCycleMinBeats = (words: number): number => 2 * words + 1;
+
 /**
  * The fewest beats a scene may last under the rules of validateEdl: 2, 3 when a caption is replaced (at beat 2 at the
- * earliest), a beat per word plus one for a WordCycle (word k comes in on beat k + 1) and 4 for the EndCard.
+ * earliest), two beats per word plus one for a WordCycle (each word holds at least two beats) and 4 for the EndCard.
  */
 export const minSceneBeats = (scene: Scene): number =>
   Math.max(
     MIN_SCENE_BEATS,
     scene.lines.some((line) => line.atBeat !== undefined) ? MIN_AT_BEAT + 1 : 0,
-    scene.piece === 'WordCycle' ? scene.lines.length : 0,
+    scene.piece === 'WordCycle' ? wordCycleMinBeats(scene.lines.length - 1) : 0,
     scene.piece === 'EndCard' ? MIN_ENDCARD_BEATS : 0,
   );
 

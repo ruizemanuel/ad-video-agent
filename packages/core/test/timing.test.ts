@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, FPS, WIPE_FRAMES, beatsToFrames, layoutScenes, retimeForBpm, settledFrame, validateEdl, type Edl, type Scene, type SiteData } from '../src/index';
+import { EdlSchema, FPS, WIPE_FRAMES, beatsToFrames, layoutScenes, minSceneBeats, retimeForBpm, settledFrame, validateEdl, type Edl, type Line, type Scene, type SiteData } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
@@ -49,6 +49,22 @@ describe('layoutScenes', () => {
       expect(seconds).toBeGreaterThanOrEqual(15);
       expect(seconds).toBeLessThanOrEqual(30);
     }
+  });
+});
+
+describe('minSceneBeats', () => {
+  const framing = (text: string, atBeat?: number): Line => ({ text, kind: 'framing', ...(atBeat === undefined ? {} : { atBeat }) });
+  const scene = (piece: Scene['piece'], lines: Line[]): Scene => ({ piece, beats: 8, lines });
+
+  it('asks a WordCycle for two beats per word plus one: 5 for two words, 7 for three', () => {
+    expect(minSceneBeats(scene('WordCycle', [framing('Pay with'), framing('cards'), framing('cash')]))).toBe(5);
+    expect(minSceneBeats(scene('WordCycle', [framing('Pay with'), framing('cards'), framing('cash'), framing('transfers')]))).toBe(7);
+  });
+
+  it('keeps 2 beats for any scene, 3 when a caption is replaced and 4 for the EndCard', () => {
+    expect(minSceneBeats(scene('KineticHeadline', [framing('One')]))).toBe(2);
+    expect(minSceneBeats(scene('UiFocus', [framing('One'), framing('Two', 2)]))).toBe(3);
+    expect(minSceneBeats(scene('EndCard', [framing('Start free')]))).toBe(4);
   });
 });
 
@@ -142,7 +158,7 @@ describe('retimeForBpm', () => {
     });
     // Planned at 112 bpm and retimed to 90, each of these scenes would round to a beat less than it needs.
     const swapFirst: Edl = { ...edlShop, body: [ui(3, 2), ...edlShop.body] };
-    const cycleFirst: Edl = { ...edlShop, body: [cycle(4), ...edlShop.body] };
+    const cycleFirst: Edl = { ...edlShop, body: [cycle(7), ...edlShop.body] };
     const shortClose: Edl = { ...edlShop, body: edlShop.body.map((s, i) => (i === 0 ? { ...s, beats: 7 } : s)), cta: { ...edlShop.cta, beats: 4 } };
     const cases: [string, Edl][] = [
       ['a replaced caption', swapFirst],
@@ -161,7 +177,7 @@ describe('retimeForBpm', () => {
       expect(swap.lines[1]?.atBeat).toBe(2);
     });
 
-    it('keeps a beat per word plus one in a WordCycle', () => expect(first(retimeForBpm(cycleFirst, 90).body).beats).toBe(4));
+    it('keeps two beats per word plus one in a WordCycle', () => expect(first(retimeForBpm(cycleFirst, 90).body).beats).toBe(7));
 
     it('keeps the EndCard 4 beats long', () => expect(retimeForBpm(shortClose, 90).cta.beats).toBe(4));
   });

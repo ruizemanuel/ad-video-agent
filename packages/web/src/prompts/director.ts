@@ -71,9 +71,9 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   up. Give it at least 2 beats per line.
 - **WordCycle**: a fixed prefix over a word that changes on the beat, for a short list the site
   states (payment methods, channels, who it is for). \`lines[0]\` is the prefix, a framing line; then
-  2 to 5 lines of one word (or two) each, and every word that says something about the product is a
-  claim with its quote. Word k comes in on beat k + 1, so the scene lasts
-  at least one beat per word plus one.
+  2 or 3 lines of one word (or two) each, and every word that says something about the product is a
+  claim with its quote. The words are spread evenly over the scene, two beats each at least, so the
+  scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3).
 - **TypeIn**: a field where 1 line is typed, then a button is pressed. Exactly 1 line, framing, and
   a \`variant\`: "url" types the site's address, which is exactly the \`host\` of the site data (no
   "www.", no "https://", no path); "prompt" types a short question the audience would ask.

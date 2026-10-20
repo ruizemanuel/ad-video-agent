@@ -5,7 +5,7 @@ import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
 import type { Claim, Edl, Scene } from './edl';
 import { isProductTarget } from './product';
 import type { SiteData } from './site';
-import { FPS, layoutScenes, MIN_AT_BEAT, MIN_ENDCARD_BEATS, type TimedScene } from './timing';
+import { FPS, layoutScenes, MIN_AT_BEAT, MIN_ENDCARD_BEATS, wordCycleMinBeats, type TimedScene } from './timing';
 
 export type Problem = {
   /**
@@ -24,6 +24,8 @@ export type ScenePatch = { path: string; scene: Scene };
 const HOOKS = { min: 1, max: 3 };
 const BPM = { min: 90, max: 128 };
 const SCENE_BEATS = { min: 2, max: 8 };
+// Three words is the most that hold two beats each in the longest scene (7 of its 8 beats).
+const CYCLE_WORDS = { min: 2, max: 3 };
 const VIDEO_SECONDS = { min: 15, max: 30 };
 
 type Report = (where: string, rule: Problem['rule'], detail: string) => void;
@@ -167,9 +169,11 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
   if (scene.piece === 'WordCycle') {
     const [prefix, ...words] = scene.lines;
     if (prefix?.kind !== 'framing') report(path, 'structure', 'WordCycle needs a framing line first');
-    if (words.length < 2 || words.length > 5) report(path, 'structure', `WordCycle needs 2 to 5 words after its framing line, got ${words.length}`);
-    // Word k comes in on beat k + 1: every word needs its beat inside the scene.
-    if (scene.beats < words.length + 1) report(path, 'structure', `WordCycle needs a beat per word plus one (${words.length + 1}), got ${scene.beats}`);
+    const count = words.length;
+    if (count < CYCLE_WORDS.min || count > CYCLE_WORDS.max) report(path, 'structure', `WordCycle needs ${CYCLE_WORDS.min} or ${CYCLE_WORDS.max} words after its framing line, got ${count}`);
+    // The words are spread over the scene, each holding two beats at least (see wordEnterFrame): that takes two beats per word
+    // plus one. Said only for a count of words the scene could have, so that it never asks for more beats than a scene lasts.
+    else if (scene.beats < wordCycleMinBeats(count)) report(path, 'structure', `WordCycle needs two beats per word plus one (${wordCycleMinBeats(count)}), got ${scene.beats}`);
   }
   if (scene.piece === 'TypeIn') checkTypeIn(path, scene, site, report);
   checkAtBeat(path, scene, report);

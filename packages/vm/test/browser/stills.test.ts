@@ -110,7 +110,8 @@ function makeNewPiecesEdl(site: SiteData): Edl {
     body: [
       {
         piece: 'WordCycle',
-        beats: 6,
+        // Three words hold two beats each: 7 beats, the least they need.
+        beats: 7,
         lines: [
           { text: 'Get paid with', kind: 'framing' },
           { text: 'cards', kind: 'claim', claimId: 'c4' },

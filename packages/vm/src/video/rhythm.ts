@@ -45,16 +45,22 @@ export const pressState = (frame: number, pressAt: number): { scale: number; glo
 
 // ---------- WordCycle ----------
 
-/** The frame of the scene at which word k of a WordCycle (its line k + 1) comes in: beat k + 1. */
-export const wordEnterFrame = (k: number, timed: TimedScene, bpm: number): number => beatFrame(timed, k + 1, bpm);
+/**
+ * The words of a WordCycle (lines 1 on) are spread over the scene: each holds floor((beats - 1) / words) beats, two at
+ * least in a scene validateEdl takes, from beat 1 on, and the last keeps what is left of the scene.
+ */
+const wordHold = ({ scene }: TimedScene): number => Math.floor((scene.beats - 1) / Math.max(1, scene.lines.length - 1));
+
+/** The frame of the scene at which word k of a WordCycle (its line k + 1) comes in: beat 1 + k * hold (see wordHold). */
+export const wordEnterFrame = (k: number, timed: TimedScene, bpm: number): number => beatFrame(timed, 1 + k * wordHold(timed), bpm);
 
 /**
- * The word of `count` that a WordCycle shows at `frame`: word k from beat k + 1, the last one held to the end. Before
- * beat 1 only the prefix is in, and the word to come is the first: 0.
+ * The word of a WordCycle that shows at `frame`: word k from its beat (see wordEnterFrame), the last one held to the
+ * end. Before beat 1 only the prefix is in, and the word to come is the first: 0.
  */
-export const cycleIndex = (frame: number, timed: TimedScene, bpm: number, count: number): number => {
+export const cycleIndex = (frame: number, timed: TimedScene, bpm: number): number => {
   let index = 0;
-  for (let k = 1; k < count; k++) if (frame >= wordEnterFrame(k, timed, bpm)) index = k;
+  for (let k = 1; k < timed.scene.lines.length - 1; k++) if (frame >= wordEnterFrame(k, timed, bpm)) index = k;
   return index;
 };
 

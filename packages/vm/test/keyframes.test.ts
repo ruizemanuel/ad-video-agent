@@ -56,27 +56,27 @@ describe('the key frames of a video', () => {
   });
 
   it('takes a word cycle once per word: each just before the next replaces it, the last one settled', () => {
-    const cycle = scene('WordCycle', 6, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
+    const cycle = scene('WordCycle', 7, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
     const plan = keyframePlan(edl([cycle]), 0);
-    // Word k comes in on beat k + 1 of the scene, which starts at beat 4: "books" on beat 6 (frame 90), "courses" on beat 7 (105).
+    // The scene runs 60-165 and each word holds two beats: "books" comes in on beat 3 of the scene (frame 105), "courses" on beat 5 (135).
     expect(frames(plan)).toEqual([
       [0, 52],
-      [1, 86],
       [1, 101],
-      [1, 142],
-      [2, 202],
+      [1, 131],
+      [1, 157],
+      [2, 217],
     ]);
   });
 
-  it('leaves out a word whose beat falls after the end of its scene', () => {
-    const cycle = scene('WordCycle', 3, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
+  it('takes the words of a cycle where they change: two words over 8 beats, the first held for three', () => {
+    const cycle = scene('WordCycle', 8, [framing('Sell'), framing('shoes'), framing('books')]);
     const plan = keyframePlan(edl([cycle]), 0);
-    // Only "shoes" (beat 1) and "books" (beat 2) are on screen in 3 beats; the scene runs 60-105.
+    // The scene runs 60-180: "books" comes in on beat 4 of the scene (frame 120), 3 beats after "shoes".
     expect(frames(plan)).toEqual([
       [0, 52],
-      [1, 86],
-      [1, 97],
-      [2, 157],
+      [1, 116],
+      [1, 172],
+      [2, 232],
     ]);
   });
 
@@ -119,13 +119,15 @@ describe('the key frames of a video', () => {
         // Clear of the entrances whenever the swap leaves room for it.
         expect(before!.frame - before!.timed.from, at).toBeGreaterThanOrEqual(Math.min(20, captionSwapFrame(lines, before!.timed, bpm)! - 1));
       }
-    for (const bpm of [90, 112, 128]) {
-      const cycle = scene('WordCycle', 6, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
-      const plan = keyframePlan({ ...edl([cycle]), bpm }, 0).filter((p) => p.timed.index === 1);
-      expect(plan.map((p) => cycleIndex(p.frame - p.timed.from, p.timed, bpm, 3))).toEqual([0, 1, 2]);
-      // The first word is in, whole, by the still that shows it.
-      expect(plan[0]!.frame - plan[0]!.timed.from).toBeGreaterThanOrEqual(wordEnterFrame(0, plan[0]!.timed, bpm) + 6);
-    }
+    for (const bpm of [90, 112, 128])
+      for (const [words, beats] of [[3, 7], [2, 5], [2, 8]] as const) {
+        const cycle = scene('WordCycle', beats, [framing('Sell'), ...['shoes', 'books', 'courses'].slice(0, words).map((word) => framing(word))]);
+        const plan = keyframePlan({ ...edl([cycle]), bpm }, 0).filter((p) => p.timed.index === 1);
+        const at = `${words} words over ${beats} beats at ${bpm} bpm`;
+        expect(plan.map((p) => cycleIndex(p.frame - p.timed.from, p.timed, bpm)), at).toEqual(Array.from({ length: words }, (_, k) => k));
+        // The first word is in, whole, by the still that shows it.
+        expect(plan[0]!.frame - plan[0]!.timed.from, at).toBeGreaterThanOrEqual(wordEnterFrame(0, plan[0]!.timed, bpm) + 6);
+      }
   });
 });
 

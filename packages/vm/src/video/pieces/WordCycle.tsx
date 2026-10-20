@@ -12,8 +12,9 @@ const TRAVEL = 1.35;
 // In the layout the mask takes its line less this much, as it always has: the text is centered by it and stays where it is.
 const SLOT_LESS = 0.16;
 
-// A fixed prefix (lines[0]) and, under it, the word of the beat in the accent color: word k (lines[k + 1]) comes in on
-// beat k + 1 (see cycleIndex), rolling up through a mask as the one before rolls out, fading. For short lists of the site.
+// A fixed prefix (lines[0]) and, under it, the word in the accent color: the words are spread over the scene, two beats each
+// at least, and word k (lines[k + 1]) comes in on its beat (see wordEnterFrame), rolling up through a mask as the one before
+// rolls out, fading. For short lists of the site.
 export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
   const { theme, format, edl } = useAd();
   const frame = useCurrentFrame();

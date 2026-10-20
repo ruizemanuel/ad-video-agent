@@ -50,28 +50,54 @@ describe('the pressed button', () => {
 });
 
 describe('the words of a WordCycle', () => {
-  const cycle = scene('WordCycle', 6, [framing('Get paid with'), framing('cards'), framing('transfers'), framing('cash')]);
+  const WORDS = ['cards', 'transfers', 'cash'];
+  const cycle = (count: number, beats: number): Scene => scene('WordCycle', beats, [framing('Get paid with'), ...WORDS.slice(0, count).map((word) => framing(word))]);
+  const beat = (b: number, bpm = 112) => beatsToFrames(b, bpm);
 
-  it('shows one word per beat', () => {
-    const timed = placed(cycle, 112);
-    const beat = (b: number) => beatsToFrames(b, 112);
+  // Each word holds floor((beats - 1) / words) beats, at least 2 in a scene validateEdl takes; the last keeps the rest.
+  const SPREADS: [description: string, count: number, beats: number, enters: number[]][] = [
+    ['2 words over 5 beats', 2, 5, [1, 3]],
+    ['2 words over 6 beats', 2, 6, [1, 3]],
+    ['2 words over 8 beats (hold 3)', 2, 8, [1, 4]],
+    ['3 words over 7 beats', 3, 7, [1, 3, 5]],
+    ['3 words over 8 beats', 3, 8, [1, 3, 5]],
+  ];
+
+  it.each(SPREADS)('brings in the words of %s on the beats of their hold', (_, count, beats, enters) => {
+    const timed = placed(cycle(count, beats), 112);
+    expect(Array.from({ length: count }, (_, k) => wordEnterFrame(k, timed, 112))).toEqual(enters.map((b) => beat(b)));
+  });
+
+  it.each(SPREADS)('shows the word whose hold it is in %s, the prefix alone before the first and the last to the end', (_, count, beats, enters) => {
+    const timed = placed(cycle(count, beats), 112);
     // Before beat 1 only the prefix is in: the word to come is the first.
-    expect(cycleIndex(0, timed, 112, 3)).toBe(0);
-    expect(wordEnterFrame(0, timed, 112)).toBe(beat(1));
-    expect(cycleIndex(beat(1), timed, 112, 3)).toBe(0);
-    expect(cycleIndex(beat(2) - 1, timed, 112, 3)).toBe(0);
-    expect(cycleIndex(beat(2), timed, 112, 3)).toBe(1);
-    expect(cycleIndex(beat(3), timed, 112, 3)).toBe(2);
-    // The last word holds to the end of the scene.
-    expect(cycleIndex(beat(5), timed, 112, 3)).toBe(2);
-    expect(cycleIndex(timed.duration - 1, timed, 112, 3)).toBe(2);
+    expect(cycleIndex(0, timed, 112)).toBe(0);
+    enters.forEach((b, k) => {
+      expect(cycleIndex(beat(b), timed, 112), `word ${k} on beat ${b}`).toBe(k);
+      if (k > 0) expect(cycleIndex(beat(b) - 1, timed, 112), `the frame before beat ${b}`).toBe(k - 1);
+    });
+    // The last word keeps the rest of the scene.
+    expect(cycleIndex(timed.duration - 1, timed, 112)).toBe(count - 1);
+  });
+
+  it('keeps every word on screen for at least two beats, the last one for the rest of the scene', () => {
+    for (const bpm of [90, 112, 128])
+      for (const [count, beats] of [[2, 5], [2, 7], [3, 7], [3, 8]] as const) {
+        const timed = placed(cycle(count, beats), bpm);
+        const enters = Array.from({ length: count }, (_, k) => wordEnterFrame(k, timed, bpm));
+        const ends = [...enters.slice(1), timed.duration];
+        ends.forEach((end, k) => expect(end - enters[k]!, `word ${k} of ${count} over ${beats} beats at ${bpm} bpm`).toBeGreaterThanOrEqual(beat(2, bpm) - 1));
+      }
   });
 
   it('lands each word on a beat of the whole video, not of the scene', () => {
-    const timed = placed(cycle, 113.19, 7);
-    expect(wordEnterFrame(1, timed, 113.19)).toBe(beatsToFrames(9, 113.19) - timed.from);
-    expect(cycleIndex(beatsToFrames(9, 113.19) - timed.from - 1, timed, 113.19, 3)).toBe(0);
-    expect(cycleIndex(beatsToFrames(9, 113.19) - timed.from, timed, 113.19, 3)).toBe(1);
+    // 3 words over 7 beats, from beat 7 of the video: the words come in on beats 8, 10 and 12.
+    const timed = placed(cycle(3, 7), 113.19, 7);
+    expect(wordEnterFrame(1, timed, 113.19)).toBe(beatsToFrames(10, 113.19) - timed.from);
+    expect(wordEnterFrame(2, timed, 113.19)).toBe(beatsToFrames(12, 113.19) - timed.from);
+    expect(cycleIndex(beatsToFrames(10, 113.19) - timed.from - 1, timed, 113.19)).toBe(0);
+    expect(cycleIndex(beatsToFrames(10, 113.19) - timed.from, timed, 113.19)).toBe(1);
+    expect(cycleIndex(beatsToFrames(12, 113.19) - timed.from, timed, 113.19)).toBe(2);
   });
 });
 
@@ -107,9 +133,11 @@ describe('the changes of text in a scene', () => {
   it('lists the caption swap of a UI scene and every word after the first of a WordCycle, within the scene', () => {
     const swap = scene('UiScroll', 6, [framing('One'), framing('Two', 4)]);
     expect(textChanges(placed(swap, 120), 120)).toEqual([60]);
-    const cycle = scene('WordCycle', 3, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
-    // "books" comes in on beat 2; "courses" would on beat 3, the end of the scene.
-    expect(textChanges(placed(cycle, 120), 120)).toEqual([30]);
+    const cycle = scene('WordCycle', 7, [framing('Sell'), framing('shoes'), framing('books'), framing('courses')]);
+    // "books" comes in on beat 3 and "courses" on beat 5 (15 frames a beat at 120 bpm); "shoes" is the first, in from beat 1.
+    expect(textChanges(placed(cycle, 120), 120)).toEqual([45, 75]);
+    const pair = scene('WordCycle', 8, [framing('Sell'), framing('shoes'), framing('books')]);
+    expect(textChanges(placed(pair, 120), 120)).toEqual([60]);
     expect(textChanges(placed(scene('KineticHeadline', 4, [framing('One'), framing('Two', 2)]), 120), 120)).toEqual([]);
   });
 });
