@@ -7,7 +7,7 @@ type Rgba = { r: number; g: number; b: number; a: number };
 type Cap = {
   clean: (s: string | null | undefined) => string;
   visible: (el: Element) => boolean;
-  shown: (el: Element) => boolean;
+  makeShown: () => (el: Element) => boolean;
   toRgba: (c: string) => Rgba | null;
   hex: (c: { r: number; g: number; b: number }) => string;
   isButtonLike: (el: Element) => boolean;
@@ -52,9 +52,24 @@ export const MAX_SCROLL_CSS_PX = 20_000;
 export function inPageSetup(): void {
   const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
   const visible = (el: Element): boolean => el.checkVisibility({ visibilityProperty: true });
-  // Visible and not see-through: what a screenshot shows. Content at opacity 0 (a reveal effect not run yet, or run
-  // back when it left the screen) is in the page but not in the picture.
-  const shown = (el: Element): boolean => el.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+  // What a screenshot shows of an element: it is visible, and not see-through, its effective opacity (its own times its
+  // ancestors') being 0.05 or more. Content a reveal effect has not run yet (Framer starts it at 0.001) or has run back
+  // when it left the screen (0) is in the page but not in the picture. One checker serves one pass: it remembers the
+  // opacities it has read, and the page changes between passes.
+  const makeShown = (): ((el: Element) => boolean) => {
+    const opacities = new Map<Element, number>();
+    const opacity = (el: Element | null): number => {
+      if (!el) return 1;
+      const known = opacities.get(el);
+      if (known !== undefined) return known;
+      const cs = getComputedStyle(el);
+      // A wrapper with no box paints nothing, so its opacity applies to nothing.
+      const value = (cs.display === 'contents' ? 1 : Number(cs.opacity)) * opacity(el.parentElement);
+      opacities.set(el, value);
+      return value;
+    };
+    return (el) => el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) && opacity(el) >= 0.05;
+  };
   const cvs = document.createElement('canvas');
   cvs.width = cvs.height = 1;
   const ctx = cvs.getContext('2d', { willReadFrequently: true });
@@ -85,7 +100,7 @@ export function inPageSetup(): void {
     return Boolean((hasBg || hasBorder) && padded);
   };
   const PRICE_RE = /([$€£]\s?\d)|(\d[\d.,]*\s?(USD|USDT|USDC|ARS|EUR|cUSD|%))|(\/\s?(mes|month|mo)\b)/i;
-  (window as unknown as CapWindow).__cap = { clean, visible, shown, toRgba, hex, isButtonLike, PRICE_RE };
+  (window as unknown as CapWindow).__cap = { clean, visible, makeShown, toRgba, hex, isButtonLike, PRICE_RE };
 }
 
 /** Scrolls the page down in steps, to trigger lazy loading and reveal-on-scroll. Returns the height it ends with. */
@@ -421,11 +436,13 @@ export function inPageFindLogo(): FoundLogo | null {
 }
 
 /**
- * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page, and shown:
- * not at opacity 0. In pixels of the shot; one that begins above the shot is kept from y 0 and marked `clippedTop`.
+ * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page, and shown
+ * (not see-through: see makeShown). In pixels of the shot; one that begins above the shot is kept from y 0 and marked
+ * `clippedTop`.
  */
 export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[] {
-  const { clean, shown, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
+  const { clean, makeShown, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
+  const shown = makeShown();
   const dpr = devicePixelRatio;
   const vw = innerWidth;
   const vh = innerHeight;
@@ -479,14 +496,15 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
 
 /**
  * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
- * order, shown (not at opacity 0). In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is
+ * order, shown like the boxes. In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is
  * 40 to 98% of the screen's width (a band as wide as the page is page, not a card), 48 px to 1.2 screens tall, and draws
  * a surface: a border on all four sides, a shadow that is not transparent, a background color unlike the one behind it
  * (the nearest ancestor's that is not transparent, else white), or a background image. What is fixed or sticky, and what
  * is in it, floats over the page: it is no card of it.
  */
 export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
-  const { shown, toRgba, hex } = (window as unknown as CapWindow).__cap;
+  const { makeShown, toRgba, hex } = (window as unknown as CapWindow).__cap;
+  const shown = makeShown();
   const dpr = devicePixelRatio;
   const vw = innerWidth;
   const vh = innerHeight;

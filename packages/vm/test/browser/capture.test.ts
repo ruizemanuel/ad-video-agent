@@ -117,16 +117,17 @@ describe('a Framer site: content in wrappers with no box, figures split over hea
     );
   });
 
-  it('measures no box or block on content at opacity 0, and does on content half-way there, but reads the text of both', () => {
+  it('measures no box or block on content under 0.05 effective opacity, and does on content half-way there, but reads the text of all', () => {
     const { site } = run;
     const fade = section('Cards that fade in');
-    expect(fade.text).toContain('Not revealed yet: $7 / month');
+    for (const line of ['Not revealed yet: $7 / month', 'Not started yet: $8 / month', 'Dim twice over: $6 / month']) expect(fade.text).toContain(line);
     for (const v of ['d', 'm']) {
       for (const shotId of [`${v}-${fade.id}`, `${v}-full`]) {
         const boxes = site.boxes.filter((b) => b.shotId === shotId && b.sectionId === fade.id);
         expect(boxes.filter((b) => b.kind === 'price').map((b) => b.text), shotId).toEqual(['Half revealed: $9 / month', '$9 / month']);
         expect(boxes.filter((b) => b.kind === 'image'), shotId).toHaveLength(1);
-        // The card half-way there is 200 px tall; the one not revealed yet, 180 px, is not measured.
+        // The card half-way there is 200 px tall. Not measured: the one at opacity 0 (180 px), the one at 0.001 (170 px)
+        // and the one at 0.2 in a wrapper at 0.2 (160 px).
         expect(site.blocks.filter((b) => b.shotId === shotId).map((b) => b.h), shotId).toEqual([400]);
       }
     }
