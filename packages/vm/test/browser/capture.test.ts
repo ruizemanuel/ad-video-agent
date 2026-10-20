@@ -200,6 +200,32 @@ describe('a site that is not asked to follow its links, with an extra page nobod
   });
 });
 
+describe('a section shot that starts partway through a card', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}clipped.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('records the card and the picture that begin above the shot as clipped at its top, and nothing else', () => {
+    const { site } = run;
+    const section = site.sections.find((s) => s.heading === 'Right under the picture')!;
+    for (const v of ['m', 'd'] as const) {
+      const shotId = `${v}-${section.id}`;
+      const boxes = site.boxes.filter((b) => b.shotId === shotId);
+      const blocks = site.blocks.filter((b) => b.shotId === shotId);
+      const picture = boxes.find((b) => b.kind === 'image');
+      // The card with the picture and the picture in it begin above the top of the screen: the capture keeps their part on
+      // it, from y 0, and says that they go on above.
+      expect(picture, shotId).toMatchObject({ y: 0, clippedTop: true });
+      expect(blocks[0], shotId).toMatchObject({ y: 0, clippedTop: true });
+      // The heading and the card under it are whole on the screen.
+      expect(boxes.find((b) => b.kind === 'heading')?.clippedTop, shotId).toBeUndefined();
+      expect(blocks.slice(1).map((b) => b.clippedTop), shotId).toEqual([undefined]);
+      // The full page has them whole.
+      const full = [...site.boxes, ...site.blocks].filter((r) => r.shotId === `${v}-full`);
+      expect(full.length, `${v}-full`).toBeGreaterThan(0);
+      expect(full.filter((r) => r.clippedTop), `${v}-full`).toEqual([]);
+    }
+  });
+});
+
 describe('a scrollytelling stage and a popup that comes up late', () => {
   const run = sharedCapture(() => ({ url: `${fixtureUrl}stage.html`, extraUrls: [], followDemoLinks: 0 }));
 

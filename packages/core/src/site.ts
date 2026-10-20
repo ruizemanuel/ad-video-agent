@@ -9,14 +9,19 @@ export type Box = {
   y: number;
   w: number;
   h: number;
+  /**
+   * The element begins above the top of the shot (a section shot starts partway down the page): only its part in the
+   * shot is recorded, from y 0, and the top of the shot cuts it. Captures made before this was recorded never say so.
+   */
+  clippedTop?: true;
 };
 
 /**
  * A card of the page: an element that draws a surface of its own (a border all round, a shadow, a background unlike what
  * is behind it, or a background image), narrower than the screen and at most 1.2 screens tall. The camera frames a whole
- * card and keeps the edges of the view from slicing one.
+ * card and keeps the edges of the view from slicing one. `clippedTop` as for a box.
  */
-export type Block = { shotId: string; x: number; y: number; w: number; h: number };
+export type Block = { shotId: string; x: number; y: number; w: number; h: number; clippedTop?: true };
 
 export type Shot = {
   id: string;

@@ -319,7 +319,10 @@ export function inPageFindLogo(): FoundLogo | null {
   return { hasText: true, svg: null, imgSrc: null, rect: { w: r.width, h: r.height }, wordmark: true };
 }
 
-/** The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page. In pixels of the shot. */
+/**
+ * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page. In pixels of
+ * the shot; one that begins above the shot is kept from y 0 and marked `clippedTop`.
+ */
 export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[] {
   const { clean, visible, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
   const dpr = devicePixelRatio;
@@ -355,6 +358,8 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
       y: Math.round(Math.max(0, y) * dpr),
       w: Math.round(ix * dpr),
       h: Math.round(iy * dpr),
+      // It begins above the shot: the top of the shot cuts it.
+      ...(Math.round(y * dpr) < 0 ? { clippedTop: true as const } : {}),
     });
   };
   for (const el of document.querySelectorAll<HTMLElement>('h1, h2, h3')) push(el, 'heading', clean(el.innerText));
@@ -373,10 +378,11 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
 
 /**
  * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
- * order. In pixels of the shot, measured like the boxes. A block is 40 to 98% of the screen's width (a band as wide as the
- * page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all four sides, a shadow that is
- * not transparent, a background color unlike the one behind it (the nearest ancestor's that is not transparent, else
- * white), or a background image. What is fixed or sticky, and what is in it, floats over the page: it is no card of it.
+ * order. In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is 40 to 98% of the screen's
+ * width (a band as wide as the page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all
+ * four sides, a shadow that is not transparent, a background color unlike the one behind it (the nearest ancestor's that
+ * is not transparent, else white), or a background image. What is fixed or sticky, and what is in it, floats over the
+ * page: it is no card of it.
  */
 export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
   const { visible, toRgba, hex } = (window as unknown as CapWindow).__cap;
@@ -431,7 +437,13 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
     const ix = Math.max(0, Math.min(vw, x + r.width) - Math.max(0, x));
     const iy = Math.max(0, Math.min(limitH, y + r.height) - Math.max(0, y));
     if ((ix * iy) / (r.width * r.height) < 0.6 || !visible(el) || floats(el) || !drawsSurface(el)) continue;
-    out.push({ x: Math.round(Math.max(0, x) * dpr), y: Math.round(Math.max(0, y) * dpr), w: Math.round(ix * dpr), h: Math.round(iy * dpr) });
+    out.push({
+      x: Math.round(Math.max(0, x) * dpr),
+      y: Math.round(Math.max(0, y) * dpr),
+      w: Math.round(ix * dpr),
+      h: Math.round(iy * dpr),
+      ...(Math.round(y * dpr) < 0 ? { clippedTop: true as const } : {}),
+    });
   }
   return out;
 }

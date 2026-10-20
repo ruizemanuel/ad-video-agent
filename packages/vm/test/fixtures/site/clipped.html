@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clipped | Tiendita</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fbf7f4; color: #1a1614; }
+    section { min-height: 900px; padding: 80px 32px; }
+    /* Tall enough for the screen to scroll to the second heading at both sizes. */
+    section + section { min-height: 1600px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 640px; }
+    /* A section shot puts its heading 120 px under the top of the screen. The card with the picture ends 16 px above the
+       heading of the second section, so that shot starts 46 px into the card, and 36 px into the picture: both are
+       recorded clipped (more than 60% of each is on the screen). */
+    .photo-card { max-width: 640px; height: 150px; margin: 0 0 16px; padding: 10px; border: 1px solid #e3d9d3; border-radius: 12px; background: #ffffff; }
+    .photo-card svg { display: block; width: 300px; height: 130px; }
+    .card { max-width: 640px; height: 72px; margin: 16px 0; padding: 0 20px; display: flex; align-items: center; border: 1px solid #e3d9d3; border-radius: 12px; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>A shop with pictures</h1>
+    <p>Every product with its photo, its price and a button.</p>
+  </section>
+  <section>
+    <div class="photo-card">
+      <svg viewBox="0 0 300 130" xmlns="http://www.w3.org/2000/svg"><rect width="300" height="130" fill="#c81e6b"/><circle cx="150" cy="65" r="40" fill="#fbf0f5"/></svg>
+    </div>
+    <h2>Right under the picture</h2>
+    <div class="card">A card under the heading</div>
+    <p>The card above the heading starts above the top of this section's shot.</p>
+  </section>
+</body>
+</html>
