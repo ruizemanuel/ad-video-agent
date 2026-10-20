@@ -170,9 +170,16 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
     const [prefix, ...words] = scene.lines;
     if (prefix?.kind !== 'framing') report(path, 'structure', 'WordCycle needs a framing line first');
     const count = words.length;
-    if (count < CYCLE_WORDS.min || count > CYCLE_WORDS.max) report(path, 'structure', `WordCycle needs ${CYCLE_WORDS.min} or ${CYCLE_WORDS.max} words after its framing line, got ${count}`);
+    // The count is wrong: say as well how many beats the scene needs once the count is right, so that fixing the words does
+    // not leave the beats short and cost a second round. Only counts a scene could have are named, so that it never asks for
+    // more beats than a scene lasts.
+    if (count < CYCLE_WORDS.min || count > CYCLE_WORDS.max) {
+      const cut = `cut it to ${CYCLE_WORDS.max} words and give it at least ${wordCycleMinBeats(CYCLE_WORDS.max)} beats, or ${CYCLE_WORDS.min} words and ${wordCycleMinBeats(CYCLE_WORDS.min)} beats`;
+      const make = `make it ${CYCLE_WORDS.min} words with at least ${wordCycleMinBeats(CYCLE_WORDS.min)} beats, or ${CYCLE_WORDS.max} words with at least ${wordCycleMinBeats(CYCLE_WORDS.max)} beats`;
+      report(path, 'structure', `WordCycle needs ${CYCLE_WORDS.min} or ${CYCLE_WORDS.max} words after its framing line, got ${count}: ${count > CYCLE_WORDS.max ? cut : make}`);
+    }
     // The words are spread over the scene, each holding two beats at least (see wordEnterFrame): that takes two beats per word
-    // plus one. Said only for a count of words the scene could have, so that it never asks for more beats than a scene lasts.
+    // plus one.
     else if (scene.beats < wordCycleMinBeats(count)) report(path, 'structure', `WordCycle needs two beats per word plus one (${wordCycleMinBeats(count)}), got ${scene.beats}`);
   }
   if (scene.piece === 'TypeIn') checkTypeIn(path, scene, site, report);

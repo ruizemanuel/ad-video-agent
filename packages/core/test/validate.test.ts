@@ -314,9 +314,22 @@ describe('validateEdl: structure', () => {
       clean(wordCycle(['MP', 'Transferencia']));
       clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 7));
     });
-    it('says what it wants when a WordCycle has too many words, and does not ask for beats a scene cannot last', () => {
-      const four = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 8));
-      expect(four.map((p) => p.detail)).toEqual(['WordCycle needs 2 or 3 words after its framing line, got 4']);
+    it('says what it wants when a WordCycle has too many words: the beats it needs once the count is valid, never more than a scene lasts', () => {
+      const four = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 6));
+      expect(four.map((p) => p.detail)).toEqual([
+        'WordCycle needs 2 or 3 words after its framing line, got 4: cut it to 3 words and give it at least 7 beats, or 2 words and 5 beats',
+      ]);
+      // The same with 5 words, and with the 8 beats a scene lasts at most: the count is what is wrong.
+      const five = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8));
+      expect(five.map((p) => p.detail)).toEqual([
+        'WordCycle needs 2 or 3 words after its framing line, got 5: cut it to 3 words and give it at least 7 beats, or 2 words and 5 beats',
+      ]);
+    });
+    it('says what it wants when a WordCycle has too few words, in the same terms', () => {
+      const one = problemsOf(wordCycle(['MP'], framing('Pagá con'), 6));
+      expect(one.map((p) => p.detail)).toEqual([
+        'WordCycle needs 2 or 3 words after its framing line, got 1: make it 2 words with at least 5 beats, or 3 words with at least 7 beats',
+      ]);
     });
     it('flags a WordCycle without lines', () => expect(rules(inBody({ piece: 'WordCycle', beats: 6, lines: [] }))).toEqual(['structure', 'structure']));
     it('requires two beats per word plus one, so that every word stays on screen for two beats within the scene', () => {
