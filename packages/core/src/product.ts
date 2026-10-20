@@ -18,13 +18,33 @@ const holdsCenter = (block: Block, region: Region): boolean => {
 export const blockOf = (blocks: readonly Block[], shotId: string, box: Region): Block | undefined =>
   blocks.filter((b) => b.shotId === shotId && holdsCenter(b, box)).sort((a, b) => a.w * a.h - b.w * b.h)[0];
 
-const isPicture = (box: Box): boolean => box.kind === 'image' || box.kind === 'price';
+// What makes a "price" box show money. The capture calls a price any short text with a currency symbol, a percentage, a
+// currency code or a billing period, so "0% de comisión", the stat of a feature card, is a price box too: it takes a
+// currency or a billing period, with a number, to be product UI.
+const NUMBER = String.raw`\d[\d.,]*`;
+const SYMBOL = '[$€£¥₹₩₽₺₫₪₱₦฿]';
+const CODE =
+  '(?:USDT|USDC|cUSD|USD|EUR|GBP|ARS|BRL|MXN|CLP|COP|PEN|UYU|BOB|PYG|VES|CAD|AUD|NZD|CHF|JPY|CNY|INR|KRW|RUB|TRY|ZAR|SEK|NOK|DKK|PLN|CZK|HUF|AED|SAR|ILS|NGN|KES|PHP|THB|IDR|VND|SGD|HKD|TWD)';
+const PERIOD = '(?:mes|month|mo|año|ano|year|yr|semana|week|día|dia|day)';
+// A symbol or a code beside a number ("US$ 10", "€9", "9 €", "ARS 4500"), in either order; the codes are in capitals.
+const MONEY = new RegExp(
+  String.raw`${SYMBOL}\s?${NUMBER}|${NUMBER}\s?${SYMBOL}|(?<![\p{L}\d])${CODE}\s?${NUMBER}|${NUMBER}\s?${CODE}(?!\p{L})`,
+  'u',
+);
+// A number with a billing period ("4.990 / mes", "9 per month", "4990 por mes").
+const BILLED = new RegExp(String.raw`${NUMBER}\s?(?:/|por|per|al|cada)\s?${PERIOD}(?!\p{L})`, 'iu');
+
+const showsMoney = (text: string | undefined): boolean => text !== undefined && (MONEY.test(text) || BILLED.test(text));
+
+// What the box is evidence of: an image, or a price that shows money.
+const isPicture = (box: Box): boolean => box.kind === 'image' || (box.kind === 'price' && showsMoney(box.text));
 
 /**
  * Whether the box `boxIndex` of the shot (counted among the boxes of that shot, as the director counts it) shows product
- * UI: the shot has an image or a price that is in the same section as the box (both sections known) or whose center lies
- * in the card the box is in (see blockOf; a capture without blocks has no cards). A box that is itself an image or a
- * price is product UI. A cta alone is not: a "sign up" button over text is marketing. False for a box that is not there.
+ * UI: the shot has an image or a price that shows money (a percentage alone is not one) in the same section as the box
+ * (both sections known) or whose center lies in the card the box is in (see blockOf; a capture without blocks has no
+ * cards). A box that is itself such an image or price is product UI. A cta alone is not: a "sign up" button over text is
+ * marketing. False for a box that is not there.
  */
 export const isProductTarget = (site: SiteData, shotId: string, boxIndex: number): boolean => {
   const boxes = site.boxes.filter((b) => b.shotId === shotId);

@@ -49,7 +49,7 @@ describe('isProductTarget: the section of the target', () => {
     expect(isProductTarget(site([box('heading', 56, 200, 600, 100, { sectionId: 's7', text: 'Cobrás como querés' })]), SHOT, 0)).toBe(false));
 
   it.each(['image', 'price'] as const)('is true for a heading whose section has %s', (kind) =>
-    expect(isProductTarget(site([box('heading', 56, 200, 600, 100, { sectionId: 's7' }), box(kind, 56, 900, 600, 400, { sectionId: 's7' })]), SHOT, 0)).toBe(true));
+    expect(isProductTarget(site([box('heading', 56, 200, 600, 100, { sectionId: 's7' }), box(kind, 56, 900, 600, 400, { sectionId: 's7', ...(kind === 'price' ? { text: '$4.990' } : {}) })]), SHOT, 0)).toBe(true));
 
   it('is false when the only product box is in another section', () =>
     expect(isProductTarget(site([box('heading', 56, 200, 600, 100, { sectionId: 's7' }), box('image', 56, 900, 600, 400, { sectionId: 's8' })]), SHOT, 0)).toBe(false));
@@ -79,7 +79,7 @@ describe('isProductTarget: the section of the target', () => {
     // Box 0 of m-s7 is the heading: the image of m-s6 is not in its shot.
     expect(isProductTarget(site(boxes), SHOT, 0)).toBe(false);
     expect(isProductTarget(site(boxes), SHOT, 1)).toBe(false);
-    expect(isProductTarget(site([...boxes, box('price', 56, 600, 300, 80, { sectionId: 's7' })]), SHOT, 1)).toBe(true);
+    expect(isProductTarget(site([...boxes, box('price', 56, 600, 300, 80, { sectionId: 's7', text: '$4.990' })]), SHOT, 1)).toBe(true);
   });
 
   it('is false for a box that is not there, or a shot that is not there', () => {
@@ -155,4 +155,46 @@ describe('isProductTarget: the block of the target', () => {
 
   it('is true by the section even when the card around the heading holds no picture', () =>
     expect(isProductTarget(site([heading, { ...picture, sectionId: 's7' }], [block(60, 280, 660, 200)]), SHOT, 0)).toBe(true));
+});
+
+describe('isProductTarget: a price box has to show money', () => {
+  const heading = box('heading', 56, 200, 600, 100, { sectionId: 's7', text: 'Cobrás como querés' });
+  const priced = (text: string): SiteData => site([heading, box('price', 56, 900, 300, 80, { sectionId: 's7', text })]);
+
+  // The capture also calls a price any text with a percentage ("0% de comisión"): a stat of a feature card is not a product.
+  it.each(['0% de comisión', '0%', '30 %', '1,5%', '2% por mes', '12', '1.000', '100 usuarios', 'Hasta 24 cuotas'])(
+    'does not take "%s" for evidence: the section of a heading with only that is marketing',
+    (text) => expect(isProductTarget(priced(text), SHOT, 0)).toBe(false),
+  );
+
+  it.each(['$ 4.500', '$4.990', '$0', 'US$ 10', 'R$ 50', '€9', '£12.50', '¥1,200', '9 €', 'ARS 4500', '4500 ARS', 'USD 10', '10 USD', 'USDT 10', 'cUSD 5',
+    '4.990 / mes', '4990/mes', '9 per month', '4990 por mes', '99 /year', '49 / año', '5 al mes', 'Pack de Presets Lightroom $ 4.500', 'Plan Pro: 4.990 por MES'])(
+    'takes "%s" for evidence: the heading of its section is product UI',
+    (text) => expect(isProductTarget(priced(text), SHOT, 0)).toBe(true),
+  );
+
+  it('is not product UI when the target itself is a price that shows no money', () =>
+    expect(isProductTarget(site([box('price', 56, 900, 300, 80, { sectionId: 's7', text: '0% de comisión' })]), SHOT, 0)).toBe(false));
+
+  it('is product UI when the target itself is a price that shows money', () =>
+    expect(isProductTarget(site([box('price', 56, 900, 300, 80, { sectionId: 's7', text: 'US$ 10' })]), SHOT, 0)).toBe(true));
+
+  it('is not product UI when the target is a percentage with no section: it is no picture on its own', () =>
+    expect(isProductTarget(site([box('price', 56, 900, 300, 80, { text: '0%' })]), SHOT, 0)).toBe(false));
+
+  it('counts the same for the card: a percentage inside the block is not evidence, a price is', () => {
+    const card = [block(40, 250, 700, 800)];
+    const boxes = (text: string): Box[] => [box('heading', 80, 300, 600, 100), box('price', 100, 450, 200, 60, { text })];
+    expect(isProductTarget(site(boxes('0% de comisión'), card), SHOT, 0)).toBe(false);
+    expect(isProductTarget(site(boxes('$ 4.500'), card), SHOT, 0)).toBe(true);
+  });
+
+  it('lets an image or a real price in the same section decide even when a percentage is there too', () => {
+    const boxes = [heading, box('price', 56, 900, 300, 80, { sectionId: 's7', text: '0%' }), box('price', 56, 1000, 300, 80, { sectionId: 's7', text: '$ 4.500' })];
+    expect(isProductTarget(site(boxes), SHOT, 0)).toBe(true);
+    expect(isProductTarget(site([heading, box('price', 56, 900, 300, 80, { sectionId: 's7', text: '0%' }), box('image', 56, 1000, 300, 200, { sectionId: 's7' })]), SHOT, 0)).toBe(true);
+  });
+
+  it('keeps a price box with no text out: there is nothing to show money', () =>
+    expect(isProductTarget(site([heading, box('price', 56, 900, 300, 80, { sectionId: 's7' })]), SHOT, 0)).toBe(false));
 });

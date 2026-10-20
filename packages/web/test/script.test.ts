@@ -403,6 +403,12 @@ describe('siteForModel', () => {
       expect(flags(textOnly(undefined, [picture]), 'm-s7')).toEqual([false, false, true]);
     });
 
+    it('is false for a card whose only price is a percentage, and true once a price shows money', () => {
+      const stat = (text: string): SiteData['boxes'][number] => ({ shotId: 'm-s7', sectionId: 's7', kind: 'price', text, x: 80, y: 700, w: 300, h: 60 });
+      expect(flags(textOnly(undefined, [stat('0% de comisión')]), 'm-s7')).toEqual([false, false, false]);
+      expect(flags(textOnly(undefined, [stat('$ 4.500')]), 'm-s7')).toEqual([true, true, true]);
+    });
+
     it('does not change the numbering of boxIndex', () =>
       expect(siteForModel(textOnly()).shots.find((s) => s.id === 'm-s7')?.boxes.map((b) => b.boxIndex)).toEqual([0, 1]));
   });

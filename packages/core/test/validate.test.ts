@@ -245,6 +245,13 @@ describe('validateEdl: structure', () => {
     it('accepts the same heading when its section has a price', () =>
       clean(focus(withShot([heading, { shotId: SHOT, sectionId: 's3', kind: 'price', text: '$4.990', x: 80, y: 500, w: 300, h: 80 }]))));
 
+    it('reports a feature card whose only "price" is a percentage: the capture calls "0% de comisión" a price', () => {
+      const stat: Box = { shotId: SHOT, sectionId: 's3', kind: 'price', text: '0% de comisión', x: 80, y: 300, w: 600, h: 100 };
+      structure(focus(withShot([{ ...heading, text: '0% de comisión' }, stat])));
+      structure(scroll(withShot([stat])));
+      clean(focus(withShot([{ ...heading, text: '0% de comisión' }, stat, { ...stat, text: 'US$ 10', y: 500 }])));
+    });
+
     it('accepts the same heading when its section has an image', () => clean(focus(withShot([heading, { ...picture, sectionId: 's3' }]))));
 
     it('accepts a heading inside a block that also holds an image, whatever the sections', () =>
