@@ -1,6 +1,20 @@
 import { FORMATS, type Block, type Box, type Scene, type Shot, type SiteData } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { cameraAt, focusCamera, focusMove, focusRegion, focusShot, placeShot, resolveShot, scrollMove, scrollShot, stageLayout, type Camera } from '../src/video/camera';
+import {
+  cameraAt,
+  focusCamera,
+  focusLanding,
+  focusMove,
+  focusRegion,
+  focusShot,
+  placeShot,
+  resolveShot,
+  scrollLanding,
+  scrollMove,
+  scrollShot,
+  stageLayout,
+  type Camera,
+} from '../src/video/camera';
 
 const shot = (id: string, viewport: Shot['viewport'], height: number, sectionId?: string): Shot => ({
   id,
@@ -54,8 +68,12 @@ const viewOf = (target: Shot, camera: Camera, boxes: Box[], format: '9x16' | '16
   const top = -placed.y / placed.scale;
   return { top, bottom: top + (2 * stageLayout(format).focusY) / placed.scale };
 };
-const slices = (view: { top: number }, r: { y: number; h: number }): boolean => r.y < view.top && r.y + r.h > view.top;
-const shows = (view: { top: number; bottom: number }, r: { y: number; h: number }): boolean => r.y >= view.top && r.y + r.h <= view.bottom;
+// A view that comes back from placeShot is off by float noise (562.0000000000001 for a top flush on 562).
+const EPS = 1e-6;
+/** Whether the top edge of the view cuts through the region: one the capture clipped at the top of its shot goes on above it. */
+const slices = (view: { top: number }, r: { y: number; h: number; clippedTop?: true }): boolean =>
+  (r.clippedTop === true || r.y < view.top - EPS) && r.y + r.h > view.top + EPS;
+const shows = (view: { top: number; bottom: number }, r: { y: number; h: number }): boolean => r.y >= view.top - EPS && r.y + r.h <= view.bottom + EPS;
 
 describe('the camera on a UI shot', () => {
   it('never zooms a phone shot past 1.12x', () => {
@@ -427,6 +445,91 @@ describe('the camera near the end of a shot', () => {
       expect(picture.y).toBeGreaterThanOrEqual(view.top);
       expect(picture.y - view.top).toBeLessThan(0.1 * (view.bottom - view.top));
     }
+  });
+});
+
+describe("the target's own card and the top of a one-screen shot", () => {
+  const pieces = ['UiFocus', 'UiScroll'] as const;
+  const moveOf = (piece: (typeof pieces)[number]) => (piece === 'UiFocus' ? focusMove : scrollMove);
+  const landingOf = (piece: (typeof pieces)[number]) => (piece === 'UiFocus' ? focusLanding : scrollLanding);
+  const priceRow = (shotId: string, sectionId: string, text: string, y: number): Box => ({ shotId, sectionId, kind: 'price', text, x: 66, y, w: 648, h: 80 });
+
+  // The demo store's "Guía" card on the phone page: a photo, a title and a price row, 719 px tall, too tall to frame whole
+  // once UiFocus zooms in, and too tall for UiScroll at the base scale (more than 90% of what the card shows).
+  const before = block('m-full', 32, 562, 716, 719);
+  const guide = block('m-full', 32, 1312, 716, 719);
+  const after = block('m-full', 32, 2063, 716, 274);
+  const guideBoxes: Box[] = [
+    { shotId: 'm-full', sectionId: 's15', kind: 'image', x: 34, y: 1314, w: 712, h: 445 },
+    { shotId: 'm-full', sectionId: 's15', kind: 'heading', text: 'Guía: Monetiza tu Instagram', x: 66, y: 1791, w: 648, h: 48 },
+    priceRow('m-full', 's15', '$ 8.900 Agregar', 1917),
+    { shotId: 'm-full', sectionId: 's15', kind: 'price', text: '$ 8.900', x: 66, y: 1933, w: 132, h: 56 },
+    { shotId: 'm-full', sectionId: 's15', kind: 'cta', text: 'Agregar', x: 542, y: 1925, w: 172, h: 72 },
+    { shotId: 'm-full', sectionId: 's16', kind: 'heading', text: 'Comunidad Discord Privada', x: 66, y: 2097, w: 648, h: 48 },
+    priceRow('m-full', 's16', '$ 3.000 Agregar', 2222),
+  ];
+
+  for (const piece of pieces) {
+    it(`${piece}: aims at a price at the bottom of a card too tall to frame, through that card's photo, not on the platform-UI line`, () => {
+      const price = guideBoxes[3]!;
+      const view = viewOf(phonePage, moveOf(piece)(price, phonePage, '9x16', guideBoxes, [before, guide, after]).to, guideBoxes);
+      // The top edge may pass through the price's own card, but through no box and no other card.
+      expect(guideBoxes.filter((b) => slices(view, b))).toEqual([]);
+      expect([before, after].filter((b) => slices(view, b))).toEqual([]);
+      expect(shows(view, price)).toBe(true);
+      // The price stays in the upper half of what the card shows, near where the camera aimed, not sunk to the platform UI.
+      expect((price.y + price.h / 2 - view.top) / (view.bottom - view.top)).toBeLessThan(0.5);
+    });
+  }
+
+  // The phone screen of s15, which starts partway through s14's card: the capture records the card and its photo from
+  // the top of the shot and says they go on above it.
+  const screen = shot('x1-m-s15', 'mobile', 1688, 's15');
+  const page = shot('x1-m-full', 'mobile', 3072);
+  const clippedCard: Block = { shotId: 'x1-m-s15', x: 32, y: 0, w: 716, h: 647, clippedTop: true };
+  const clippedPhoto: Box = { shotId: 'x1-m-s15', sectionId: 's14', kind: 'image', x: 34, y: 0, w: 712, h: 375, clippedTop: true };
+  const screenBoxes: Box[] = [
+    clippedPhoto,
+    { shotId: 'x1-m-s15', sectionId: 's15', kind: 'heading', text: 'Guía: Monetiza tu Instagram', x: 66, y: 407, w: 648, h: 48 },
+    priceRow('x1-m-s15', 's15', '$ 8.900 Agregar', 533),
+    { shotId: 'x1-m-s15', sectionId: 's15', kind: 'cta', text: 'Agregar', x: 542, y: 541, w: 172, h: 72 },
+    priceRow('x1-m-s15', 's16', '$ 3.000 Agregar', 838),
+  ];
+  const screenBlocks = [clippedCard, block('x1-m-s15', 32, 679, 716, 274), block('x1-m-s15', 32, 984, 716, 274)];
+  const pageBoxes: Box[] = [{ shotId: 'x1-m-full', sectionId: 's14', kind: 'image', x: 34, y: 1314, w: 712, h: 445 }];
+
+  it('counts what the capture clipped at the top of a one-screen shot as cut by a view that starts there', () => {
+    // 4x5: the button of s15's card, in the card the screen starts partway through.
+    const cta = screenBoxes[3]!;
+    const view = viewOf(screen, focusMove(cta, screen, '4x5', screenBoxes, screenBlocks).to, screenBoxes, '4x5');
+    expect(slices(view, clippedPhoto)).toBe(false);
+    expect(screenBoxes.filter((b) => slices(view, b))).toEqual([]);
+    expect(shows(view, cta)).toBe(true);
+    expect(focusLanding(cta, screen, '4x5', screenBoxes, screenBlocks).clean).toBe(true);
+  });
+
+  it('takes the full page when the one-screen shot cannot frame the target cleanly', () => {
+    const store = site([screen, page], [...screenBoxes, ...pageBoxes], screenBlocks);
+    // The photo the screen starts partway through: any view of the screen either cuts it or leaves it out.
+    expect(focusShot(store, uiScene('UiFocus', 'x1-m-s15', 0), '9x16')).toEqual({ shot: page, box: pageBoxes[0] });
+    expect(focusLanding(clippedPhoto, screen, '9x16', store.boxes, store.blocks).clean).toBe(false);
+  });
+
+  it('says whether a landing is clean: nothing cut at the top edge, and the target whole above the platform UI', () => {
+    for (const piece of pieces) {
+      // The price at the bottom of the "Guía" card: clean, and the very camera the move lands on.
+      const price = guideBoxes[3]!;
+      const landing = landingOf(piece)(price, phonePage, '9x16', guideBoxes, [before, guide, after]);
+      expect(landing).toEqual({ camera: moveOf(piece)(price, phonePage, '9x16', guideBoxes, [before, guide, after]).to, clean: true });
+      // Rows 22 px apart in 4x5: the top sits flush on the row above, which placeShot gives back with float noise.
+      const rows = [block('m-full', 102, 1427, 576, 229), block('m-full', 102, 1678, 576, 229), block('m-full', 102, 1929, 576, 183)];
+      const prices = rows.map((row, i) => box('m-full', 'price', `Product ${i + 1} $ ${i + 4}.500`, 244, row.y + 26, 212, row.h - 52));
+      expect(landingOf(piece)(prices[2]!, phonePage, '4x5', prices, [block('m-full', 56, 1215, 668, 943), ...rows]).clean).toBe(true);
+    }
+    // A scroll to the last card of the short store page: the top edge is clean, but the card stays under the platform UI.
+    const last = priceRow('x1-m-full', 's18', '$ 15.000 Pedir', 2879);
+    const cards = [block('x1-m-full', 32, 1312, 716, 719), block('x1-m-full', 32, 2063, 716, 274), block('x1-m-full', 32, 2368, 716, 274), block('x1-m-full', 32, 2674, 716, 319)];
+    expect(scrollLanding(last, page, '9x16', [last], cards).clean).toBe(false);
   });
 });
 
