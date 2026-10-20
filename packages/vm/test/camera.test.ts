@@ -115,11 +115,14 @@ describe('the camera on a UI shot', () => {
     expect((stage.cardW - placed.x) / placed.scale).toBeCloseTo(1920 + 0.08 * 960);
   });
 
-  it('starts wide and a little lower, and eases the zoom in on the way to the target', () => {
+  it('starts wide and a little above the target, and eases the zoom in on the way down to it', () => {
     const price = box('m-full', 'price', '$ 4.500', 244, 2400, 212, 40);
     const move = focusMove(price, phonePage, '9x16', [price]);
     expect(move.from.scale).toBe(1);
-    expect(move.from.y).toBeGreaterThan(move.to.y);
+    // The camera travels down the page, so the page moves up into place, the same way as the card it is in rises.
+    expect(move.from.y).toBeLessThan(move.to.y);
+    const center = { x: price.x + price.w / 2, y: price.y + price.h / 2 };
+    expect(inFrame(phonePage, center, move.from, [price]).y).toBeGreaterThan(inFrame(phonePage, center, move.to, [price]).y);
     expect(cameraAt(move, 0)).toEqual(move.from);
     expect(cameraAt(move, 1)).toEqual(move.to);
     // The zoom grows by the same factor in each step of the way (it reads as a steady push in), the pan in equal steps.

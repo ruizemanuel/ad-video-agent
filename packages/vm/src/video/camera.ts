@@ -57,7 +57,8 @@ const MIN_CONTENT = 0.3;
 // The target takes at most this share of the card.
 const TARGET_WIDTH = 0.78;
 const TARGET_HEIGHT = 0.6;
-// The opening framing sits this share of the card lower than the target, so the move also travels up to it.
+// The opening framing sits this share of the card above the target, so the move also travels down the page to it: the
+// page moves up into place, the same way the card it is in rises.
 const OPENING_DROP = 0.12;
 const TOP_CUT_MARGIN = 24;
 
@@ -192,8 +193,8 @@ const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[]):
 // ---------- moves ----------
 
 /**
- * UiFocus: the camera starts wide on the real UI, a little below the target, and eases in to the element that backs the
- * caption. It zooms until the target takes 78% of the card's width or 60% of its height, within the limits of the
+ * UiFocus: the camera starts wide on the real UI, a little above the target, and eases down and in to the element that
+ * backs the caption, like a scroll that settles. It zooms until the target takes 78% of the card's width or 60% of its height, within the limits of the
  * shot's viewport, and pans sideways only when the view gets narrower than most of the content.
  */
 export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = []): Move => {
@@ -206,7 +207,7 @@ export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxe
   const scale = Math.max(base, Math.min(MAX_SCALE, base * maxZoom, (cardW * TARGET_WIDTH) / target.w, (cardH * TARGET_HEIGHT) / target.h));
   const pan = cardW / scale < (x1 - x0) * 0.8;
   const targetY = target.y + target.h / 2;
-  const from: Camera = { scale: 1, x: middle, y: targetY + (cardH * OPENING_DROP) / base };
+  const from: Camera = { scale: 1, x: middle, y: targetY - (cardH * OPENING_DROP) / base };
   const to = avoidTopCut({ scale: scale / base, x: pan ? target.x + target.w / 2 : middle, y: targetY }, scale, shot, format, boxes, box);
   return { from, to };
 };
