@@ -57,10 +57,13 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
 - **KineticHeadline**: 1 to 3 lines of very large type, revealed line by line. Each line is
   ideally at most 18 characters (never more than 24). One idea. At most one \`accent\` in the scene.
 - **UiFocus**: a real screenshot in a large card, with a caption above it; the camera eases in to
-  one element. Needs \`shotId\` and \`boxIndex\` (the element the caption is about, from the same
-  section as its claim). One caption line, at most 40 characters.
-- **UiScroll**: the camera glides down a full-page screenshot (ids ending in \`-full\`), optionally
-  landing on \`boxIndex\`. One caption line, at most 40 characters.
+  one element. Needs \`shotId\` and \`boxIndex\` (required): the element the caption is about, a box
+  with \`product: true\`. One caption line, at most 40 characters.
+- **UiScroll**: the camera glides down a full-page screenshot (ids ending in \`-full\`) and lands on
+  \`boxIndex\` (required), a box with \`product: true\`. One caption line, at most 40 characters.
+- A box has \`product: true\` when there is an image or a price in its section or card (a button over
+  text does not count). This is checked: a \`UiFocus\` or \`UiScroll\` on a box with \`product: false\`
+  is rejected. State that claim in a type scene instead.
 - In a \`UiFocus\` or a \`UiScroll\`, the caption can change once, so that the idea changes about every
   2 seconds: a second line with \`atBeat\`, the beat of the scene at which it replaces the first.
   \`atBeat\` is 2 or later and less than the scene's \`beats\`, and it goes on that second line only.
@@ -84,7 +87,7 @@ const COMPOSITION_RULES = `Composition rules:
 - **The real product is the protagonist.** You see the phone screenshots as images: tell product
   UI (an app screen, a store, a dashboard, a checkout, real photos) apart from marketing text
   cards (feature grids, "why us" sections). Prefer product UI for \`UiFocus\`/\`UiScroll\`; a text
-  card only proves a claim, it does not show the product. The main cut (hooks[0] + body) shows the
+  card only proves a claim, it does not show the product, and this is checked (see \`product\`). The main cut (hooks[0] + body) shows the
   most distinctive product UI at least twice; at least one of the three hooks opens on it.
 - **Brand-specific, not a template.** Ask yourself: if the logo and name were swapped for a
   competitor's, would this ad still work? Then it is generic. Lean on what only this product has:
@@ -97,8 +100,8 @@ const COMPOSITION_RULES = `Composition rules:
 - If no screenshot shows product UI for a claim, state it in a type scene: never use a section
   that is mostly paragraphs or a marketing text card as a product shot.
 - Never repeat a phrase across scenes (e.g. "en un link" in two captions).
-- A \`UiScroll\` must land on something worth seeing (\`boxIndex\` on a heading, price or button of
-  product UI), not in the middle of a photo or between sections.
+- A \`UiScroll\` must land on something worth seeing (\`boxIndex\` on a heading, price or button with
+  \`product: true\`), not in the middle of a photo or between sections.
 - Alternate type scenes and product scenes; never two \`UiFocus\` in a row on the same shot.
 - Punctuation is consistent: statements end with a period, questions with a question mark.
 - **Extra pages** (shots whose id starts with \`x\`, sections in \`extraSections\`) are imagery only:

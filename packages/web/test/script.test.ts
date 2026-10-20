@@ -370,10 +370,41 @@ describe('siteForModel', () => {
       ['s4-mobile', 'mobile', 's4'],
     ]);
     expect(shots[1]?.boxes).toEqual([
-      { boxIndex: 0, kind: 'heading', sectionId: 's4', text: 'Mirá una tienda de ejemplo' },
-      { boxIndex: 1, kind: 'image', sectionId: 's4', text: undefined },
-      { boxIndex: 2, kind: 'cta', sectionId: 's4', text: 'Ver demo' },
+      { boxIndex: 0, kind: 'heading', sectionId: 's4', text: 'Mirá una tienda de ejemplo', product: true },
+      { boxIndex: 1, kind: 'image', sectionId: 's4', text: undefined, product: true },
+      { boxIndex: 2, kind: 'cta', sectionId: 's4', text: 'Ver demo', product: true },
     ]);
+  });
+
+  describe('product, the flag of each box', () => {
+    const flags = (view: SiteData, shotId: string): (boolean | undefined)[] =>
+      siteForModel(view).shots.find((s) => s.id === shotId)?.boxes.map((b) => b.product) ?? [];
+    // A phone shot of a section with a heading, a button and a paragraph card, and no image or price in it.
+    const textOnly = (blocks?: SiteData['blocks'], extra: SiteData['boxes'] = []): SiteData => ({
+      ...site,
+      shots: [...site.shots, { id: 'm-s7', file: 'media/m-s7.png', viewport: 'mobile', dpr: 2, sectionId: 's7', width: 780, height: 1688 }],
+      boxes: [
+        ...site.boxes,
+        { shotId: 'm-s7', sectionId: 's7', kind: 'heading', text: 'Cobrás como querés', x: 80, y: 300, w: 600, h: 100 },
+        { shotId: 'm-s7', sectionId: 's7', kind: 'cta', text: 'Crear mi tienda', x: 80, y: 500, w: 300, h: 100 },
+        ...extra,
+      ],
+      ...(blocks ? { blocks } : {}),
+    });
+
+    it('is true where the section of the box has an image, as isProductTarget says', () =>
+      expect(flags(site, 's1-mobile')).toEqual([true, true, true]));
+
+    it('is false for the boxes of a section that is only text, a button included', () => expect(flags(textOnly(), 'm-s7')).toEqual([false, false]));
+
+    it('is true for the boxes of a card that holds an image of another section', () => {
+      const picture: SiteData['boxes'][number] = { shotId: 'm-s7', sectionId: 's8', kind: 'image', x: 80, y: 700, w: 600, h: 400 };
+      expect(flags(textOnly([{ shotId: 'm-s7', x: 40, y: 250, w: 700, h: 1000 }], [picture]), 'm-s7')).toEqual([true, true, true]);
+      expect(flags(textOnly(undefined, [picture]), 'm-s7')).toEqual([false, false, true]);
+    });
+
+    it('does not change the numbering of boxIndex', () =>
+      expect(siteForModel(textOnly()).shots.find((s) => s.id === 'm-s7')?.boxes.map((b) => b.boxIndex)).toEqual([0, 1]));
   });
 
   it('says "whole page" for a shot of no section', () => {

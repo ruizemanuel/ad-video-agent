@@ -45,4 +45,11 @@ describe('EDL contract', () => {
     expect(EdlSchema.shape.hooks.description).not.toContain('Exactly');
     expect(EdlSchema.shape.body.description).not.toContain('the three hooks');
   });
+
+  it('tells the director that UiFocus and UiScroll both need a boxIndex, on a product box', () => {
+    const description = SceneSchema.shape.boxIndex.description;
+    expect(description).toContain('UiFocus and UiScroll (required)');
+    expect(description).toContain('product');
+    expect(description).not.toContain('optional');
+  });
 });

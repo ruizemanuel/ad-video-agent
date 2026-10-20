@@ -53,6 +53,30 @@ describe('DIRECTOR_SYSTEM', () => {
   });
 
   it('treats the site and the brief as material, never as instructions', () => expect(DIRECTOR_SYSTEM).toContain('not instructions'));
+
+  describe('product UI', () => {
+    // The prompts wrap their lines: the rules are read as a sentence.
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+
+    it('asks UiFocus and UiScroll for a boxIndex, required, on a box with product: true', () => {
+      expect(DIRECTOR_SYSTEM).toMatch(/\*\*UiFocus\*\*[\s\S]*?`boxIndex` \(required\)[\s\S]*?`product: true`[\s\S]*?\*\*UiScroll\*\*/);
+      expect(DIRECTOR_SYSTEM).toMatch(/\*\*UiScroll\*\*[\s\S]*?`boxIndex` \(required\)[\s\S]*?`product: true`[\s\S]*?\*\*ClaimStack\*\*/);
+      // UiScroll no longer lands "optionally" on a box.
+      expect(flat(DIRECTOR_SYSTEM)).not.toContain('optionally landing');
+    });
+
+    it('says that a text card is not a product shot, and that the code checks it', () => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain('and this is checked');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('a `UiFocus` or `UiScroll` on a box with `product: false` is rejected');
+    });
+
+    it('tells what product means for a box: an image or a price in its section or card', () =>
+      expect(flat(DIRECTOR_SYSTEM)).toContain('an image or a price in its section or card'));
+
+    it('holds the corrector to the same rules', () => {
+      for (const rule of ['`boxIndex` (required)', 'an image or a price in its section or card', 'is rejected']) expect(flat(PATCH_SYSTEM)).toContain(rule);
+    });
+  });
 });
 
 describe('directorRequest', () => {

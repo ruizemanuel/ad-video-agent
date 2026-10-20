@@ -30,7 +30,11 @@ export const SceneSchema = z.object({
   beats: z.number().int().describe('Scene length in beats of the track.'),
   lines: z.array(LineSchema).describe('Text of the scene; see the piece rules.'),
   shotId: z.string().optional().describe('UiFocus and UiScroll: id of a screenshot from `shots`.'),
-  boxIndex: z.number().int().optional().describe('UiFocus (required) and UiScroll (optional): index of the target box within that shot.'),
+  boxIndex: z
+    .number()
+    .int()
+    .optional()
+    .describe('UiFocus and UiScroll (required): index of the target box within that shot, a box with `product: true`.'),
   variant: z
     .enum(['url', 'prompt'])
     .optional()
