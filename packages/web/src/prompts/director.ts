@@ -87,8 +87,9 @@ const COMPOSITION_RULES = `Composition rules:
 - **The real product is the protagonist.** You see the phone screenshots as images: tell product
   UI (an app screen, a store, a dashboard, a checkout, real photos) apart from marketing text
   cards (feature grids, "why us" sections). Prefer product UI for \`UiFocus\`/\`UiScroll\`; a text
-  card only proves a claim, it does not show the product, and this is checked (see \`product\`). The main cut (hooks[0] + body) shows the
-  most distinctive product UI at least twice; at least one of the three hooks opens on it.
+  card only proves a claim, it does not show the product, and this is checked (see \`product\`).
+  The main cut (hooks[0] + body) shows the most distinctive product UI at least twice; at least
+  one of the three hooks opens on it.
 - **Brand-specific, not a template.** Ask yourself: if the logo and name were swapped for a
   competitor's, would this ad still work? Then it is generic. Lean on what only this product has:
   its UI, its numbers, its payment methods, its audience's words.
