@@ -67,6 +67,16 @@ describe('DIRECTOR_SYSTEM', () => {
       expect(rules).not.toContain('leans on `WordCycle` and `TypeIn`');
     });
 
+    it.each([
+      ['the director', DIRECTOR_SYSTEM],
+      ['the corrector', PATCH_SYSTEM],
+    ])('tells %s that the rhythm of body scenes does not cover a WordCycle, which takes up to 7 beats', (_, system) => {
+      const rules = flat(system);
+      expect(rules).toContain('body scenes 4 to 6 (a `WordCycle` takes two beats per word plus one, up to 7)');
+      // Still no scene over 8 beats.
+      expect(rules).toContain('No scene lasts under 2 or over 8 beats');
+    });
+
     it('no longer allows 4 or 5 words, or a beat per word', () => {
       for (const rules of [flat(DIRECTOR_SYSTEM), flat(PATCH_SYSTEM)]) {
         expect(rules).not.toContain('2 to 5 lines of one word');

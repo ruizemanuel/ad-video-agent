@@ -39,9 +39,9 @@ export const STRUCTURE_RULES = `# Structure and timing
 - Pick \`bpm\` from the energy of the site (calm: 98-110, bold: 112-128).
 - Durations are in beats: seconds = beats × 60 / bpm. Every hook plus body plus cta should last
   18 to 22 seconds (at 112 bpm that is 34 to 41 beats), and never under 15 or over 30.
-- Rhythm: hook scenes last 2 to 4 beats, with 1 or 2 beats per group of words; body scenes 4 to 6;
-  the cta 6. No scene lasts under 2 or over 8 beats. Give text-heavy scenes more beats (a reader
-  needs about 0.35 s per word, plus 1 s).
+- Rhythm: hook scenes last 2 to 4 beats, with 1 or 2 beats per group of words; body scenes 4 to 6
+  (a \`WordCycle\` takes two beats per word plus one, up to 7); the cta 6. No scene lasts under 2 or
+  over 8 beats. Give text-heavy scenes more beats (a reader needs about 0.35 s per word, plus 1 s).
 - \`transitionIn\`: "cut" by default. Use "wipe" at most twice, e.g. into the first body scene and
   into the cta.
 - \`style.energy\` and \`style.density\` describe the site: "bold" for strong colors and big type,
