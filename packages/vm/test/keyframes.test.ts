@@ -1,6 +1,8 @@
-import { beatsToFrames, layoutScenes, type Edl, type Scene } from '@app/core';
+import { beatsToFrames, focusMove, layoutScenes, scrollMove, settledFrame, type Box, type Edl, type Scene, type Shot } from '@app/core';
 import { describe, expect, it } from 'vitest';
 import { keyframePlan } from '../src/render/keyframes';
+import { focusCameraAt } from '../src/video/pieces/UiFocus';
+import { scrollCameraAt } from '../src/video/pieces/UiScroll';
 import { PROBE_PREFIX, readProbe } from '../src/video/probe';
 import { captionIndex, captionSwapFrame, cycleIndex, wordEnterFrame } from '../src/video/rhythm';
 
@@ -128,6 +130,32 @@ describe('the key frames of a video', () => {
         // The first word is in, whole, by the still that shows it.
         expect(plan[0]!.frame - plan[0]!.timed.from, at).toBeGreaterThanOrEqual(wordEnterFrame(0, plan[0]!.timed, bpm) + 6);
       }
+  });
+});
+
+describe('the settled key frame of a UI scene', () => {
+  // Moves that travel: UiScroll from the top of a long phone page down to a price far below it, UiFocus down and in to it.
+  const page: Shot = { id: 'm-full', file: 'media/m-full.png', viewport: 'mobile', dpr: 2, width: 780, height: 6000 };
+  const price: Box = { shotId: 'm-full', kind: 'price', text: '$ 4.500', x: 244, y: 3300, w: 212, h: 40 };
+  const pieces = {
+    UiFocus: { move: focusMove(price, page, '9x16', [price]), cameraAt: focusCameraAt },
+    UiScroll: { move: scrollMove(price, page, '9x16', [price]), cameraAt: scrollCameraAt },
+  };
+
+  it('is where the camera lands, for UiScroll and UiFocus, at every tempo and length a scene can have', () => {
+    const short: string[] = [];
+    for (const [piece, { move, cameraAt }] of Object.entries(pieces)) {
+      expect(move.to.y - move.from.y, piece).toBeGreaterThan(100);
+      for (const bpm of [90, 100, 112, 113.19, 120, 127, 128])
+        for (let beats = 2; beats <= 8; beats++) {
+          const ui = scene(piece as keyof typeof pieces, beats, [framing('Your shop in one link')], { shotId: 'm-full', boxIndex: 0 });
+          const settled = keyframePlan({ ...edl([ui]), bpm }, 0).filter((p) => p.timed.index === 1).at(-1)!;
+          expect(settled.frame).toBe(settledFrame(settled.timed));
+          const camera = cameraAt(move, settled.frame - settled.timed.from, settled.timed);
+          if (JSON.stringify(camera) !== JSON.stringify(move.to)) short.push(`${piece}, ${beats} beats at ${bpm} bpm: ${(move.to.y - camera.y).toFixed(3)} px short`);
+        }
+    }
+    expect(short).toEqual([]);
   });
 });
 

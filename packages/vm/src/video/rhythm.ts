@@ -1,7 +1,7 @@
 // The rhythm of the pieces, as plain math: what a piece shows at a frame, counted from the start of its scene (the
 // frame a piece reads with useCurrentFrame). Every change of text lands on a beat of the whole video's grid, so a
 // scene keeps the pulse wherever it falls; the key frames read the same changes (render/keyframes.ts).
-import { beatsToFrames, type Line, type TimedScene } from '@app/core';
+import { beatsToFrames, settledFrame, type Line, type TimedScene } from '@app/core';
 
 /** The frame of the scene on which its beat `beat` (a half beat too) falls, on the beat grid of the whole video. */
 export const beatFrame = (timed: TimedScene, beat: number, bpm: number): number => beatsToFrames(timed.startBeat + beat, bpm) - timed.from;
@@ -89,6 +89,19 @@ export const textChanges = (timed: TimedScene, bpm: number): number[] => {
   if (scene.piece === 'WordCycle') return scene.lines.slice(2).map((_, k) => wordEnterFrame(k + 1, timed, bpm)).filter((frame) => frame < timed.duration);
   const swap = swapsCaption(timed) ? captionSwapFrame(scene.lines, timed, bpm) : undefined;
   return swap === undefined ? [] : [swap];
+};
+
+// ---------- the camera of the UI scenes ----------
+
+/**
+ * The frames of the scene over which the camera of a UI scene moves (see focusMove and scrollMove): UiFocus eases in from
+ * frame 4 and lands at 72% of the scene, UiScroll glides from frame 6 and lands on the frame the scene is settled in (see
+ * settledFrame), so it is still through the wipe out. Both have landed by that frame, the one the key frame review samples,
+ * so the review sees where the camera lands.
+ */
+export const cameraFrames = (timed: TimedScene): { start: number; end: number } => {
+  const settled = settledFrame(timed) - timed.from;
+  return timed.scene.piece === 'UiScroll' ? { start: 6, end: settled } : { start: 4, end: Math.min(timed.duration * 0.72, settled) };
 };
 
 // ---------- KineticHeadline ----------

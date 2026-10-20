@@ -1,6 +1,6 @@
 import { beatsToFrames, settledFrame, type Line, type Scene, type TimedScene } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { BUTTON_IN, captionIndex, captionSwapFrame, cycleIndex, endCardSteps, lineEnterFrame, PRESS_FRAMES, pressState, textChanges, typedChars, typeInPressFrame, wordEnterFrame } from '../src/video/rhythm';
+import { BUTTON_IN, cameraFrames, captionIndex, captionSwapFrame, cycleIndex, endCardSteps, lineEnterFrame, PRESS_FRAMES, pressState, textChanges, typedChars, typeInPressFrame, wordEnterFrame } from '../src/video/rhythm';
 
 const framing = (text: string, atBeat?: number): Line => ({ text, kind: 'framing', ...(atBeat === undefined ? {} : { atBeat }) });
 const scene = (piece: Scene['piece'], beats: number, lines: Line[]): Scene => ({ piece, beats, lines });
@@ -126,6 +126,23 @@ describe('the captions of a UI scene', () => {
     const lines = [framing('Your shop in one link'), framing('Customers pay you directly', 3)];
     const timed = placed(ui(lines), 113.19, 5);
     expect(captionSwapFrame(lines, timed, 113.19)).toBe(beatsToFrames(8, 113.19) - timed.from);
+  });
+});
+
+describe('the camera of a UI scene', () => {
+  it('glides UiScroll from frame 6 to the settled frame, the one the key frame review samples', () => {
+    // 6 beats at 120 bpm: 90 frames, settled 8 frames before the end.
+    const timed = placed(scene('UiScroll', 6, [framing('Mirá')]), 120, 4);
+    expect(cameraFrames(timed)).toEqual({ start: 6, end: 82 });
+    expect(cameraFrames(timed).end).toBe(settledFrame(timed) - timed.from);
+  });
+
+  it('lands UiFocus at 72% of the scene, and never after the settled frame', () => {
+    expect(cameraFrames(placed(scene('UiFocus', 6, [framing('Mirá')]), 120, 4))).toEqual({ start: 4, end: 64.8 });
+    // 2 beats at 128 bpm: 28 frames, of which 72% (20.16) would come after the settled frame (20).
+    const short = placed(scene('UiFocus', 2, [framing('Mirá')]), 128, 2);
+    expect(short.duration).toBe(28);
+    expect(cameraFrames(short)).toEqual({ start: 4, end: settledFrame(short) - short.from });
   });
 });
 
