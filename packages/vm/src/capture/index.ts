@@ -126,6 +126,21 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
 
 type PageOutcome = { blocked: true } | { blocked: false; anchors: Anchor[] };
 
+/**
+ * The desktop id of each phone section: the k-th phone section with a heading is the k-th desktop section with it. Null
+ * for one with no k-th twin on the desktop (the phone layout can have sections the desktop has not).
+ */
+export function pairPhoneSections(desktop: readonly { id: string; heading: string }[], phone: readonly { heading: string }[]): (string | null)[] {
+  const ids = new Map<string, string[]>();
+  for (const s of desktop) ids.set(s.heading, [...(ids.get(s.heading) ?? []), s.id]);
+  const seen = new Map<string, number>();
+  return phone.map(({ heading }) => {
+    const k = seen.get(heading) ?? 0;
+    seen.set(heading, k + 1);
+    return ids.get(heading)?.[k] ?? null;
+  });
+}
+
 /** An extra page that is not one to film: the capture leaves it out, says why in its log, and goes on. */
 export class ExtraPageLeftOut extends Error {
   constructor(reason: string) {
@@ -192,16 +207,16 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   try {
     lap(`${prefix}open-mobile`);
     const mobileText = await mobile.page.evaluate(inPageExtractText);
-    const byHeading = new Map(text.sections.map((s) => [s.heading, s.id]));
-    const pairs = mobileText.sections.map((s): [string, string | null] => [s.id, byHeading.get(s.heading) ?? null]);
+    const desktopIds = pairPhoneSections(text.sections, mobileText.sections);
+    const pairs = mobileText.sections.map((s, i): [string, string | null] => [s.id, desktopIds[i] ?? null]);
     await mobile.page.evaluate((all) => {
       // Found before any is renamed: a new id may be the old id of another one.
       const found = all.map(([from]) => document.querySelector(`[data-capsec="${from}"]`));
       all.forEach(([from, to], i) => found[i]?.setAttribute('data-capsec', to ?? `m-${from}`));
     }, pairs);
-    const mapped = mobileText.sections.flatMap((s) => {
-      const id = byHeading.get(s.heading);
-      return id === undefined ? [] : [{ ...s, id }];
+    const mapped = mobileText.sections.flatMap((s, i) => {
+      const id = desktopIds[i];
+      return id ? [{ ...s, id }] : [];
     });
     if (mapped.length < mobileText.sections.length) addNote(log, `${url} mobile: ${mobileText.sections.length - mapped.length} sections not present on desktop (skipped for shots)`);
     await shoot(mobile.page, 'mobile', prefix, mapped, site, mobile.height, { runDir, log });

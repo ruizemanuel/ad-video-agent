@@ -102,7 +102,14 @@ export function inPageAnchors(): { href: string; text: string }[] {
   return [...document.querySelectorAll<HTMLAnchorElement>('a[href]')].slice(0, 500).map((a) => ({ href: a.href, text: clean(a.innerText) }));
 }
 
-/** The text of the page split into sections (a heading and what follows), and its metadata. Tags each heading `data-capsec`. */
+/**
+ * The text of the page split into sections (a heading and what follows), and its metadata. Tags each heading that opens a
+ * section `data-capsec`. A heading opens one only if it reads as a title, not as a piece of a figure: it has two letters
+ * or more, and it is no figure (a number with at most one word: "453K", "1 second", "$0.0004"). Framer splits a figure
+ * over several headings ("$" + "6.2" + "Billion"), so headings with no text between them are read together for this. A
+ * figure's text joins the section it is in, as one line, which keeps it with its label, above it or under it. A line
+ * repeated in a section (a carousel repeats its cards) is kept once, where it first comes.
+ */
 export function inPageExtractText(): PageText {
   const { clean, visible, isButtonLike } = (window as unknown as CapWindow).__cap;
   const blockCache = new Map<Element, Element>();
@@ -124,11 +131,22 @@ export function inPageExtractText(): PageText {
   const raw: Raw[] = [];
   let cur: Raw = { heading: '', el: null, parts: [], ctas: [], lastBlock: null };
   raw.push(cur);
+  const isFragment = (heading: string): boolean => {
+    if ((heading.match(/\p{L}/gu) ?? []).length < 2) return true;
+    const words = heading.split(' ').filter((w) => /\p{L}/u.test(w)).length;
+    return /^\P{L}*\p{N}/u.test(heading) && words <= 1;
+  };
+  // The fragments of headings read since the last text, together; and the last of them, whose text is already taken.
+  let figure = '';
+  let figureEl: Element | null = null;
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     acceptNode(n: Node) {
       if (n.nodeType === 1) {
         const el = n as Element;
         if (['script', 'style', 'noscript', 'template', 'svg', 'nav', 'iframe'].includes(el.localName)) return NodeFilter.FILTER_REJECT;
+        // A wrapper with no box of its own (Framer wraps every component in one) is no reason to drop what it holds:
+        // its children are judged one by one. checkVisibility calls it invisible, for it has no box.
+        if (getComputedStyle(el).display === 'contents') return NodeFilter.FILTER_SKIP;
         if (!visible(el)) return NodeFilter.FILTER_REJECT;
       }
       return NodeFilter.FILTER_ACCEPT;
@@ -139,9 +157,18 @@ export function inPageExtractText(): PageText {
       const el = n as HTMLElement;
       if (/^h[1-3]$/.test(el.localName)) {
         const heading = clean(el.innerText);
-        if (heading) {
+        const together = figure ? `${figure} ${heading}` : heading;
+        if (heading && (isFragment(heading) || (figure && isFragment(together)))) {
+          // On the line of the fragments right before it, else on a line of its own.
+          if (!figure && cur.lastBlock) cur.parts.push('\n');
+          cur.parts.push(heading);
+          cur.lastBlock = el;
+          figure = together;
+          figureEl = el;
+        } else if (heading) {
           cur = { heading, el, parts: [], ctas: [], lastBlock: null };
           raw.push(cur);
+          figure = '';
         }
       } else if ((el.localName === 'a' || el.localName === 'button' || el.getAttribute('role') === 'button') && isButtonLike(el)) {
         const t = clean(el.innerText);
@@ -149,9 +176,10 @@ export function inPageExtractText(): PageText {
       }
       continue;
     }
-    if (cur.el?.contains(n)) continue; // heading text is the heading
+    if (cur.el?.contains(n) || figureEl?.contains(n)) continue; // heading text is the heading, or already taken
     const t = clean(n.textContent);
     if (!t) continue;
+    figure = '';
     const block = blockOf(n);
     if (cur.lastBlock && block !== cur.lastBlock) cur.parts.push('\n');
     cur.parts.push(t);
@@ -159,11 +187,13 @@ export function inPageExtractText(): PageText {
   }
   const sections: RawSection[] = [];
   for (const s of raw) {
-    const text = s.parts
+    const lines = s.parts
       .join(' ')
       .replace(/ ?\n ?/g, '\n')
       .replace(/\n+/g, '\n')
-      .trim();
+      .trim()
+      .split('\n');
+    const text = [...new Set(lines)].join('\n');
     if (!s.heading && text.length < 20 && !s.ctas.length) continue;
     const id = `s${sections.length + 1}`;
     s.el?.setAttribute('data-capsec', id);

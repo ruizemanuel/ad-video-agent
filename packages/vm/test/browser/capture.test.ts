@@ -72,6 +72,65 @@ describe('capture', () => {
   });
 });
 
+describe('a Framer site: content in wrappers with no box, figures split over headings, a carousel, cards that fade in, a CSS wordmark', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}framer.html`, extraUrls: [], followDemoLinks: 0 }));
+  const section = (heading: string) => run.site.sections.find((s) => s.heading === heading)!;
+
+  it('reads the text in the wrappers with no box of their own, and not the variant that is display: none', () => {
+    expect(section('Rails for global finance').text).toContain('The most widely adopted chain for stablecoin payments, on the desktop.');
+    expect(section('How it is different').text).toContain('Built for agents\nInfrastructure for high-frequency transactions.');
+    expect(JSON.stringify(run.site.sections)).not.toContain('on the phone');
+  });
+
+  it('keeps each figure with its label in one section, and opens no section on a piece of a heading', () => {
+    expect(run.site.sections.map((s) => s.heading)).toEqual(['Rails for global finance', 'How it is different', 'Cards that fade in']);
+    // A label above its figure or under it; a figure split over headings is one line.
+    expect(section('Rails for global finance').text.split('\n')).toEqual([
+      'The most widely adopted chain for stablecoin payments, on the desktop.',
+      '1.5 B',
+      'Total transactions',
+      'Source: example.org',
+      'Monthly stablecoin volume',
+      '$ 6.2 Billion',
+      'Avg block time',
+      '1 second',
+      'Avg gas fee',
+      '$0.0004',
+    ]);
+    // The phone's figure ("1 sec.") opens none either: each phone section has its desktop twin and its shot.
+    expect(run.site.log.notes.join('\n')).not.toContain('not present on desktop');
+    expect(run.site.shots.filter((s) => s.viewport === 'mobile').map((s) => s.id)).toEqual(['m-s1', 'm-s2', 'm-s3', 'm-full']);
+  });
+
+  it('keeps a line the carousel repeats once, where it first comes', () => {
+    expect(section('How it is different').text).toBe(
+      'Built for agents\nInfrastructure for high-frequency transactions.\nDesigned for payments\nSub-cent fees and one-block finality.',
+    );
+  });
+
+});
+
+describe('a site that repeats a heading, at the desktop and on the phone, with a menu label alone in its header', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}repeated.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('films the k-th phone section with a heading as the k-th desktop one, and gives each shot an id of its own', () => {
+    const { site } = run;
+    const ids = site.shots.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const fees = site.sections.filter((s) => s.heading === 'Fees');
+    expect(fees).toHaveLength(2);
+    const prices = (shotId: string): string => site.boxes.filter((b) => b.shotId === shotId && b.kind === 'price').map((b) => b.text).join(' | ');
+    for (const v of ['d', 'm']) {
+      expect(prices(`${v}-${fees[0]!.id}`), v).toContain('$10 / month');
+      expect(prices(`${v}-${fees[0]!.id}`), v).not.toMatch(/\$20|\$30/);
+      expect(prices(`${v}-${fees[1]!.id}`), v).toContain('$20 / month');
+      expect(prices(`${v}-${fees[1]!.id}`), v).not.toMatch(/\$10|\$30/);
+    }
+    // The third "Fees" is only on the phone: it has no desktop twin, and no shot.
+    expect(site.log.notes).toContain(`${fixtureUrl}repeated.html mobile: 1 sections not present on desktop (skipped for shots)`);
+  });
+});
+
 describe('a site with a demo page, followed once as a link and once as an extra', () => {
   const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: [`${fixtureUrl}demo.html#again`], followDemoLinks: 2 }));
 

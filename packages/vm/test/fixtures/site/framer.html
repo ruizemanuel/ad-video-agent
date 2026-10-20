@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rails | Payments onchain</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fcff52; color: #000000; }
+    p { margin: 0 0 8px; font-size: 18px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    /* Framer wraps every component in a div with no box of its own, and renders the desktop and the phone layouts as two
+       variants, the one not in use display: none. */
+    .ssr-variant { display: contents; }
+    .phone { display: none; }
+    @media (max-width: 809px) { .desktop { display: none; } .phone { display: contents; } }
+
+    header { display: flex; align-items: center; gap: 32px; padding: 24px 32px; }
+    header a { display: block; color: #000000; text-decoration: none; }
+    /* The wordmark: a div that paints an SVG as its background, in a link home written "./". */
+    .wordmark {
+      width: 111px;
+      height: 25px;
+      background-image: url("data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 110 25%22><path d=%22M0 0H25V25H0Z%22 fill=%22rgb(0,0,0)%22/><path d=%22M40 0H65V25H40Z%22 fill=%22rgb(0,0,0)%22/></svg>");
+      background-size: 100% 100%;
+    }
+
+    section { min-height: 900px; padding: 80px 32px; }
+    /* Stats: each figure split over headings, its label above it or under it. */
+    .stats { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 32px; }
+    .stat { width: 300px; }
+    .figure { display: flex; gap: 4px; }
+    .stat h2 { font-size: 40px; margin: 0; }
+
+    /* A carousel that repeats its cards, each in an li with no box of its own. */
+    .track { display: flex; gap: 16px; list-style: none; padding: 0; margin: 0; overflow: hidden; }
+    .track li { display: contents; }
+    .card { width: 280px; flex-shrink: 0; }
+    .card h4 { font-size: 22px; margin: 0 0 8px; }
+
+    /* Cards that fade in as they come into view: one not yet (opacity 0), one half-way. */
+    .reveal { max-width: 640px; margin: 16px 0; padding: 16px; border: 1px solid #000000; }
+    .reveal svg { display: block; width: 160px; height: 100px; margin-bottom: 8px; }
+    .unseen { opacity: 0; height: 180px; }
+    .half { opacity: 0.5; height: 200px; }
+  </style>
+</head>
+<body>
+  <div class="ssr-variant">
+    <header>
+      <a href="./"><div class="wordmark"></div></a>
+      <a href="./vision">Vision</a>
+      <a href="./builders">Builders</a>
+    </header>
+  </div>
+
+  <div class="ssr-variant desktop">
+    <section>
+      <h1>Rails for global finance</h1>
+      <p>The most widely adopted chain for stablecoin payments, on the desktop.</p>
+      <div class="stats">
+        <div class="stat">
+          <div class="figure"><h2>1.5</h2><h2>B</h2></div>
+          <p>Total transactions</p>
+          <p>Source: example.org</p>
+        </div>
+        <div class="stat">
+          <p>Monthly stablecoin volume</p>
+          <div class="figure"><h2>$</h2><h2>6.2</h2></div>
+          <h2>Billion</h2>
+          <p>Source: example.org</p>
+        </div>
+        <div class="stat">
+          <p>Avg block time</p>
+          <h2>1 second</h2>
+        </div>
+        <div class="stat">
+          <p>Avg gas fee</p>
+          <h2>$0.0004</h2>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="ssr-variant phone">
+    <section>
+      <h1>Rails for global finance</h1>
+      <p>Stablecoin payments in your pocket, on the phone.</p>
+      <div class="stat">
+        <p>Avg block time</p>
+        <h2>1 sec.</h2>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>How it is different</h2>
+    <ul class="track">
+      <li><div class="ssr-variant"><div class="card"><h4>Built for agents</h4><p>Infrastructure for high-frequency transactions.</p></div></div></li>
+      <li><div class="ssr-variant"><div class="card"><h4>Designed for payments</h4><p>Sub-cent fees and one-block finality.</p></div></div></li>
+      <li><div class="ssr-variant"><div class="card"><h4>Built for agents</h4><p>Infrastructure for high-frequency transactions.</p></div></div></li>
+      <li><div class="ssr-variant"><div class="card"><h4>Designed for payments</h4><p>Sub-cent fees and one-block finality.</p></div></div></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Cards that fade in</h2>
+    <div class="reveal unseen">
+      <svg viewBox="0 0 160 100" xmlns="http://www.w3.org/2000/svg"><rect width="160" height="100" fill="#1d4ed8"/></svg>
+      <p>Not revealed yet: <span>$7 / month</span></p>
+    </div>
+    <div class="reveal half">
+      <svg viewBox="0 0 160 100" xmlns="http://www.w3.org/2000/svg"><rect width="160" height="100" fill="#be123c"/></svg>
+      <p>Half revealed: <span>$9 / month</span></p>
+    </div>
+  </section>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Acme | Plans</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #ffffff; color: #111111; }
+    header { padding: 20px 32px; }
+    header a { color: #111111; }
+    section { min-height: 1000px; padding: 80px 32px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 640px; }
+    /* The phone shows one more section with a heading the page already has. */
+    .phone-only { display: none; }
+    @media (max-width: 809px) { .phone-only { display: block; } }
+  </style>
+</head>
+<body>
+  <!-- The only link in the header is a menu label, not the name of the site. -->
+  <header><a href="./vision.html">Vision</a></header>
+
+  <section>
+    <h1>Plans for every team</h1>
+    <p>Pick the plan that fits how you sell.</p>
+  </section>
+  <section>
+    <h2>Fees</h2>
+    <p>Card payments: <span>$10 / month</span></p>
+  </section>
+  <section>
+    <h2>Support</h2>
+    <p>Someone answers within the hour, every day of the week.</p>
+  </section>
+  <section>
+    <h2>Fees</h2>
+    <p>Bank transfers: <span>$20 / month</span></p>
+  </section>
+  <section class="phone-only">
+    <h2>Fees</h2>
+    <p>In the phone app: <span>$30 / month</span></p>
+  </section>
+</body>
+</html>

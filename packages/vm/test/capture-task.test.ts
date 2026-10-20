@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureResult, TaskEnvelope } from '@app/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { capture, captureTask, checkExtraPage, ExtraPageLeftOut, parseCaptureInput, pickExtraPages } from '../src/capture';
+import { capture, captureTask, checkExtraPage, ExtraPageLeftOut, pairPhoneSections, parseCaptureInput, pickExtraPages } from '../src/capture';
 
 const OK: CaptureResult = { ok: true, metadataBlocked: true, sections: 2, shots: 3 };
 const TARGET = 'https://store.example/orders/o1/capture.json?signature=SECRET';
@@ -96,6 +96,24 @@ describe('checkExtraPage', () => {
 
   it.each([404, 500, 301])('leaves out a page that answered HTTP %s, even with text on it', async (status) => {
     await expect(checkExtraPage(opened('Not found', content), status)).rejects.toThrow(`HTTP ${status}`);
+  });
+});
+
+describe('pairPhoneSections', () => {
+  const desktop = [
+    { id: 's1', heading: '' },
+    { id: 's2', heading: 'Fees' },
+    { id: 's3', heading: 'Support' },
+    { id: 's4', heading: 'Fees' },
+  ];
+
+  it('gives the k-th phone section with a heading the id of the k-th desktop section with it', () => {
+    expect(pairPhoneSections(desktop, [{ heading: '' }, { heading: 'Fees' }, { heading: 'Support' }, { heading: 'Fees' }])).toEqual(['s1', 's2', 's3', 's4']);
+    expect(pairPhoneSections(desktop, [{ heading: 'Support' }, { heading: 'Fees' }, { heading: 'Fees' }])).toEqual(['s3', 's2', 's4']);
+  });
+
+  it('gives no id to a phone section that has no k-th twin on the desktop', () => {
+    expect(pairPhoneSections(desktop, [{ heading: 'Fees' }, { heading: 'Fees' }, { heading: 'Fees' }, { heading: 'Pricing' }])).toEqual(['s2', 's4', null, null]);
   });
 });
 
