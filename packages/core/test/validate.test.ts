@@ -350,6 +350,43 @@ describe('validateEdl: structure', () => {
       }
     });
 
+    // A page of another site: a two-column card near the end of its phone page, which a UiFocus frames at 1.12x and a
+    // UiScroll at its base scale cannot bring above the platform UI, and a phone screen whose price the full page lacks.
+    const other: SiteData = {
+      ...siteShop,
+      shots: [
+        ...siteShop.shots,
+        { id: 'x2-m-s1', file: 'media/x2-m-s1.png', viewport: 'mobile', dpr: 2, sectionId: 's1', width: 780, height: 1688 },
+        { id: 'x2-m-full', file: 'media/x2-m-full.png', viewport: 'mobile', dpr: 2, width: 780, height: 3000 },
+      ],
+      boxes: [
+        ...siteShop.boxes,
+        { shotId: 'x2-m-s1', sectionId: 's1', kind: 'price', text: '$ 9.990', x: 80, y: 300, w: 290, h: 60 },
+        { shotId: 'x2-m-full', sectionId: 's2', kind: 'price', text: '$ 4.500', x: 80, y: 2560, w: 290, h: 60 },
+      ],
+      blocks: [{ shotId: 'x2-m-full', x: 60, y: 2180, w: 330, h: 500 }],
+    };
+    const onOther = (piece: 'UiFocus' | 'UiScroll', shotId: string): Case => inBody({ piece, beats: 4, shotId, boxIndex: 0, lines: [framing('Mirá')] }, other);
+
+    it('asks each piece its own camera: a UiScroll the narrow card defeats is reported, with the UiFocus that frames it as a way out', () => {
+      clean(onOther('UiFocus', 'x2-m-full'));
+      expect(problemsOf(onOther('UiScroll', 'x2-m-full'))).toEqual([
+        { where: 'body[0]', rule: 'structure', detail: `${unframeable('UiScroll', 0, 'x2-m-full')}, or make it a UiFocus on this box` },
+      ]);
+    });
+
+    it('reports a UiScroll whose full page has no such element in words of its own', () => {
+      clean(onOther('UiFocus', 'x2-m-s1'));
+      expect(problemsOf(onOther('UiScroll', 'x2-m-s1'))).toEqual([
+        {
+          where: 'body[0]',
+          rule: 'structure',
+          detail:
+            'UiScroll cannot scroll to box 0 of x2-m-s1: the full page it scrolls in 9x16 has no element of the same kind and text; aim at a box of a full page (an id ending in -full) with product: true, or make it a UiFocus on this box',
+        },
+      ]);
+    });
+
     it('reports a text card once, as marketing, not also as unframeable', () => {
       expect(problemsOf(ui('UiFocus', page, 2)).map((p) => p.detail)).toEqual([expect.stringContaining('UiFocus must film product UI: box 2 ("Text card")')]);
     });

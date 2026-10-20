@@ -62,8 +62,9 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
 - **UiScroll**: the camera glides down a full-page screenshot (ids ending in \`-full\`) and lands on
   \`boxIndex\` (required), a box with \`product: true\`. One caption line, at most 40 characters.
 - A box has \`product: true\` when there is an image or a price in its section or card (a percentage
-  or a button over text does not count). This is checked: a \`UiFocus\` or \`UiScroll\` on a box with
-  \`product: false\` is rejected. State that claim in a type scene instead.
+  or a button over text does not count) and the camera can frame it cleanly. This is checked: a
+  \`UiFocus\` or \`UiScroll\` on a box with \`product: false\` is rejected. State that claim in a type
+  scene instead.
 - In a \`UiFocus\` or a \`UiScroll\`, the caption can change once, so that the idea changes about every
   2 seconds: a second line with \`atBeat\`, the beat of the scene at which it replaces the first.
   \`atBeat\` is 2 or later and less than the scene's \`beats\`, and it goes on that second line only.

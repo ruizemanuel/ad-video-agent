@@ -117,6 +117,11 @@ describe('DIRECTOR_SYSTEM', () => {
       expect(flat(DIRECTOR_SYSTEM)).toContain('a percentage or a button over text does not count');
     });
 
+    it('says product: true also means the camera can frame the box cleanly', () => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain('a percentage or a button over text does not count) and the camera can frame it cleanly.');
+      expect(flat(PATCH_SYSTEM)).toContain('and the camera can frame it cleanly');
+    });
+
     it('does not just prefer product UI for UiFocus and UiScroll: they must aim at a box with product: true', () => {
       expect(flat(DIRECTOR_SYSTEM)).not.toContain('Prefer product UI');
       expect(flat(DIRECTOR_SYSTEM)).toContain('`UiFocus`/`UiScroll` must aim at a box with `product: true`');

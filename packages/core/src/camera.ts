@@ -500,21 +500,29 @@ export const cameraAt = ({ from, to }: Move, p: number): Camera => ({
 /** A UI scene as the director writes it: the piece, and the shot and box it films. */
 export type UiPick = ShotPick & { piece: 'UiFocus' | 'UiScroll' };
 
+/** How a UI scene frames its target: see framingOf. */
+export type Framing = 'clean' | 'unclean' | 'missing';
+
 /**
- * Whether a UI scene frames its target cleanly in `format`, in the frame the review sees: where the piece's move lands,
- * on the take the format films (see focusShot and scrollShot, which may leave the director's shot for its full page), on
- * the view placeShot shows. Clean as Landing says: the top edge cuts no box and no card, and the target (the card the
- * camera aims at, else the box) is whole above the platform UI. False when the pick names no box of a shot, and for a
- * scroll whose full page lacks the element (it would land on no target).
+ * How a UI scene frames its target in `format`, in the frame the review sees: where the piece's move lands, on the take
+ * the format films (see focusShot and scrollShot, which may leave the director's shot for its full page), on the view
+ * placeShot shows. `clean` as Landing says: the top edge cuts no box and no card, and the target (the card the camera aims
+ * at, else the box) is whole above the platform UI; `unclean` otherwise. `missing` when the pick names no box of a shot,
+ * and for a scroll whose full page has no element like the box (it would land on no target).
  */
-export const framesCleanly = (site: SiteData, { piece, shotId, boxIndex }: UiPick, format: Format): boolean => {
+export const framingOf = (site: SiteData, { piece, shotId, boxIndex }: UiPick, format: Format): Framing => {
   const shot = site.shots.find((s) => s.id === shotId);
   const box = shot && boxIndex !== undefined ? site.boxes.filter((b) => b.shotId === shot.id)[boxIndex] : undefined;
-  if (!box) return false;
+  if (!box) return 'missing';
   if (piece === 'UiScroll') {
     const take = scrollShot(site, { shotId, boxIndex }, format);
-    return take.box !== undefined && scrollLanding(take.box, take.shot, format, site.boxes, site.blocks).clean;
+    if (!take.box) return 'missing';
+    return scrollLanding(take.box, take.shot, format, site.boxes, site.blocks).clean ? 'clean' : 'unclean';
   }
+  // The landing focusShot weighed, when it did, is the one to judge: it need not be weighed again.
   const { landing, ...take } = focusTake(site, { shotId, boxIndex }, format);
-  return (landing ?? focusLanding(take.box, take.shot, format, site.boxes, site.blocks)).clean;
+  return (landing ?? focusLanding(take.box, take.shot, format, site.boxes, site.blocks)).clean ? 'clean' : 'unclean';
 };
+
+/** Whether a UI scene frames its target cleanly in `format`, in the frame the review sees (see framingOf). */
+export const framesCleanly = (site: SiteData, pick: UiPick, format: Format): boolean => framingOf(site, pick, format) === 'clean';

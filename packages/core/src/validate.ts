@@ -2,7 +2,7 @@
 // on screen are in their quote, framing lines carry no data, no filler phrases, and the structure the schema
 // leaves open. The same module builds what the semantic judge reads and applies the fixes a corrector returns.
 import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
-import { framesCleanly } from './camera';
+import { framesCleanly, framingOf } from './camera';
 import type { Claim, Edl, Scene } from './edl';
 import { MAIN_FORMAT } from './formats';
 import { isProductTarget } from './product';
@@ -139,12 +139,17 @@ const checkShot = (path: string, scene: Scene, site: SiteData, report: Report): 
       'structure',
       `${scene.piece} must film product UI: box ${scene.boxIndex} (${named}) of ${shot.id} has no image or price in its section or card; state this claim in a type scene or aim at product UI`,
     );
-  } else if ((scene.piece === 'UiFocus' || scene.piece === 'UiScroll') && !framesCleanly(site, { piece: scene.piece, shotId: shot.id, boxIndex: scene.boxIndex }, MAIN_FORMAT)) {
-    report(
-      path,
-      'structure',
-      `${scene.piece} cannot frame box ${scene.boxIndex} of ${shot.id} cleanly in ${MAIN_FORMAT} (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`,
-    );
+  } else if (scene.piece === 'UiFocus' || scene.piece === 'UiScroll') {
+    const pick = { shotId: shot.id, boxIndex: scene.boxIndex };
+    const framing = framingOf(site, { piece: scene.piece, ...pick }, MAIN_FORMAT);
+    if (framing === 'clean') return;
+    // A UiScroll refused on a box that a UiFocus frames cleanly (a box with product: true): a UiFocus on it is a sure fix.
+    const orFocus = scene.piece === 'UiScroll' && framesCleanly(site, { piece: 'UiFocus', ...pick }, MAIN_FORMAT) ? ', or make it a UiFocus on this box' : '';
+    const detail =
+      framing === 'missing'
+        ? `${scene.piece} cannot scroll to box ${scene.boxIndex} of ${shot.id}: the full page it scrolls in ${MAIN_FORMAT} has no element of the same kind and text; aim at a box of a full page (an id ending in -full) with product: true`
+        : `${scene.piece} cannot frame box ${scene.boxIndex} of ${shot.id} cleanly in ${MAIN_FORMAT} (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`;
+    report(path, 'structure', `${detail}${orFocus}`);
   }
 };
 
