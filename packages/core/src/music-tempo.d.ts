@@ -20,6 +20,11 @@ declare module 'music-tempo' {
     readonly beats: number[];
     /** Onset times in seconds (the peaks of the spectral flux), from which the beats are chosen. */
     readonly events: number[];
+    /**
+     * The onset envelope: the spectral flux of every frame, frame `i` at `i * timeStep` seconds (the time base of `events`
+     * and `beats`), normalized to a mean of 0 and a standard deviation of 1.
+     */
+    readonly spectralFlux: number[];
     /** Seconds between two beats. */
     readonly beatInterval: number;
   }

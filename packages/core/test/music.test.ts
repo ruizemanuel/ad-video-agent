@@ -220,6 +220,18 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     Array.from({ length: Math.ceil((SECONDS - first) / BEAT) }, (_, beat) => first + beat * BEAT + shift(beat, first + beat * BEAT));
   // A hit on the grid at `first`, then three beats a 16th early (an intro figure), then the grid again.
   const introFigure = (first: number) => beats(first, (beat) => (beat >= 1 && beat <= 3 ? -SIXTEENTH : 0));
+  // `mono` as a Lyria track that skips once: `ms` ms of it cut out at `at` s, so everything after comes that much early,
+  // or (a positive `ms`) the `ms` ms before `at` played twice, so everything after comes that much late. Made in the
+  // silence between two hits, a splice leaves no seam of its own.
+  const spliced = (mono: Float32Array, at: number, ms: number): Float32Array => {
+    const cut = Math.round(at * SAMPLE_RATE);
+    // Where the track goes on from after the splice: further on (cut out) or further back (played twice).
+    const resume = cut - Math.round((ms / 1000) * SAMPLE_RATE);
+    const out = new Float32Array(cut + mono.length - resume);
+    out.set(mono.subarray(0, cut));
+    out.set(mono.subarray(resume), cut);
+    return out;
+  };
   const measure = (mono: Float32Array, requestedBpm = 112) => measureTrack(mono, SAMPLE_RATE, requestedBpm, VIDEO_SECONDS);
   const verdict = (track: TrackMeasure, requestedBpm = 112) => chooseTrack([track], requestedBpm, VIDEO_SECONDS);
 
@@ -378,6 +390,17 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
       expect(track.firstBeat).toBeCloseTo(FIRST, 1);
       expect(verdict(track, 96)).toEqual({ chosen: null, rejected: [{ index: 0, reason: 'weak-start' }] });
     });
+
+    it('measures a skip in beats of the music: 40 ms cut out of a groove it follows at double time is a jump', () => {
+      // The groove on every 8th from the first, and 40 ms cut out at 11.1 s, in the silence between two of its hits.
+      const mono = spliced(eighths({ groove: 0 }), 11.1, -40);
+      expect(new MusicTempo(mono, { hopSize: 441, timeStep: 0.01 }).beatInterval).toBeCloseTo(60 / 180, 2); // double time
+      const track = measure(mono, 96);
+      expect(track.measuredBpm).toBeCloseTo(90, 0);
+      expect(verdict(track, 96).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+      expect(track.maxJumpMs).toBeGreaterThanOrEqual(36);
+      expect(track.maxJumpMs).toBeLessThanOrEqual(44);
+    });
   });
 
   it('does not search from a start that chooseTrack would accept: -30.03 dB reads as -30.0', () => {
@@ -415,46 +438,44 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
   // Run 4 (cobrame.app) was delivered with a track that skips once: the kick sat on its grid up to 10.8 s and 27 to 51 ms
   // early from 11.3 s to the end. The step spreads over the whole fit, so the residual (about 20 ms) was under its limit.
   describe('on a pulse that jumps once and stays there', () => {
-    // The groove from 0.3 s with every click from `at` moved `by` seconds.
-    const jumpAt = (at: number, by: number) => beats(0.3, (_, time) => (time >= at ? by : 0));
+    // The groove from 0.3 s: a hit of 0.25 s on every beat of 0.55 s, and silence for the rest of the beat.
+    const groove = () => addClicks(silence(), beats(0.3));
 
-    it('rejects a groove whose clicks move 40 ms early at 11 s', () => {
-      const track = measure(addClicks(silence(), jumpAt(11, -0.04)));
+    it('rejects a groove that skips 40 ms early at 11 s', () => {
+      const track = measure(spliced(groove(), 11, -40));
       // The residual alone lets it through (that is how it was delivered); the jump is what stops it.
       expect(track.beatResidualMs).toBeLessThan(30);
       expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'jump' }]);
-      // The tracker hears the clicks to the nearest 10 ms, so a 40 ms step reads as 30 to 50.
-      expect(track.maxJumpMs).toBeGreaterThan(30);
-      expect(track.maxJumpMs).toBeLessThan(50);
     });
 
-    it('rejects the same jump late as well as early', () => {
-      expect(verdict(measure(addClicks(silence(), jumpAt(11, 0.04)))).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+    it('rejects the same skip late as well as early', () => {
+      expect(verdict(measure(spliced(groove(), 11, 40))).rejected).toEqual([{ index: 0, reason: 'jump' }]);
     });
 
-    it('passes the same groove when the step is 15 ms', () => {
-      const track = measure(addClicks(silence(), jumpAt(11, -0.015)));
-      expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
-      expect(track.maxJumpMs).toBeGreaterThan(5);
-      expect(track.maxJumpMs).toBeLessThanOrEqual(25);
+    it.each([-80, -60, -40, -20, 20, 40, 60, 80])('reads a skip of %d ms (early when negative) as its size, to within 4 ms', (ms) => {
+      const track = measure(spliced(groove(), 11, ms));
+      expect(track.maxJumpMs).toBeGreaterThanOrEqual(Math.abs(ms) - 4);
+      expect(track.maxJumpMs).toBeLessThanOrEqual(Math.abs(ms) + 4);
     });
 
-    it('is told by 4 beats on each side: two beats that stray by 40 ms and come back are not a jump, three are', () => {
-      const strays = (count: number) => addClicks(silence(), beats(0.3, (beat) => (beat >= 20 && beat < 20 + count ? -0.04 : 0)));
-      const two = measure(strays(2));
-      expect(verdict(two)).toEqual({ chosen: 0, rejected: [] });
-      expect(two.maxJumpMs).toBeGreaterThan(15);
-      expect(two.maxJumpMs).toBeLessThanOrEqual(25);
-      expect(verdict(measure(strays(3))).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+    it.each([-25, -15, 15, 25])('passes a skip of %d ms (early when negative)', (ms) => {
+      expect(verdict(measure(spliced(groove(), 11, ms)))).toEqual({ chosen: 0, rejected: [] });
     });
 
     it('measures a steady groove at a few ms', () => {
       expect(measure(addClicks(silence(), beats(0.3))).maxJumpMs).toBeLessThan(10);
     });
 
+    it('rejects a skip in the last two beats the video plays', () => {
+      // The video plays up to 19.6 s; after the skip at 18.6 s it plays two beats, at about 18.8 s and 19.4 s.
+      const track = measure(spliced(groove(), 18.6, -40));
+      expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+      expect(track.maxJumpMs).toBeGreaterThanOrEqual(36);
+    });
+
     it('passes a step that falls after the part the video plays', () => {
-      // The video plays 19.3 s from 0.3 s, up to 19.6 s: the step at 21 s is never heard.
-      const mono = addClicks(silence(), jumpAt(21, -0.04));
+      // The video plays 19.3 s from 0.3 s, up to 19.6 s: the skip at 21.3 s is never heard.
+      const mono = spliced(groove(), 21.3, -40);
       const track = measure(mono);
       expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
       expect(track.maxJumpMs).toBeLessThan(10);
@@ -462,10 +483,17 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
       expect(chooseTrack([measureTrack(mono, SAMPLE_RATE, 112, 24)], 112, 24).rejected).toEqual([{ index: 0, reason: 'jump' }]);
     });
 
-    it('looks at every beat from the start when the length of the video is not given', () => {
-      const track = measureTrack(addClicks(silence(), jumpAt(21, -0.04)), SAMPLE_RATE, 112);
-      expect(track.maxJumpMs).toBeGreaterThan(30);
-      expect(chooseTrack([track], 112, 19.3).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+    it('looks at every beat from the start when the length of the video is not given, past the first 25 s too', () => {
+      // The tempo is found from the first 25 s; the skip is at 26.3 s.
+      const mono = spliced(groove(), 26.3, -40);
+      expect(chooseTrack([measureTrack(mono, SAMPLE_RATE, 112)], 112, 19.3).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+      // A 28 s video plays it too.
+      expect(chooseTrack([measureTrack(mono, SAMPLE_RATE, 112, 28)], 112, 28).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+    });
+
+    it('reads no skip in the silence after the music stops inside the video', () => {
+      // The groove stops at 15 s, inside the video (0.3 s to 19.6 s): past its last sound there is nothing to line up.
+      expect(measure(addClicks(silence(), beats(0.3).filter((time) => time < 15))).maxJumpMs).toBeLessThan(10);
     });
 
     it('passes a step that falls before the start of the video', () => {
@@ -480,7 +508,8 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     });
 
     it('does not count the beats the fit left out as a jump (cand-3)', () => {
-      // The three beats after the first hit sit a 16th early (136 ms): left out of the fit, so left out of the jumps too.
+      // The three beats after the first hit sit a 16th early (136 ms): left out of the fit, and further off the beat than a
+      // skip is looked for (a 6th of a beat), so the hits that line up are those on the beat.
       const track = measure(addClicks(silence(), introFigure(0.5)));
       expect(track.droppedBeats).toBe(3);
       expect(track.maxJumpMs).toBeLessThan(10);
@@ -489,7 +518,7 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
 
     it('reports a pulse that moves by a 16th between sections as unsteady, the first check it fails (cand-1)', () => {
       const track = measure(addClicks(silence(), beats(0.3, (beat, time) => (beat < 12 ? -SIXTEENTH : time < 21.9 ? 0 : SIXTEENTH))));
-      expect(track.maxJumpMs).toBeGreaterThan(25); // it jumps too
+      expect(track.maxJumpMs).toBeGreaterThan(33); // it jumps too
       expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'unsteady' }]);
     });
   });
@@ -568,9 +597,9 @@ describe('chooseTrack', () => {
     expect(reasons([{ ...ok(-16), startRmsDb: -50, seconds: 5 }])).toEqual(['weak-start']);
   });
 
-  it('rejects a track whose pulse jumps by more than 25 ms, and keeps one that jumps by exactly 25', () => {
-    expect(reasons([{ ...ok(-16), maxJumpMs: 26 }])).toEqual(['jump']);
-    expect(chooseTrack([{ ...ok(-16), maxJumpMs: 25 }], 112, 20)).toEqual({ chosen: 0, rejected: [] });
+  it('rejects a track whose pulse jumps by more than 33 ms, and keeps one that jumps by exactly 33', () => {
+    expect(reasons([{ ...ok(-16), maxJumpMs: 34 }])).toEqual(['jump']);
+    expect(chooseTrack([{ ...ok(-16), maxJumpMs: 33 }], 112, 20)).toEqual({ chosen: 0, rejected: [] });
   });
 
   it('takes a measure from before the jump was measured as one that does not jump', () => {
