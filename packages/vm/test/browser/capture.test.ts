@@ -184,22 +184,42 @@ describe('a logo cut by a CSS mask out of the color of the link home', () => {
 });
 
 describe('the logo finder, in a page of its own', () => {
-  it('reads an SVG painted from base64 in an element that says it is the logo, at its size, with a viewBox for it to scale', async () => {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10"><rect width="40" height="10" fill="#c81e6b"/></svg>';
-    const browser = await launchBrowser();
+  let browser: Awaited<ReturnType<typeof launchBrowser>>;
+  beforeAll(async () => {
+    browser = await launchBrowser();
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  /** The logo the finder reads on a page that is a 120 x 30 px div saying it is the logo, painted from this base64 SVG. */
+  const findPainted = async (svg: string) => {
+    const page = await browser.newPage();
     try {
-      const page = await browser.newPage();
       await page.setContent(`<div class="site-logo" style="width: 120px; height: 30px; background: url(data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}) 0 0 / 100% 100%"></div>`);
       await page.evaluate(inPageSetup);
-      const logo = await page.evaluate(inPageFindLogo);
-      expect(logo).toMatchObject({ hasText: false, rect: { w: 120, h: 30 } });
-      expect(logo?.svg).toMatch(/^<svg [^>]*viewBox="0 0 40 10"/);
-      expect(logo?.svg).toMatch(/^<svg [^>]* width="120"/);
-      expect(logo?.svg).toMatch(/^<svg [^>]* height="30"/);
-      expect(logo?.svg).toContain('<rect width="40" height="10" fill="#c81e6b"/>');
+      return await page.evaluate(inPageFindLogo);
     } finally {
-      await browser.close();
+      await page.close();
     }
+  };
+
+  it('reads an SVG painted from base64 in an element that says it is the logo, at its size, with a viewBox for it to scale', async () => {
+    const logo = await findPainted('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10"><rect width="40" height="10" fill="#c81e6b"/></svg>');
+    expect(logo).toMatchObject({ hasText: false, rect: { w: 120, h: 30 } });
+    expect(logo?.svg).toMatch(/^<svg [^>]*viewBox="0 0 40 10"/);
+    expect(logo?.svg).toMatch(/^<svg [^>]* width="120"/);
+    expect(logo?.svg).toMatch(/^<svg [^>]* height="30"/);
+    expect(logo?.svg).toContain('<rect width="40" height="10" fill="#c81e6b"/>');
+  });
+
+  it('makes the viewBox from a size in px too, and from none in percent, which says nothing of the drawing', async () => {
+    const inPx = await findPainted('<svg xmlns="http://www.w3.org/2000/svg" width="40px" height="10.5px"><rect width="40" height="10" fill="#c81e6b"/></svg>');
+    expect(inPx?.svg).toMatch(/^<svg [^>]*viewBox="0 0 40 10.5"/);
+    expect(inPx?.svg).toMatch(/^<svg [^>]* width="120"/);
+    const inPercent = await findPainted('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><rect width="40" height="10" fill="#c81e6b"/></svg>');
+    expect(inPercent?.svg).toMatch(/^<svg [^>]* width="120"/);
+    expect(inPercent?.svg).not.toContain('viewBox');
   });
 });
 

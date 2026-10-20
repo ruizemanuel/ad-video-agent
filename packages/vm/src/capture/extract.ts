@@ -370,7 +370,8 @@ export function inPageFindLogo(): FoundLogo | null {
     const doc = new DOMParser().parseFromString(source, 'image/svg+xml');
     const svg = doc.documentElement;
     if (svg.localName !== 'svg' || doc.querySelector('parsererror')) return null;
-    const [ownW, ownH] = [svg.getAttribute('width'), svg.getAttribute('height')].map((v) => Number(v));
+    // Its own size in user units ("40", "40px"); a size in percent says nothing of the drawing.
+    const [ownW, ownH] = [svg.getAttribute('width'), svg.getAttribute('height')].map((v) => (v && !v.includes('%') ? parseFloat(v) : NaN));
     if (!svg.hasAttribute('viewBox') && ownW && ownH) svg.setAttribute('viewBox', `0 0 ${ownW} ${ownH}`);
     svg.setAttribute('width', String(Math.round(w)));
     svg.setAttribute('height', String(Math.round(h)));
