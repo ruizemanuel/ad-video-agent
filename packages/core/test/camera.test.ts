@@ -1,4 +1,4 @@
-import { FORMATS, type Block, type Box, type Scene, type Shot, type SiteData } from '@app/core';
+import { FORMATS, type Block, type Box, type Scene, type Shot, type SiteData } from '../src/index';
 import { describe, expect, it } from 'vitest';
 import {
   cameraAt,
@@ -14,7 +14,7 @@ import {
   scrollShot,
   stageLayout,
   type Camera,
-} from '../src/video/camera';
+} from '../src/camera';
 
 const shot = (id: string, viewport: Shot['viewport'], height: number, sectionId?: string): Shot => ({
   id,

@@ -1,6 +1,6 @@
 import { useMemo, type FC } from 'react';
 import { useCurrentFrame } from 'remotion';
-import { cameraAt, focusMove, focusShot, placeShot } from '../camera';
+import { cameraAt, focusMove, focusShot, placeShot } from '@app/core';
 import { progress, UiStage, useAd, type PieceProps } from './common';
 
 // The real UI, with the camera starting wide and easing down and in to the element that backs the caption, or the card

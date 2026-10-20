@@ -1,6 +1,6 @@
 import { useMemo, type FC } from 'react';
 import { useCurrentFrame } from 'remotion';
-import { cameraAt, placeShot, scrollMove, scrollShot } from '../camera';
+import { cameraAt, placeShot, scrollMove, scrollShot } from '@app/core';
 import { EASE_IN_OUT, progress, UiStage, useAd, type PieceProps } from './common';
 
 // Glides down a long capture at a steady scale, landing on the target element or a little under half the page (see

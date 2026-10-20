@@ -3,8 +3,7 @@
 import { createContext, useContext, useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
 import { measureText } from '@remotion/layout-utils';
 import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, FORMATS, mix, safeWidth, TYPE, type Edl, type FontSpec, type Format, type Scene, type Shot, type SiteData, type Theme, type TimedScene } from '@app/core';
-import { stageLayout } from '../camera';
+import { alpha, FORMATS, mix, safeWidth, stageLayout, TYPE, type Edl, type FontSpec, type Format, type Scene, type Shot, type SiteData, type Theme, type TimedScene } from '@app/core';
 import { brandName, fitLogo, type Size } from '../logo';
 import { captionSwapFrame } from '../rhythm';
 import { glyphOverhang, hideTravel, layoutCaptions, layoutLines, lineText, maskRoom, ROOM, toWords, type InkMeasure, type Measure, type Room, type TypeLine } from '../type';
