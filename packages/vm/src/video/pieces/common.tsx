@@ -7,7 +7,7 @@ import { alpha, FORMATS, mix, safeWidth, TYPE, type Edl, type FontSpec, type For
 import { stageLayout } from '../camera';
 import { brandName, fitLogo, type Size } from '../logo';
 import { captionSwapFrame } from '../rhythm';
-import { glyphOverhang, layoutCaptions, layoutLines, toWords, type Measure, type TypeLine } from '../type';
+import { glyphOverhang, layoutCaptions, layoutLines, toWords, type InkMeasure, type Measure, type TypeLine } from '../type';
 
 /**
  * `logoShown`: the natural size of the site's logo when the video shows it, at the opening and the close alike; null when
@@ -54,6 +54,27 @@ export const measureWith =
       additionalStyles: font.stretch ? { fontStretch: font.stretch } : undefined,
       validateFontIsLoaded: true,
     }).width / 100;
+
+// The ink is measured at this size, in px, and given back in em.
+const INK_SIZE = 100;
+
+/**
+ * Measures the ink of a text in the page, in one of the brand's fonts (loaded before this is called, as for measureWith): how
+ * far its glyphs reach above and below the baseline, which the DOM does not tell and a mask that clips a text has to hold.
+ */
+export const inkWith = (font: FontSpec): InkMeasure => {
+  const context = document.createElement('canvas').getContext('2d');
+  if (context) context.font = `${font.weight} ${INK_SIZE}px ${font.family}`;
+  return (text) => {
+    const m = context?.measureText(text);
+    return {
+      ascent: (m?.actualBoundingBoxAscent ?? 0) / INK_SIZE,
+      descent: (m?.actualBoundingBoxDescent ?? 0) / INK_SIZE,
+      fontAscent: (m?.fontBoundingBoxAscent ?? 0) / INK_SIZE,
+      fontDescent: (m?.fontBoundingBoxDescent ?? 0) / INK_SIZE,
+    };
+  };
+};
 
 type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center' };
 

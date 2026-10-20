@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitAddress, fitHeadline, glyphOverhang, layoutCaptions, layoutLines, lineSources, lineText, pillSize, toWords, type Measure } from '../src/video/type';
+import { fitAddress, fitHeadline, glyphOverhang, inkOverhang, layoutCaptions, layoutLines, lineSources, lineText, maskRoom, pillSize, toWords, type Ink, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -141,6 +141,50 @@ describe('the glyphs past the line', () => {
     expect(glyphOverhang(1.12)).toBeCloseTo(0.09);
     expect(glyphOverhang(1.3)).toBe(0);
     expect(glyphOverhang(1.5)).toBe(0);
+  });
+});
+
+describe('the ink past the line', () => {
+  // A font with an ascent of 0.95 em and a descent of 0.25 em, whose glyphs reach 0.75 em up and 0.2 em down the baseline.
+  const ink: Ink = { ascent: 0.75, descent: 0.2, fontAscent: 0.95, fontDescent: 0.25 };
+
+  it('stays inside a line with room to spare', () => {
+    expect(inkOverhang(ink, 1.2)).toEqual({ above: 0, below: 0 });
+  });
+
+  it('reaches past a tight line where the half-leading leaves the baseline: the descenders first', () => {
+    // At 0.94 the baseline is (0.94 + 0.95 - 0.25) / 2 = 0.82 em under the top of the line, so 0.12 em above its bottom.
+    const over = inkOverhang(ink, 0.94);
+    expect(over.above).toBe(0);
+    expect(over.below).toBeCloseTo(0.2 - 0.12);
+  });
+
+  it('reaches past the top of the line too, for glyphs that rise higher than the line holds', () => {
+    expect(inkOverhang({ ...ink, ascent: 0.9 }, 0.94).above).toBeCloseTo(0.9 - 0.82);
+  });
+});
+
+describe('the room of a mask', () => {
+  const min = { above: 0.14, below: 0.16 };
+  const shallow: Ink = { ascent: 0.7, descent: 0.2, fontAscent: 0.95, fontDescent: 0.25 };
+
+  it('is the minimum when the ink of every word stays well inside it', () => {
+    expect(maskRoom([shallow], 1.12, min)).toEqual(min);
+    expect(maskRoom([], 1, min)).toEqual(min);
+  });
+
+  it('grows past the minimum, by a margin, for ink that reaches further below the line than the minimum', () => {
+    // A descent of 0.34 em at line height 0.94 reaches 0.34 - 0.12 = 0.22 em past the line.
+    const deep: Ink = { ...shallow, descent: 0.34 };
+    const room = maskRoom([deep], 0.94, min);
+    expect(room.below).toBeGreaterThan(0.22);
+    expect(room.below).toBeLessThan(0.22 + 0.06);
+    expect(room.above).toBe(min.above);
+  });
+
+  it('holds every word of the cycle: the room is that of the one that needs most', () => {
+    const deep: Ink = { ...shallow, descent: 0.34 };
+    expect(maskRoom([shallow, deep, shallow], 0.94, min)).toEqual(maskRoom([deep], 0.94, min));
   });
 });
 
