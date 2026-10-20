@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveFont } from '../../src/capture/fonts';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { wordEnterFrame } from '../../src/video/rhythm';
+import { ROOM } from '../../src/video/type';
 import { readClips, type ClippedLine, type Rect } from './support/clips';
 
 const BPM = 90;
@@ -73,9 +74,9 @@ let browser: Awaited<ReturnType<typeof openBrowser>>;
 const fonts: Record<string, SiteFont> = {};
 let shots = 0;
 
-/** The frame of the video of `site` as pixels (RGB), with the lines the measure found in it. */
-async function shoot(site: SiteData, frame: number): Promise<Shot> {
-  const inputProps = { edl, site, format: '9x16', hook: 0 };
+/** The frame of the video of `site` (of `scenes`, the edit list of the test unless another is given) as pixels (RGB), with the lines the measure found in it. */
+async function shoot(site: SiteData, frame: number, scenes: Edl = edl): Promise<Shot> {
+  const inputProps = { edl: scenes, site, format: '9x16', hook: 0 };
   const composition = await selectComposition({ serveUrl, id: 'wordcycle', inputProps, puppeteerInstance: browser });
   const png = join(work, `${shots}.png`);
   const raw = join(work, `${shots++}.rgb`);
@@ -101,6 +102,18 @@ const lineOf = (shot: Shot, text: string): ClippedLine => {
   const line = shot.lines.find((l) => l.text === text);
   if (!line) throw new Error(`The frame has no line "${text}": it has ${shot.lines.map((l) => `"${l.text}"`).join(', ')}.`);
   return line;
+};
+
+/**
+ * The boxes of the lines of a headline at rest are a line height and 0.14 em of the one before apart, and the block they
+ * make is centered in the safe zone, whatever room each line's clip has for its ink.
+ */
+const expectLinesSet = (boxes: Rect[], lineHeight: number): void => {
+  const size = boxes[0]!.h / lineHeight;
+  const { safe, height } = FORMATS['9x16'];
+  const block = (boxes.length * lineHeight + (boxes.length - 1) * 0.14) * size;
+  const top = safe.top + (height - safe.top - safe.bottom - block) / 2;
+  boxes.forEach((box, i) => expect(box.y, `line ${i}`).toBeCloseTo(top + i * (lineHeight + 0.14) * size, 0));
 };
 
 type Pixel = (r: number, g: number, b: number) => boolean;
@@ -264,12 +277,28 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
     it('keeps the lines where they have always been: 0.14 em between them, centered in the safe zone', async () => {
       const shot = await shoot(site(), settledFrame(headline));
       const boxes = HEADLINE.map((text) => lineOf(shot, text).box);
-      const size = boxes[0]!.h / lineHeight;
-      const { safe, height } = FORMATS['9x16'];
-      // A line is one line height, and 0.14 em of the one before it, whatever room it has for its ink.
-      const block = (HEADLINE.length * lineHeight + (HEADLINE.length - 1) * 0.14) * size;
-      const top = safe.top + (height - safe.top - safe.bottom - block) / 2;
-      boxes.forEach((box, i) => expect(box.y, `line ${i}`).toBeCloseTo(top + i * (lineHeight + 0.14) * size, 0));
+      expectLinesSet(boxes, lineHeight);
+    });
+  });
+
+  // The lines are the children of a flex column, whose items' margins never collapse: the room of a clip over the next
+  // (a negative margin, to leave the text where it is) cannot pull the lines together. In a block, adjacent margins collapse to
+  // the larger, so the lines would sit a line height plus the lesser room apart: 0.14 em while the room above is the least a
+  // clip leaves, and further as soon as an accented capital makes it grow. No other headline of this file makes it grow.
+  describe('a headline with accented capitals in Oswald at line height 0.94', () => {
+    const lineHeight = 0.94;
+    const accented = ['Ética', 'ÁGIL', 'Pago playa'];
+    const edlOf = (texts: string[]): Edl => ({ ...edl, body: [{ ...edl.body[0]!, lines: texts.map((text) => ({ text, kind: 'framing' as const })) }] });
+
+    it('keeps 0.14 em between the lines and the block centered, whatever room the clips have above them', async () => {
+      const scenes = edlOf(accented);
+      const scene = layoutScenes(scenes, 0).scenes[1] as TimedScene;
+      const shot = await shoot(siteWith(fonts['Oswald']!, lineHeight), settledFrame(scene), scenes);
+      const lines = accented.map((text) => lineOf(shot, text));
+      const size = lines[0]!.box.h / lineHeight;
+      // The precondition: the clips do have more room above their lines than the least they leave, or this proves nothing.
+      lines.forEach(({ box, clip }, i) => expect((box.y - clip!.y) / size, `room above line ${i}, in em`).toBeGreaterThan(ROOM.above + 0.02));
+      expectLinesSet(lines.map((line) => line.box), lineHeight);
     });
   });
 });
