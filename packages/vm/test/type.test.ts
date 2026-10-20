@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitAddress, fitHeadline, glyphOverhang, inkOverhang, layoutCaptions, layoutLines, lineSources, lineText, maskRoom, pillSize, toWords, type Ink, type Measure } from '../src/video/type';
+import { fitAddress, fitHeadline, glyphOverhang, hideTravel, inkOverhang, layoutCaptions, layoutLines, lineSources, lineText, maskRoom, pillSize, ROOM, toWords, type Ink, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -165,7 +165,7 @@ describe('the ink past the line', () => {
 });
 
 describe('the room of a mask', () => {
-  const min = { above: 0.14, below: 0.16 };
+  const min = ROOM;
   const shallow: Ink = { ascent: 0.7, descent: 0.2, fontAscent: 0.95, fontDescent: 0.25 };
 
   it('is the minimum when the ink of every word stays well inside it', () => {
@@ -185,6 +185,30 @@ describe('the room of a mask', () => {
   it('holds every word of the cycle: the room is that of the one that needs most', () => {
     const deep: Ink = { ...shallow, descent: 0.34 };
     expect(maskRoom([shallow, deep, shallow], 0.94, min)).toEqual(maskRoom([deep], 0.94, min));
+  });
+});
+
+describe('hiding a line under its clip', () => {
+  // Its ink starts 0.07 em under the top of a line of 0.94 (the baseline is at 0.82, the glyphs rise 0.75 above it).
+  const ink: Ink = { ascent: 0.75, descent: 0.2, fontAscent: 0.95, fontDescent: 0.25 };
+
+  it('lowers a line 1.1 lines, as it always has, when that clears the ink of every text', () => {
+    expect(hideTravel([{ ...ink, ascent: 0.6 }], 0.94, ROOM)).toBeCloseTo(1.1 * 0.94);
+    expect(hideTravel([], 1.12, ROOM)).toBeCloseTo(1.1 * 1.12);
+  });
+
+  it('lowers it until the top of the ink is under the bottom of the clip, and a hair more, when 1.1 lines does not', () => {
+    // The clip ends 0.16 em under the line: 0.94 + 0.16 - 0.07 + 0.02.
+    expect(hideTravel([ink], 0.94, ROOM)).toBeCloseTo(1.05);
+  });
+
+  it('lowers it further as the clip gains room below, and for ink that rises above the line', () => {
+    expect(hideTravel([ink], 0.94, { above: ROOM.above, below: 0.3 })).toBeCloseTo(0.94 + 0.3 - 0.07 + 0.02);
+    expect(hideTravel([{ ...ink, ascent: 0.9 }], 0.94, ROOM)).toBeCloseTo(0.94 + 0.16 + 0.08 + 0.02);
+  });
+
+  it('clears the text that rises highest', () => {
+    expect(hideTravel([{ ...ink, ascent: 0.6 }, { ...ink, ascent: 0.9 }], 0.94, ROOM)).toBeCloseTo(0.94 + 0.16 + 0.08 + 0.02);
   });
 });
 

@@ -7,7 +7,7 @@ import { alpha, FORMATS, mix, safeWidth, TYPE, type Edl, type FontSpec, type For
 import { stageLayout } from '../camera';
 import { brandName, fitLogo, type Size } from '../logo';
 import { captionSwapFrame } from '../rhythm';
-import { glyphOverhang, layoutCaptions, layoutLines, toWords, type InkMeasure, type Measure, type TypeLine } from '../type';
+import { glyphOverhang, hideTravel, layoutCaptions, layoutLines, lineText, maskRoom, ROOM, toWords, type InkMeasure, type Measure, type Room, type TypeLine } from '../type';
 
 /**
  * `logoShown`: the natural size of the site's logo when the video shows it, at the opening and the close alike; null when
@@ -57,16 +57,20 @@ export const measureWith =
 
 // The ink is measured at this size, in px, and given back in em.
 const INK_SIZE = 100;
+// One canvas measures all the ink; it is made when first needed (never in a page that measures nothing).
+let inkContext: CanvasRenderingContext2D | null | undefined;
 
 /**
  * Measures the ink of a text in the page, in one of the brand's fonts (loaded before this is called, as for measureWith): how
- * far its glyphs reach above and below the baseline, which the DOM does not tell and a mask that clips a text has to hold.
+ * far its glyphs reach above and below the baseline, which the DOM does not tell and a clip that holds a text has to allow
+ * for. The font's `stretch` is not set: a canvas takes keywords for it, not the percentages a width axis is asked for, and
+ * how wide a glyph is does not change how far it reaches up or down.
  */
 export const inkWith = (font: FontSpec): InkMeasure => {
-  const context = document.createElement('canvas').getContext('2d');
-  if (context) context.font = `${font.weight} ${INK_SIZE}px ${font.family}`;
+  inkContext ??= document.createElement('canvas').getContext('2d');
   return (text) => {
-    const m = context?.measureText(text);
+    if (inkContext) inkContext.font = `${font.weight} ${INK_SIZE}px ${font.family}`;
+    const m = inkContext?.measureText(text);
     return {
       ascent: (m?.actualBoundingBoxAscent ?? 0) / INK_SIZE,
       descent: (m?.actualBoundingBoxDescent ?? 0) / INK_SIZE,
@@ -76,28 +80,50 @@ export const inkWith = (font: FontSpec): InkMeasure => {
   };
 };
 
+/**
+ * The room in em that a clip needs above and below the lines of `texts` set in `font` so that none of their ink is cut
+ * (at least ROOM, see maskRoom), and how far, in em, a line is lowered to be hidden under it (see hideTravel). Measured
+ * again only when the font or the texts change.
+ */
+export const useInkRoom = (font: FontSpec, texts: readonly string[]): Room & { hide: number } => {
+  const key = JSON.stringify(texts);
+  return useMemo(() => {
+    const inks = texts.map(inkWith(font));
+    const room = maskRoom(inks, font.lineHeight, ROOM);
+    return { ...room, hide: hideTravel(inks, font.lineHeight, room) };
+  }, [font, key]);
+};
+
 type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center' };
 
+// The lines of a block are this far apart, in em, beyond their line height: what the room of one clip over the next used
+// to leave of their margins (they collapsed to the larger). The layout keeps it, whatever room the clips have.
+const LINE_GAP = 0.14;
+
 /**
- * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: just
- * hidden under its clip).
+ * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: hidden
+ * under its clip). A clip has room for the ink of the lines of the block above and below its line (see useInkRoom), taken
+ * back by negative margins, so that the room never moves the text.
  */
-export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [] }) => (
-  <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align }}>
-    {lines.map((line, i) => (
-      <div key={i} style={{ overflow: 'hidden', padding: '0.14em 0 0.16em', margin: '-0.14em 0 -0.16em' }}>
-        <div data-qa-line style={{ transform: `translateY(${(drop[i] ?? 0) * 110}%)` }}>
-          {line.map((word, j) => (
-            <span key={j} style={word.accent ? { color: accent } : undefined}>
-              {word.text}
-              {j < line.length - 1 ? ' ' : ''}
-            </span>
-          ))}
+export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [] }) => {
+  const { above, below, hide } = useInkRoom(font, lines.map(lineText));
+  return (
+    <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align, display: 'flex', flexDirection: 'column', gap: `${LINE_GAP}em` }}>
+      {lines.map((line, i) => (
+        <div key={i} style={{ overflow: 'hidden', padding: `${above}em 0 ${below}em`, margin: `${-above}em 0 ${-below}em` }}>
+          <div data-qa-line style={{ transform: `translateY(${((drop[i] ?? 0) * hide * 100) / font.lineHeight}%)` }}>
+            {line.map((word, j) => (
+              <span key={j} style={word.accent ? { color: accent } : undefined}>
+                {word.text}
+                {j < line.length - 1 ? ' ' : ''}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
-    ))}
-  </div>
-);
+      ))}
+    </div>
+  );
+};
 
 /** Lines revealed by a mask, each rising from below its own clip: line i from frame `starts[i]`, or one after the other from `delay`. */
 export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; starts?: readonly number[] }> = ({ delay = 0, stagger = 5, starts, ...set }) => {

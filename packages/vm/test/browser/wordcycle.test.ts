@@ -1,6 +1,7 @@
-// Opt-in (`pnpm --filter @app/vm test:browser`): renders frames of a WordCycle in a real Chrome and reads the pixels, to see
-// that its mask never cuts the ink of a word (a flat-cut baseline or descender is the failure) and that the word rolling
-// out never draws over the prefix. It needs the network (the brand's fonts come from Google Fonts, as the capture gets
+// Opt-in (`pnpm --filter @app/vm test:browser`): renders frames of a WordCycle, and of a headline set the way every piece
+// sets its lines (TypeLines), in a real Chrome and reads the pixels, to see that their clips never cut the ink of a word
+// (a flat-cut baseline or descender is the failure), that the word rolling out never draws over the prefix and that the
+// prefix does not climb over the wipe that follows. It needs the network (the brand's fonts come from Google Fonts, as the capture gets
 // them) and ffmpeg on the PATH (it turns the PNG of a frame into pixels). The bundle is the Ad's, with a measure beside it
 // (support/wordcycle-entry.tsx) that reports the rectangle each probed line is clipped to.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -8,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
-import { FORMATS, layoutScenes, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
+import { FORMATS, layoutScenes, settledFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveFont } from '../../src/capture/fonts';
 import { runFfmpeg } from '../../src/render/ffmpeg';
@@ -20,6 +21,7 @@ const PREFIX = 'play with';
 // Words with deep descenders ("Pago": g; "playa": p and y), and a third so that the cycle goes on. "Pago" starts under the
 // p of the prefix, whose descender hangs down into the mask: the word that rolls out rises right through it.
 const WORDS = ['Pago', 'playa', 'links'];
+const HEADLINE = ['Pago playa', 'links hoy', 'gypsy jazz'];
 const BG = '#fbf7f4';
 const FG = '#1a1614';
 const ACCENT = '#c81e6b';
@@ -29,13 +31,15 @@ const edl: Edl = {
   bpm: BPM,
   style: { energy: 'bold', density: 'airy' },
   hooks: [[{ piece: 'WordCycle', beats: 8, lines: [PREFIX, ...WORDS].map((text) => ({ text, kind: 'framing' as const })) }]],
-  body: [],
+  // The headline has three lines, so that the last has no line under it; its scene comes in with the brand wipe.
+  body: [{ piece: 'KineticHeadline', beats: 8, lines: HEADLINE.map((text) => ({ text, kind: 'framing' as const })), transitionIn: 'wipe' }],
   cta: { piece: 'EndCard', beats: 4, lines: [{ text: 'Start', kind: 'framing' }] },
   claims: [],
   musicPrompt: 'Upbeat electronic pop.',
 };
-// The scene is the first of the video, so its frames are the video's.
+// The WordCycle is the first scene of the video, so its frames are the video's; the headline's scene follows it.
 let timed: TimedScene;
+let headline: TimedScene;
 /** The frame at which word k is at rest: settled, and before the next one comes in. */
 const restFrame = (k: number): number => wordEnterFrame(k, timed, BPM) + 12;
 
@@ -99,30 +103,36 @@ const lineOf = (shot: Shot, text: string): ClippedLine => {
   return line;
 };
 
-/** The first and last rows of the rectangle that have ink of the accent color (at least a fifth covered) in them. */
-function accentRows(shot: Shot, rect: Rect): { first: number; last: number } | undefined {
-  const [bgR = 0, bgG = 0] = channels(BG);
+type Pixel = (r: number, g: number, b: number) => boolean;
+
+const [bgR = 0, bgG = 0, bgB = 0] = channels(BG);
+// The accent is pink: red well above green, as the background and the dark text are not (at least a fifth covered).
+const isAccent: Pixel = (r, g) => r - g - (bgR - bgG) > 30;
+// Anything but the background, at least a seventh covered by dark text or by the accent.
+const isInk: Pixel = (r, g, b) => Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB) > 100;
+
+/** The first and last rows of the rectangle that have a pixel `ink` accepts in them, and how many pixels of the rectangle there are. */
+function inkRows(shot: Shot, rect: Rect, ink: Pixel): { first: number; last: number; count: number } | undefined {
   let first: number | undefined;
   let last: number | undefined;
+  let count = 0;
   for (let y = Math.floor(rect.y); y < Math.ceil(rect.y + rect.h); y++) {
     for (let x = Math.floor(rect.x); x < Math.ceil(rect.x + rect.w); x++) {
       const at = (y * shot.width + x) * 3;
-      // The accent is pink: red well above green, as the background and the dark prefix are not.
-      if (shot.rgb[at]! - shot.rgb[at + 1]! - (bgR - bgG) > 30) {
-        first ??= y;
-        last = y;
-        break;
-      }
+      if (!ink(shot.rgb[at]!, shot.rgb[at + 1]!, shot.rgb[at + 2]!)) continue;
+      first ??= y;
+      last = y;
+      count++;
     }
   }
-  return first === undefined || last === undefined ? undefined : { first, last };
+  return first === undefined || last === undefined ? undefined : { first, last, count };
 }
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wordcycle-run-'));
   work = mkdtempSync(join(tmpdir(), 'wordcycle-work-'));
   for (const family of ['Inter', 'Oswald']) fonts[family] = await resolveFont(family, 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
-  timed = layoutScenes(edl, 0).scenes[0]!;
+  [timed, headline] = layoutScenes(edl, 0).scenes as [TimedScene, TimedScene];
   serveUrl = await bundle({ entryPoint: join(import.meta.dirname, 'support', 'wordcycle-entry.tsx'), publicDir: dir });
   browser = await openBrowser('chrome');
 });
@@ -142,7 +152,7 @@ const CASES: [family: string, lineHeight: number][] = [
   ['Oswald', 0.94],
 ];
 
-describe('the mask of a WordCycle', () => {
+describe('the clips of a WordCycle and of the lines of a headline', () => {
   describe.each(CASES)('in %s at line height %s', (family, lineHeight) => {
     it.each([
       ['Pago', 0],
@@ -151,7 +161,7 @@ describe('the mask of a WordCycle', () => {
       const shot = await shoot(siteWith(fonts[family]!, lineHeight), restFrame(k));
       const { clip } = lineOf(shot, word);
       expect(clip, 'the mask').not.toBeNull();
-      const rows = accentRows(shot, clip!);
+      const rows = inkRows(shot, clip!, isAccent);
       expect(rows, `the ink of "${word}"`).toBeDefined();
       // The clip's own first and last rows: a glyph that is cut has ink on the last one.
       const firstRow = Math.floor(clip!.y);
@@ -209,6 +219,57 @@ describe('the mask of a WordCycle', () => {
         const shot = await shoot(site(), frame);
         expect(covered(shot), `pixels of the prefix drawn over, in frame ${frame}`).toBe(0);
       }
+    });
+
+    it('stays under the brand wipe that follows it: the panel covers the prefix, which does not climb over it', async () => {
+      // The frame before the cut: the panel is about to cover the whole frame, and the WordCycle is still on screen.
+      const shot = await shoot(site(), headline.from - 1);
+      const prefix = lineOf(shot, PREFIX).box;
+      const [fgR = 0, fgG = 0] = channels(FG);
+      let dark = 0;
+      for (let y = Math.floor(prefix.y); y < Math.ceil(prefix.y + prefix.h); y++) {
+        for (let x = Math.floor(prefix.x); x < Math.ceil(prefix.x + prefix.w); x++) {
+          const at = (y * shot.width + x) * 3;
+          if (Math.abs(shot.rgb[at]! - fgR) + Math.abs(shot.rgb[at + 1]! - fgG) < 24) dark++;
+        }
+      }
+      expect(dark, 'pixels of the prefix over the panel').toBe(0);
+    });
+  });
+
+  // The lines of every piece are set in clips of their own (TypeLines), with room for the ink above and below.
+  describe.each(CASES)('a headline in %s at line height %s', (family, lineHeight) => {
+    const site = () => siteWith(fonts[family]!, lineHeight);
+    const last = HEADLINE[HEADLINE.length - 1]!;
+
+    it('shows the last line whole once it is revealed: the descenders of g, p, y and j are not cut', async () => {
+      const shot = await shoot(site(), settledFrame(headline));
+      const { clip } = lineOf(shot, last);
+      expect(clip, 'the clip').not.toBeNull();
+      const rows = inkRows(shot, clip!, isInk);
+      expect(rows, `the ink of "${last}"`).toBeDefined();
+      const lastRow = Math.ceil(clip!.y + clip!.h) - 1;
+      expect(rows!.last, `the last row of ink, in a clip that ends on row ${lastRow}`).toBeLessThan(lastRow);
+    });
+
+    it('shows nothing of a line that waits to be revealed, at the bottom of its clip', async () => {
+      // Line 2 comes in on beat 2; thirty frames into the scene it is still waiting, and the lines above it are rising in.
+      const shot = await shoot(site(), headline.from + 30);
+      const { clip } = lineOf(shot, last);
+      // The lower half of the clip, where the waiting line shows first: nothing else is drawn there.
+      const lower = { ...clip!, y: clip!.y + clip!.h / 2, h: clip!.h / 2 };
+      expect(inkRows(shot, lower, isInk)?.count ?? 0, 'pixels of ink in the lower half of its clip').toBe(0);
+    });
+
+    it('keeps the lines where they have always been: 0.14 em between them, centered in the safe zone', async () => {
+      const shot = await shoot(site(), settledFrame(headline));
+      const boxes = HEADLINE.map((text) => lineOf(shot, text).box);
+      const size = boxes[0]!.h / lineHeight;
+      const { safe, height } = FORMATS['9x16'];
+      // A line is one line height, and 0.14 em of the one before it, whatever room it has for its ink.
+      const block = (HEADLINE.length * lineHeight + (HEADLINE.length - 1) * 0.14) * size;
+      const top = safe.top + (height - safe.top - safe.bottom - block) / 2;
+      boxes.forEach((box, i) => expect(box.y, `line ${i}`).toBeCloseTo(top + i * (lineHeight + 0.14) * size, 0));
     });
   });
 });

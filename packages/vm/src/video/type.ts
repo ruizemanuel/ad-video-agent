@@ -35,20 +35,40 @@ export const inkOverhang = ({ ascent, descent, fontAscent, fontDescent }: Ink, l
   return { above: Math.max(0, ascent - baseline), below: Math.max(0, descent - (lineHeight - baseline)) };
 };
 
+/** Room for ink around a line, in em: above its box and below it. */
+export type Room = { above: number; below: number };
+
+/** The least room a clip leaves around a line for the ink of its glyphs: accents above, descenders below. */
+export const ROOM: Room = { above: 0.14, below: 0.16 };
+
 // A hair past the measured ink: the canvas and the layout each round the font's metrics to the pixel their own way.
 const INK_MARGIN = 0.03;
 
 /**
- * The room, in em above and below a line, that a mask has to leave around the lines it clips so that none of their ink is
- * cut: the `min` room or, where the ink of one of the texts reaches further past the line at `lineHeight`, that plus a
- * small margin. One room holds every text, so the mask does not change size as they come and go.
+ * The room that a clip has to leave around the lines it clips so that none of their ink is cut: the `min` room or, where
+ * the ink of one of the texts reaches further past the line at `lineHeight`, that plus a small margin. One room holds every
+ * text, so the clip does not change size as they come and go.
  */
-export const maskRoom = (inks: readonly Ink[], lineHeight: number, min: { above: number; below: number }): { above: number; below: number } => {
+export const maskRoom = (inks: readonly Ink[], lineHeight: number, min: Room): Room => {
   const over = inks.map((ink) => inkOverhang(ink, lineHeight));
   return {
     above: Math.max(min.above, ...over.map((o) => o.above + INK_MARGIN)),
     below: Math.max(min.below, ...over.map((o) => o.below + INK_MARGIN)),
   };
+};
+
+// A line waiting to be revealed is lowered this many lines at least, and a hair more than it takes to put its ink under the clip.
+const HIDE_LINES = 1.1;
+const HIDE_MARGIN = 0.02;
+
+/**
+ * How far, in em, a line has to be lowered to be hidden under its clip: so that the top of the ink of every one of its
+ * `inks` is under the bottom of the clip (the line, and the room below it), and never less than HIDE_LINES lines.
+ */
+export const hideTravel = (inks: readonly Ink[], lineHeight: number, room: Room): number => {
+  // Where the ink of a text starts, in em under the top of the line (above it when negative).
+  const tops = inks.map(({ ascent, fontAscent, fontDescent }) => (lineHeight + fontAscent - fontDescent) / 2 - ascent);
+  return Math.max(HIDE_LINES * lineHeight, ...tops.map((top) => lineHeight + room.below - top + HIDE_MARGIN));
 };
 
 // Below this share of the largest size, the widest line is split in two.

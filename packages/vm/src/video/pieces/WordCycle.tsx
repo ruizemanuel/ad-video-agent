@@ -2,16 +2,13 @@ import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { safeWidth, TYPE } from '@app/core';
 import { wordEnterFrame } from '../rhythm';
-import { layoutLines, lineSources, maskRoom, toWords, type Measure } from '../type';
-import { fontStyle, inkWith, measureWith, progress, RevealLines, safeBox, useAd, type PieceProps } from './common';
+import { layoutLines, lineSources, toWords, type Measure } from '../type';
+import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, type PieceProps } from './common';
 
 // A word rolls through the mask over this many frames, from its beat on.
 const ROLL = 6;
 // How far a word travels through the mask, as a share of its line: past its own line, descenders included.
 const TRAVEL = 1.35;
-// The least room, in em, the mask leaves above and below the line of a word: for accents above it and descenders below it.
-// A word whose ink reaches further past its line gets what it needs (see maskRoom).
-const ROOM = { above: 0.14, below: 0.16 };
 // In the layout the mask takes its line less this much, as it always has: the text is centered by it and stays where it is.
 const SLOT_LESS = 0.16;
 
@@ -23,7 +20,7 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
   const type = TYPE[format];
   const words = scene.lines.slice(1);
   const lineHeight = theme.display.lineHeight;
-  const { head, size, room } = useMemo(() => {
+  const { head, size } = useMemo(() => {
     const [prefix, ...list] = scene.lines;
     const measure: Measure = measureWith(theme.display);
     const width = safeWidth(format);
@@ -34,19 +31,16 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
     const sources = lineSources(set.lines, source);
     // A word never splits: it stays on one line, so it fits the width whole.
     const whole = Math.min(...list.map((w) => (width * 0.98) / measure(w.text)));
-    // The mask holds the ink of every word of the cycle, as their font draws it in a line of this height.
-    const ink = inkWith(theme.display);
-    return {
-      head: set.lines.filter((_, i) => sources[i] === 0),
-      size: Math.floor(Math.max(type.min, Math.min(set.size, whole))),
-      room: maskRoom(list.map((w) => ink(w.text)), lineHeight, ROOM),
-    };
-  }, [scene, format, type, theme, lineHeight]);
+    return { head: set.lines.filter((_, i) => sources[i] === 0), size: Math.floor(Math.max(type.min, Math.min(set.size, whole))) };
+  }, [scene, format, type, theme]);
+  // The mask holds the ink of every word of the cycle, as their font draws it in a line of this height.
+  const room = useInkRoom(theme.display, words.map((word) => word.text));
   const enters = words.map((_, k) => wordEnterFrame(k, timed, edl.bpm));
   const box = room.above + lineHeight + room.below;
   return (
     <AbsoluteFill style={{ background: theme.bg }}>
-      <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      {/* Isolated, so that what is stacked inside it never rises over the wipe of the scene that follows. */}
+      <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center', isolation: 'isolate' }}>
         {/* Over the mask, so that the word rolling out never draws on the prefix's descenders, which hang into it. */}
         <div style={{ position: 'relative', zIndex: 1 }}>
           <RevealLines lines={head} size={size} font={theme.display} color={theme.fg} accent={theme.accentText} align={type.align} />
@@ -61,7 +55,8 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
             boxSizing: 'border-box',
             height: `${box}em`,
             overflow: 'hidden',
-            // The room above is under the prefix's line, never over it, so that the word rolling out stays off its glyphs.
+            // The room above is under the prefix's line, never over it, so that the word rolling out stays off its glyphs. A word
+            // whose ink rises more than 0.14 em above its line (an accented capital in a tight font) sits that much lower.
             padding: `${room.above}em 0 ${room.below}em`,
             margin: `0 0 ${lineHeight - SLOT_LESS - box}em`,
             whiteSpace: 'nowrap',
