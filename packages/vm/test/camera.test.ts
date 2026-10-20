@@ -1,6 +1,6 @@
-import { FORMATS, type Box, type Scene, type Shot, type SiteData } from '@app/core';
+import { FORMATS, type Block, type Box, type Scene, type Shot, type SiteData } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { cameraAt, focusCamera, focusMove, focusRegion, focusShot, placeShot, resolveShot, scrollMove, scrollShot, stageLayout } from '../src/video/camera';
+import { cameraAt, focusCamera, focusMove, focusRegion, focusShot, placeShot, resolveShot, scrollMove, scrollShot, stageLayout, type Camera } from '../src/video/camera';
 
 const shot = (id: string, viewport: Shot['viewport'], height: number, sectionId?: string): Shot => ({
   id,
@@ -13,8 +13,9 @@ const shot = (id: string, viewport: Shot['viewport'], height: number, sectionId?
 });
 
 const box = (shotId: string, kind: Box['kind'], text: string, x: number, y: number, w: number, h: number): Box => ({ shotId, kind, text, x, y, w, h });
+const block = (shotId: string, x: number, y: number, w: number, h: number): Block => ({ shotId, x, y, w, h });
 
-const site = (shots: Shot[], boxes: Box[]): SiteData => ({
+const site = (shots: Shot[], boxes: Box[], blocks?: Block[]): SiteData => ({
   url: 'https://tiendita.example',
   lang: 'en',
   title: 'Tiendita',
@@ -23,6 +24,7 @@ const site = (shots: Shot[], boxes: Box[]): SiteData => ({
   brand: { colors: [], fonts: [] },
   shots,
   boxes,
+  ...(blocks ? { blocks } : {}),
   recordings: [],
 });
 
@@ -45,6 +47,15 @@ const inFrame = (target: Shot, at: { x: number; y: number }, camera: ReturnType<
   const placed = placeShot(target, camera, format, boxes);
   return { x: stage.cardLeft + placed.x + at.x * placed.scale, y: stage.cardTop + placed.y + at.y * placed.scale };
 };
+
+/** The part of the shot the card shows above the platform UI, with the camera there: its top and bottom, in shot pixels. */
+const viewOf = (target: Shot, camera: Camera, boxes: Box[], format: '9x16' | '16x9' | '4x5' = '9x16') => {
+  const placed = placeShot(target, camera, format, boxes);
+  const top = -placed.y / placed.scale;
+  return { top, bottom: top + (2 * stageLayout(format).focusY) / placed.scale };
+};
+const slices = (view: { top: number }, r: { y: number; h: number }): boolean => r.y < view.top && r.y + r.h > view.top;
+const shows = (view: { top: number; bottom: number }, r: { y: number; h: number }): boolean => r.y >= view.top && r.y + r.h <= view.bottom;
 
 describe('the camera on a UI shot', () => {
   it('never zooms a phone shot past 1.12x', () => {
@@ -181,6 +192,88 @@ describe('the camera of a scroll', () => {
     const all = site([phoneScreen, phonePage, desktopPage], [heading, onDesktopPage]);
     expect(scrollShot(all, uiScene('UiScroll', 'm-s2', 0), '9x16').shot.id).toBe('m-full');
     expect(scrollShot(all, uiScene('UiScroll', 'm-s2', 0), '16x9')).toEqual({ shot: desktopPage, box: onDesktopPage });
+  });
+});
+
+describe('the camera on a page with cards', () => {
+  // A card of a feature grid on the phone page, with its heading near its top, and the card before it in the grid. At
+  // the phone's base scale (960 / 780 card px per shot px) the card shows 760.5 shot px above the platform UI.
+  const card = block('m-full', 40, 2600, 700, 500);
+  const heading = box('m-full', 'heading', 'Get paid your way', 80, 2640, 400, 60);
+  const above = block('m-full', 40, 2100, 700, 420);
+
+  it('aims a heading inside a card at the whole card, and opens above it', () => {
+    const move = focusMove(heading, phonePage, '9x16', [heading], [card]);
+    expect(move.to.y).toBeCloseTo(card.y + card.h / 2);
+    expect(shows(viewOf(phonePage, move.to, [heading]), card)).toBe(true);
+    expect(move.from.y).toBeLessThan(move.to.y);
+  });
+
+  it('takes the smallest card of the same shot that holds the target', () => {
+    const panel = block('m-full', 20, 2560, 740, 640);
+    const next = block('m-full', 40, 3140, 700, 400);
+    const otherShot = block('m-s2', 40, 2620, 700, 200);
+    expect(focusCamera(heading, phonePage, '9x16', [heading], [panel, card, next, otherShot]).y).toBeCloseTo(card.y + card.h / 2);
+  });
+
+  it('aims at the heading as before when its card is taller than 90% of what the card shows', () => {
+    // 684 shot px fit in 90% of the visible part at the base scale; 688 do not.
+    const fits = { ...card, h: 684 };
+    expect(focusCamera(heading, phonePage, '9x16', [heading], [fits]).y).toBeCloseTo(fits.y + fits.h / 2);
+    const tall = { ...card, h: 688 };
+    expect(focusCamera(heading, phonePage, '9x16', [heading], [tall])).toEqual(focusCamera(heading, phonePage, '9x16', [heading]));
+    expect(focusCamera(heading, phonePage, '9x16', [heading], [tall]).y).toBeCloseTo(heading.y + 1.4 * heading.h);
+  });
+
+  it('never leaves the card above sliced by the top edge, and keeps the card it aims at in view', () => {
+    // Where the view would start without the rule: through the last lines of the card above.
+    expect(slices(viewOf(phonePage, focusCamera(heading, phonePage, '9x16', [heading], [card]), [heading]), above)).toBe(true);
+    const view = viewOf(phonePage, focusCamera(heading, phonePage, '9x16', [heading], [above, card]), [heading]);
+    expect(slices(view, above)).toBe(false);
+    expect(shows(view, card)).toBe(true);
+  });
+
+  it('lands a scroll on the card the target is in, with the card above out of the top edge', () => {
+    // Without cards it lands on the target itself, as it always has.
+    expect(scrollMove(heading, phonePage, '9x16', [heading]).to.y).toBeCloseTo(heading.y + heading.h / 2);
+    expect(scrollMove(heading, phonePage, '9x16', [heading], [card]).to.y).toBeCloseTo(card.y + card.h / 2);
+    const { to } = scrollMove(heading, phonePage, '9x16', [heading], [above, card]);
+    expect(to.scale).toBe(1);
+    const view = viewOf(phonePage, to, [heading]);
+    expect(slices(view, above)).toBe(false);
+    expect(shows(view, card)).toBe(true);
+  });
+
+  it('checks the new top again: a move that clears one card but cuts a heading goes on to clear that too', () => {
+    const target = block('m-full', 40, 2650, 700, 300);
+    const title = box('m-full', 'heading', 'Get paid your way', 80, 2680, 400, 60);
+    const before = block('m-full', 40, 2100, 700, 340);
+    // Pushing the card before out of view puts the top edge through this label.
+    const label = box('m-full', 'heading', 'Step two', 56, 2450, 668, 50);
+    const boxes = [label, title];
+    const view = viewOf(phonePage, focusCamera(title, phonePage, '9x16', boxes, [before, target]), boxes);
+    expect(slices(view, before)).toBe(false);
+    expect(slices(view, label)).toBe(false);
+    expect(shows(view, target)).toBe(true);
+  });
+
+  it('clears what it can when nothing clears everything: a panel around the cards runs past the top edge anyway', () => {
+    const panel = block('m-full', 20, 1800, 740, 1500);
+    const view = viewOf(phonePage, focusCamera(heading, phonePage, '9x16', [heading], [panel, above, card]), [heading]);
+    expect(slices(view, panel)).toBe(true);
+    expect(slices(view, above)).toBe(false);
+    expect(shows(view, card)).toBe(true);
+  });
+
+  it('takes the full page when the card it aims at cannot be centered in the one-screen shot', () => {
+    const onScreen = box('m-s2', 'heading', 'Get paid your way', 80, 700, 400, 60);
+    const onPage = box('m-full', 'heading', 'Get paid your way', 80, 2700, 400, 60);
+    const boxes = [onScreen, onPage];
+    // The heading alone can be centered on the phone screen...
+    expect(focusShot(site([phoneScreen, phonePage], boxes), uiScene('UiFocus', 'm-s2', 0), '9x16').shot.id).toBe('m-s2');
+    // ...but not the card it is in, which runs on lower: the shot would end first.
+    const cards = [block('m-s2', 40, 680, 700, 600), block('m-full', 40, 2680, 700, 600)];
+    expect(focusShot(site([phoneScreen, phonePage], boxes, cards), uiScene('UiFocus', 'm-s2', 0), '9x16')).toEqual({ shot: phonePage, box: onPage });
   });
 });
 

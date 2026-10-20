@@ -1,9 +1,10 @@
 // The camera of the UI scenes, as plain math: which shot a format films, how it frames it, and where it moves. The real
 // UI sits in a card under the caption; the camera holds a point of the shot at the card's focus point, the middle of the
 // part of the card the platform UI leaves visible. Rules from the prueba (spec 6.5): frame the content and not the
-// margins, zoom a phone shot 1.12x at most, aim a heading at the block it titles, never cut a heading with the top edge,
-// and take the full page when a one-screen shot cannot center the target.
-import { FORMATS, PREFERRED_VIEWPORT, type Box, type Format, type Scene, type Shot, type SiteData } from '@app/core';
+// margins, zoom a phone shot 1.12x at most, aim at the page's card (block) that holds the target or else a heading at
+// what it titles, never let the top edge slice a box or a block, and take the full page when a one-screen shot cannot
+// center the target.
+import { FORMATS, PREFERRED_VIEWPORT, type Block, type Box, type Format, type Scene, type Shot, type SiteData } from '@app/core';
 
 /** The layout of a UI scene: a caption block on top and, under it, the card with the shot, bleeding off the bottom edge. */
 export type Stage = {
@@ -44,6 +45,8 @@ export const stageLayout = (format: Format): Stage => {
  */
 export type Camera = { scale: number; x: number; y: number };
 export type Move = { from: Camera; to: Camera };
+/** A part of a shot, in shot pixels: a box, a block, or what the camera aims at. */
+type Region = { x: number; y: number; w: number; h: number };
 
 // A phone layout is one column already: zooming into it only crops rows at the sides, so the camera mostly travels.
 const PHONE_MAX_ZOOM = 1.12;
@@ -60,7 +63,11 @@ const TARGET_HEIGHT = 0.6;
 // The opening framing sits this share of the card above the target, so the move also travels down the page to it: the
 // page moves up into place, the same way the card it is in rises.
 const OPENING_DROP = 0.12;
+// A block is framed whole when it takes at most this share of the visible part of the card.
+const BLOCK_FIT = 0.9;
 const TOP_CUT_MARGIN = 24;
+// How many times the camera moves to clear the top edge before it settles for the position that slices the fewest.
+const TOP_CUT_PASSES = 3;
 
 // ---------- which shot ----------
 
@@ -101,7 +108,7 @@ export const resolveShot = (site: SiteData, shotId: string | undefined, boxIndex
 /** UiFocus: the director's take, or the full page of the same viewport when a one-screen shot cannot center the target. */
 export const focusShot = (site: SiteData, scene: Scene, format: Format): Take => {
   const take = resolveShot(site, scene.shotId, scene.boxIndex, format);
-  if (!take.box || canCenter(take.shot, take.box, format, site.boxes)) return take;
+  if (!take.box || canCenter(take.shot, take.box, format, site.boxes, site.blocks)) return take;
   const full = fullShotOf(site, take.shot);
   const match = full && sameElement(site, full, take.box);
   return full && match ? { shot: full, box: match } : take;
@@ -145,9 +152,24 @@ const contentMiddle = (shot: Shot, boxes: readonly Box[]): number => {
   return (x0 + x1) / 2;
 };
 
-/** What the camera aims at for a box: a heading stands for the block it titles (card, feature, section), 4 headings tall. */
+/** What the camera aims at for a box with no block to frame: a heading stands for what it titles (card, feature, section), 4 headings tall. */
 export const focusRegion = (box: Box): Box =>
   box.kind === 'heading' ? { ...box, x: box.x - box.w * 0.08, y: box.y - box.h * 0.6, w: box.w * 1.16, h: box.h * 4 } : box;
+
+/**
+ * The card of the page a box sits in: the smallest block of the shot that holds the box's center, when the camera can
+ * frame it whole, its height at `scaleFor(block)` (card pixels per shot pixel) within 90% of the visible part of the
+ * card. Undefined when there is none or it is too tall.
+ */
+const targetBlock = (box: Box, shot: Shot, format: Format, blocks: readonly Block[], scaleFor: (block: Block) => number): Block | undefined => {
+  const { focusY } = stageLayout(format);
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const block = blocks
+    .filter((b) => b.shotId === shot.id && b.x <= cx && cx <= b.x + b.w && b.y <= cy && cy <= b.y + b.h)
+    .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  return block && block.h * scaleFor(block) <= BLOCK_FIT * 2 * focusY ? block : undefined;
+};
 
 /**
  * Where the shot goes in the card: translate by (x, y) card pixels, then scale. The point (camera.x, camera.y) lands on
@@ -165,27 +187,47 @@ export const placeShot = (shot: Shot, camera: Camera, format: Format, boxes: rea
 };
 
 /**
- * Moves the camera so that the top edge of the view does not slice through a box (a heading cut mid-glyph reads as a
- * bug): the smaller move of the two, showing the box or pushing it out of view, as long as the target stays in view.
+ * Moves the camera so that the top edge of the view slices through no box (a heading cut mid-glyph reads as a bug) and
+ * no block (the last lines of the card above read as a cut card). For each one it slices, the move that shows it whole or
+ * pushes it out of view, as long as `target` stays in view and the view does not go above the top of the shot; of those,
+ * the one whose new top slices the fewest, then the smaller. The new top is checked again, up to 3 moves; when no
+ * position clears everything, the camera keeps the one that slices the fewest.
  */
-const avoidTopCut = (camera: Camera, scale: number, shot: Shot, format: Format, boxes: readonly Box[], target: Box | undefined): Camera => {
+const avoidTopCut = (
+  camera: Camera,
+  scale: number,
+  shot: Shot,
+  format: Format,
+  boxes: readonly Box[],
+  blocks: readonly Block[],
+  target: Region | undefined,
+): Camera => {
   const { focusY } = stageLayout(format);
-  const top = camera.y - focusY / scale;
-  const hit = boxes.find((b) => b.shotId === shot.id && b.y < top && b.y + b.h > top);
-  if (!hit || top <= 0) return camera;
   const visible = (2 * focusY) / scale;
-  const options = [hit.y - TOP_CUT_MARGIN, hit.y + hit.h + TOP_CUT_MARGIN].sort((a, b) => Math.abs(a - top) - Math.abs(b - top));
-  for (const newTop of options) {
-    const keepsTarget = !target || (target.y >= newTop && target.y + target.h <= newTop + visible);
-    if (keepsTarget && newTop >= 0) return { ...camera, y: newTop + focusY / scale };
+  const own: Region[] = [...boxes, ...blocks].filter((r) => r.shotId === shot.id);
+  const sliced = (top: number): Region[] => (top <= 0 ? [] : own.filter((r) => r.y < top && r.y + r.h > top));
+  const allowed = (top: number): boolean => top >= 0 && (!target || (target.y >= top && target.y + target.h <= top + visible));
+  const start = camera.y - focusY / scale;
+  const tried = [start];
+  let top = start;
+  for (let pass = 0; pass < TOP_CUT_PASSES && sliced(top).length > 0; pass++) {
+    const from = top;
+    const [next] = sliced(from)
+      .flatMap((r) => [r.y - TOP_CUT_MARGIN, r.y + r.h + TOP_CUT_MARGIN])
+      .filter((t) => allowed(t) && !tried.includes(t))
+      .sort((a, b) => sliced(a).length - sliced(b).length || Math.abs(a - from) - Math.abs(b - from));
+    if (next === undefined) break;
+    tried.push(next);
+    top = next;
   }
-  return camera;
+  const best = tried.reduce((kept, t) => (sliced(t).length < sliced(kept).length ? t : kept));
+  return best === start ? camera : { ...camera, y: best + focusY / scale };
 };
 
 /** Whether the camera can hold the target at the focus point: the shot runs on far enough below it to fill the card. */
-const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[]): boolean => {
+const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[], blocks: readonly Block[] = []): boolean => {
   const { cardH, focusY } = stageLayout(format);
-  const camera = focusCamera(box, shot, format, boxes);
+  const camera = focusCamera(box, shot, format, boxes, blocks);
   const scale = placeShot(shot, camera, format, boxes).scale;
   return (shot.height - camera.y) * scale >= cardH - focusY;
 };
@@ -194,35 +236,45 @@ const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[]):
 
 /**
  * UiFocus: the camera starts wide on the real UI, a little above the target, and eases down and in to the element that
- * backs the caption, like a scroll that settles. It zooms until the target takes 78% of the card's width or 60% of its height, within the limits of the
- * shot's viewport, and pans sideways only when the view gets narrower than most of the content.
+ * backs the caption, like a scroll that settles. It aims at the card of the page the element is in when it can frame it
+ * whole (see targetBlock), else at the element (see focusRegion). It zooms until the target takes 78% of the card's
+ * width or 60% of its height, within the limits of the shot's viewport, and pans sideways only when the view gets
+ * narrower than most of the content. `blocks` are the cards of the capture: a capture without them frames as before.
  */
-export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = []): Move => {
+export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = [], blocks: readonly Block[] = []): Move => {
   const { cardW, cardH } = stageLayout(format);
   const base = baseScale(shot, cardW, boxes);
   const { x0, x1 } = contentSpan(shot, boxes);
   const middle = contentMiddle(shot, boxes);
   const maxZoom = shot.viewport === 'mobile' ? PHONE_MAX_ZOOM : DESKTOP_MAX_ZOOM;
-  const target = box ? focusRegion(box) : { x: 0, y: 0, w: shot.width, h: Math.min(shot.height, cardH / base) };
-  const scale = Math.max(base, Math.min(MAX_SCALE, base * maxZoom, (cardW * TARGET_WIDTH) / target.w, (cardH * TARGET_HEIGHT) / target.h));
+  const zoomFor = (target: Region): number =>
+    Math.max(base, Math.min(MAX_SCALE, base * maxZoom, (cardW * TARGET_WIDTH) / target.w, (cardH * TARGET_HEIGHT) / target.h));
+  const block = box && targetBlock(box, shot, format, blocks, zoomFor);
+  const target = block ?? (box ? focusRegion(box) : { x: 0, y: 0, w: shot.width, h: Math.min(shot.height, cardH / base) });
+  const scale = zoomFor(target);
   const pan = cardW / scale < (x1 - x0) * 0.8;
   const targetY = target.y + target.h / 2;
   const from: Camera = { scale: 1, x: middle, y: targetY - (cardH * OPENING_DROP) / base };
-  const to = avoidTopCut({ scale: scale / base, x: pan ? target.x + target.w / 2 : middle, y: targetY }, scale, shot, format, boxes, box);
+  const to = avoidTopCut({ scale: scale / base, x: pan ? target.x + target.w / 2 : middle, y: targetY }, scale, shot, format, boxes, blocks, block ?? box);
   return { from, to };
 };
 
 /** Where UiFocus's camera lands: see focusMove. */
-export const focusCamera = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = []): Camera => focusMove(box, shot, format, boxes).to;
+export const focusCamera = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = [], blocks: readonly Block[] = []): Camera =>
+  focusMove(box, shot, format, boxes, blocks).to;
 
-/** UiScroll: glides down the page at one scale, from its top to the target (or a little under half the page). */
-export const scrollMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = []): Move => {
+/**
+ * UiScroll: glides down the page at one scale, from its top to the target (or a little under half the page): the card of
+ * the page the target is in when it fits the view whole (see targetBlock), else the target itself.
+ */
+export const scrollMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = [], blocks: readonly Block[] = []): Move => {
   const { cardW, cardH, focusY } = stageLayout(format);
   const base = baseScale(shot, cardW, boxes);
   const x = contentMiddle(shot, boxes);
   const top = focusY / base;
-  const end = box ? box.y + box.h / 2 : Math.min(shot.height - cardH / base / 2, top + shot.height * 0.45);
-  return { from: { scale: 1, x, y: top }, to: avoidTopCut({ scale: 1, x, y: end }, base, shot, format, boxes, box) };
+  const target = box && (targetBlock(box, shot, format, blocks, () => base) ?? box);
+  const end = target ? target.y + target.h / 2 : Math.min(shot.height - cardH / base / 2, top + shot.height * 0.45);
+  return { from: { scale: 1, x, y: top }, to: avoidTopCut({ scale: 1, x, y: end }, base, shot, format, boxes, blocks, target) };
 };
 
 /** The camera at progress `p` (0 to 1) of a move: the zoom grows by the same factor at each step, the pan in equal steps. */
