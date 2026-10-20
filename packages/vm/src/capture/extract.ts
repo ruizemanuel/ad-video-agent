@@ -7,6 +7,7 @@ type Rgba = { r: number; g: number; b: number; a: number };
 type Cap = {
   clean: (s: string | null | undefined) => string;
   visible: (el: Element) => boolean;
+  shown: (el: Element) => boolean;
   toRgba: (c: string) => Rgba | null;
   hex: (c: { r: number; g: number; b: number }) => string;
   isButtonLike: (el: Element) => boolean;
@@ -51,6 +52,9 @@ export const MAX_SCROLL_CSS_PX = 20_000;
 export function inPageSetup(): void {
   const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
   const visible = (el: Element): boolean => el.checkVisibility({ visibilityProperty: true });
+  // Visible and not see-through: what a screenshot shows. Content at opacity 0 (a reveal effect not run yet, or run
+  // back when it left the screen) is in the page but not in the picture.
+  const shown = (el: Element): boolean => el.checkVisibility({ visibilityProperty: true, opacityProperty: true });
   const cvs = document.createElement('canvas');
   cvs.width = cvs.height = 1;
   const ctx = cvs.getContext('2d', { willReadFrequently: true });
@@ -81,7 +85,7 @@ export function inPageSetup(): void {
     return Boolean((hasBg || hasBorder) && padded);
   };
   const PRICE_RE = /([$€£]\s?\d)|(\d[\d.,]*\s?(USD|USDT|USDC|ARS|EUR|cUSD|%))|(\/\s?(mes|month|mo)\b)/i;
-  (window as unknown as CapWindow).__cap = { clean, visible, toRgba, hex, isButtonLike, PRICE_RE };
+  (window as unknown as CapWindow).__cap = { clean, visible, shown, toRgba, hex, isButtonLike, PRICE_RE };
 }
 
 /** Scrolls the page down in steps, to trigger lazy loading and reveal-on-scroll. Returns the height it ends with. */
@@ -350,11 +354,11 @@ export function inPageFindLogo(): FoundLogo | null {
 }
 
 /**
- * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page. In pixels of
- * the shot; one that begins above the shot is kept from y 0 and marked `clippedTop`.
+ * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page, and shown:
+ * not at opacity 0. In pixels of the shot; one that begins above the shot is kept from y 0 and marked `clippedTop`.
  */
 export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[] {
-  const { clean, visible, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
+  const { clean, shown, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
   const dpr = devicePixelRatio;
   const vw = innerWidth;
   const vh = innerHeight;
@@ -371,7 +375,7 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
   };
   const out: PageBox[] = [];
   const push = (el: Element, kind: PageBox['kind'], text?: string): void => {
-    if (!visible(el)) return;
+    if (!shown(el)) return;
     const r = el.getBoundingClientRect();
     const x = r.left;
     const y = r.top + offY;
@@ -408,14 +412,14 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
 
 /**
  * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
- * order. In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is 40 to 98% of the screen's
- * width (a band as wide as the page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all
- * four sides, a shadow that is not transparent, a background color unlike the one behind it (the nearest ancestor's that
- * is not transparent, else white), or a background image. What is fixed or sticky, and what is in it, floats over the
- * page: it is no card of it.
+ * order, shown (not at opacity 0). In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is
+ * 40 to 98% of the screen's width (a band as wide as the page is page, not a card), 48 px to 1.2 screens tall, and draws
+ * a surface: a border on all four sides, a shadow that is not transparent, a background color unlike the one behind it
+ * (the nearest ancestor's that is not transparent, else white), or a background image. What is fixed or sticky, and what
+ * is in it, floats over the page: it is no card of it.
  */
 export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
-  const { visible, toRgba, hex } = (window as unknown as CapWindow).__cap;
+  const { shown, toRgba, hex } = (window as unknown as CapWindow).__cap;
   const dpr = devicePixelRatio;
   const vw = innerWidth;
   const vh = innerHeight;
@@ -466,7 +470,7 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
     const y = r.top + offY;
     const ix = Math.max(0, Math.min(vw, x + r.width) - Math.max(0, x));
     const iy = Math.max(0, Math.min(limitH, y + r.height) - Math.max(0, y));
-    if ((ix * iy) / (r.width * r.height) < 0.6 || !visible(el) || floats(el) || !drawsSurface(el)) continue;
+    if ((ix * iy) / (r.width * r.height) < 0.6 || !shown(el) || floats(el) || !drawsSurface(el)) continue;
     out.push({
       x: Math.round(Math.max(0, x) * dpr),
       y: Math.round(Math.max(0, y) * dpr),

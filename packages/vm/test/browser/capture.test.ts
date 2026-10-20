@@ -108,6 +108,20 @@ describe('a Framer site: content in wrappers with no box, figures split over hea
     );
   });
 
+  it('measures no box or block on content at opacity 0, and does on content half-way there, but reads the text of both', () => {
+    const { site } = run;
+    const fade = section('Cards that fade in');
+    expect(fade.text).toContain('Not revealed yet: $7 / month');
+    for (const v of ['d', 'm']) {
+      for (const shotId of [`${v}-${fade.id}`, `${v}-full`]) {
+        const boxes = site.boxes.filter((b) => b.shotId === shotId && b.sectionId === fade.id);
+        expect(boxes.filter((b) => b.kind === 'price').map((b) => b.text), shotId).toEqual(['Half revealed: $9 / month', '$9 / month']);
+        expect(boxes.filter((b) => b.kind === 'image'), shotId).toHaveLength(1);
+        // The card half-way there is 200 px tall; the one not revealed yet, 180 px, is not measured.
+        expect(site.blocks.filter((b) => b.shotId === shotId).map((b) => b.h), shotId).toEqual([400]);
+      }
+    }
+  });
 });
 
 describe('a site that repeats a heading, at the desktop and on the phone, with a menu label alone in its header', () => {
