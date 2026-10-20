@@ -7,7 +7,7 @@ import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { canAfford, EST } from '../src/pipeline/budget';
 import { correctEdl, runScript } from '../src/pipeline/script';
-import { siteForModel } from '../src/pipeline/site-for-model';
+import { productFlags, siteForModel } from '../src/pipeline/site-for-model';
 import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop as shopEdl, siteShop } from './support/shop';
 
@@ -418,6 +418,19 @@ describe('siteForModel', () => {
       const view = textOnly(undefined, [price(700), price(1560)]);
       expect([2, 3].map((boxIndex) => isProductTarget(view, 'm-s7', boxIndex))).toEqual([true, true]);
       expect(flags(view, 'm-s7')).toEqual([true, true, true, false]);
+    });
+
+    it('computes the flags once per site object, for every model site an order builds from it', () => {
+      const view = textOnly(undefined, [{ shotId: 'm-s7', sectionId: 's7', kind: 'price', text: '$ 4.500', x: 80, y: 700, w: 300, h: 60 }]);
+      const flags = productFlags(view);
+      expect(flags.get('m-s7')).toEqual([true, true, true]);
+      expect(productFlags(view)).toBe(flags);
+      // Another object is weighed anew, with the same answer.
+      expect(productFlags({ ...view })).not.toBe(flags);
+      expect(productFlags({ ...view })).toEqual(flags);
+      // The model site reads the flags of its site object: a capture is read once per step and never changed after.
+      view.boxes.splice(view.boxes.length - 1, 1);
+      expect(siteForModel(view).shots.find((s) => s.id === 'm-s7')?.boxes.map((b) => b.product)).toEqual([true, true]);
     });
 
     it('does not change the numbering of boxIndex', () =>
