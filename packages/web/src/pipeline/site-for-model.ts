@@ -1,8 +1,8 @@
 // What the director and the corrector read of a capture: the text of each section with its id (what a claim quotes),
 // the brand in a few words, and each shot with the boxes the camera can aim at, numbered as `boxIndex` counts them and
-// marked with whether they are product UI (the only boxes a UiFocus or a UiScroll may film).
+// marked with whether a UiFocus or a UiScroll may film them: product UI that the camera frames cleanly.
 // Files, font metrics and the capture's log stay out: the model has no use for them, and they cost tokens.
-import { isProductTarget, siteHost, type Box, type SiteData } from '@app/core';
+import { framesCleanly, isProductTarget, MAIN_FORMAT, siteHost, type Box, type SiteData } from '@app/core';
 
 export type ModelSite = {
   url: string;
@@ -19,10 +19,17 @@ export type ModelSite = {
     id: string;
     viewport: 'desktop' | 'mobile';
     sectionId: string;
-    /** `product`: an image or a price in the section or the card of the box (see isProductTarget), as validateEdl demands of a UiFocus or UiScroll. */
+    /**
+     * `product`: an image or a price in the section or the card of the box (see isProductTarget), and a box the camera of a
+     * UiFocus frames cleanly in the main video (see framesCleanly), as validateEdl demands of a UiFocus or UiScroll.
+     */
     boxes: { boxIndex: number; kind: Box['kind']; sectionId: string | undefined; text: string | undefined; product: boolean }[];
   }[];
 };
+
+/** Whether a UiFocus or a UiScroll may film the box: product UI that a UiFocus frames cleanly in the main video. */
+const canFilm = (site: SiteData, shotId: string, boxIndex: number): boolean =>
+  isProductTarget(site, shotId, boxIndex) && framesCleanly(site, { piece: 'UiFocus', shotId, boxIndex }, MAIN_FORMAT);
 
 export const siteForModel = (site: SiteData): ModelSite => ({
   url: site.url,
@@ -43,6 +50,6 @@ export const siteForModel = (site: SiteData): ModelSite => ({
     sectionId: shot.sectionId ?? 'whole page',
     boxes: site.boxes
       .filter((box) => box.shotId === shot.id)
-      .map((box, boxIndex) => ({ boxIndex, kind: box.kind, sectionId: box.sectionId, text: box.text, product: isProductTarget(site, shot.id, boxIndex) })),
+      .map((box, boxIndex) => ({ boxIndex, kind: box.kind, sectionId: box.sectionId, text: box.text, product: canFilm(site, shot.id, boxIndex) })),
   })),
 });

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { applyPatches, judgeItems, scenePaths, type Edl, type Problem, type Scene, type SiteData } from '@app/core';
+import { applyPatches, isProductTarget, judgeItems, scenePaths, type Edl, type Problem, type Scene, type SiteData } from '@app/core';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { canAfford, EST } from '../src/pipeline/budget';
@@ -372,7 +372,9 @@ describe('siteForModel', () => {
     expect(shots[1]?.boxes).toEqual([
       { boxIndex: 0, kind: 'heading', sectionId: 's4', text: 'Mirá una tienda de ejemplo', product: true },
       { boxIndex: 1, kind: 'image', sectionId: 's4', text: undefined, product: true },
-      { boxIndex: 2, kind: 'cta', sectionId: 's4', text: 'Ver demo', product: true },
+      // Product UI, but at the bottom of a screen with no full page: a view that brings it above the platform UI cuts the
+      // picture above it at the top edge (see framesCleanly).
+      { boxIndex: 2, kind: 'cta', sectionId: 's4', text: 'Ver demo', product: false },
     ]);
   });
 
@@ -407,6 +409,15 @@ describe('siteForModel', () => {
       const stat = (text: string): SiteData['boxes'][number] => ({ shotId: 'm-s7', sectionId: 's7', kind: 'price', text, x: 80, y: 700, w: 300, h: 60 });
       expect(flags(textOnly(undefined, [stat('0% de comisión')]), 'm-s7')).toEqual([false, false, false]);
       expect(flags(textOnly(undefined, [stat('$ 4.500')]), 'm-s7')).toEqual([true, true, true]);
+    });
+
+    it('is false for a product box the camera cannot frame cleanly in 9x16, and true for the same box higher up', () => {
+      // A price at the bottom of the screen of s7: no view of that screen brings it above the platform UI, and the site has
+      // no full page to film it on instead.
+      const price = (y: number): SiteData['boxes'][number] => ({ shotId: 'm-s7', sectionId: 's7', kind: 'price', text: '$ 4.500', x: 80, y, w: 300, h: 60 });
+      const view = textOnly(undefined, [price(700), price(1560)]);
+      expect([2, 3].map((boxIndex) => isProductTarget(view, 'm-s7', boxIndex))).toEqual([true, true]);
+      expect(flags(view, 'm-s7')).toEqual([true, true, true, false]);
     });
 
     it('does not change the numbering of boxIndex', () =>

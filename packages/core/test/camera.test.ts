@@ -7,6 +7,7 @@ import {
   focusMove,
   focusRegion,
   focusShot,
+  framesCleanly,
   placeShot,
   resolveShot,
   scrollLanding,
@@ -617,5 +618,97 @@ describe('the same element in another shot', () => {
     const noS15 = site([phoneSection, desktopSection], [...phoneBoxes, ...products('d-s13', { s13: 100, s14: 600, s15: 1100 }, ['s13', 's14'])]);
     const { index } = at('m-s13', 's15', 'cta', noS15.boxes);
     expect(resolveShot(noS15, 'm-s13', index, '16x9')).toEqual({ shot: desktopSection, box: at('d-s13', 's13', 'cta', noS15.boxes).box });
+  });
+});
+
+describe('whether a UI scene frames its target cleanly', () => {
+  const pieces = ['UiFocus', 'UiScroll'] as const;
+  type Piece = (typeof pieces)[number];
+  const pick = (piece: Piece, shotId: string, boxIndex?: number) => ({ piece, shotId, ...(boxIndex === undefined ? {} : { boxIndex }) });
+
+  // The demo store's phone page: the "Guía" card, too tall to frame, then three short cards down to the end of the page.
+  const storeCards = (shotId: string): Block[] => [
+    block(shotId, 32, 1312, 716, 719),
+    block(shotId, 32, 2063, 716, 274),
+    block(shotId, 32, 2368, 716, 274),
+    block(shotId, 32, 2674, 716, 319),
+  ];
+  const storeRows = (shotId: string): Box[] => [
+    { shotId, sectionId: 's15', kind: 'price', text: '$ 8.900 Agregar', x: 66, y: 1917, w: 648, h: 80 },
+    { shotId, sectionId: 's16', kind: 'price', text: '$ 3.000 Agregar', x: 66, y: 2222, w: 648, h: 80 },
+  ];
+  const store = (height: number): SiteData => site([shot('x1-m-full', 'mobile', height)], storeRows('x1-m-full'), storeCards('x1-m-full'));
+
+  it('is false for a target near the end of a short page, where a clean top edge leaves it under the platform UI', () => {
+    // Run 5: the 3072 px page ends too soon to bring the card of "$ 3.000" above the platform UI without cutting the "Guía" card.
+    for (const piece of pieces) expect(framesCleanly(store(3072), pick(piece, 'x1-m-full', 1), '9x16'), piece).toBe(false);
+  });
+
+  it('is true for the same target on a longer page', () => {
+    for (const piece of pieces) expect(framesCleanly(store(6000), pick(piece, 'x1-m-full', 1), '9x16'), piece).toBe(true);
+  });
+
+  // The phone screen of s15 starts partway through s14's photo, which the capture records from the top of the shot.
+  const screen = shot('x1-m-s15', 'mobile', 1688, 's15');
+  const page = shot('x1-m-full', 'mobile', 3072);
+  const screenPhoto: Box = { shotId: 'x1-m-s15', sectionId: 's14', kind: 'image', x: 34, y: 0, w: 712, h: 375, clippedTop: true };
+  const pagePhoto: Box = { shotId: 'x1-m-full', sectionId: 's14', kind: 'image', x: 34, y: 1314, w: 712, h: 445 };
+
+  it('asks the take the format films: a pick the one-screen shot cannot frame cleanly frames cleanly on its full page', () => {
+    // On the screen the photo is cut by any view that shows it...
+    expect(focusLanding(screenPhoto, screen, '9x16', [screenPhoto, pagePhoto]).clean).toBe(false);
+    // ...but UiFocus and UiScroll film it on the full page, where it is whole.
+    for (const piece of pieces) expect(framesCleanly(site([screen, page], [screenPhoto, pagePhoto]), pick(piece, 'x1-m-s15', 0), '9x16'), piece).toBe(true);
+    // With no full page to go to, the screen is all there is.
+    for (const piece of pieces) expect(framesCleanly(site([screen], [screenPhoto]), pick(piece, 'x1-m-s15', 0), '9x16'), piece).toBe(false);
+  });
+
+  it("follows each piece's own camera: UiFocus zooms in on a narrow card near the end of the page, UiScroll cannot bring it above the platform UI", () => {
+    // A two-column card 2.5 screens down a 3000 px phone page: UiFocus frames it at 1.12x, and its view ends lower on the
+    // page than UiScroll's at the base scale.
+    const narrow = shot('m-full', 'mobile', 3000);
+    const card = block('m-full', 60, 2180, 330, 500);
+    const price = box('m-full', 'price', '$ 4.500', 80, 2560, 290, 60);
+    const shop = site([narrow], [price], [card]);
+    expect(framesCleanly(shop, pick('UiFocus', 'm-full', 0), '9x16')).toBe(true);
+    expect(framesCleanly(shop, pick('UiScroll', 'm-full', 0), '9x16')).toBe(false);
+  });
+
+  it('is false for a box or a shot that is not there', () => {
+    for (const piece of pieces) {
+      expect(framesCleanly(store(6000), pick(piece, 'x1-m-full', 2), '9x16'), piece).toBe(false);
+      expect(framesCleanly(store(6000), pick(piece, 'x9-m-full', 0), '9x16'), piece).toBe(false);
+      expect(framesCleanly(store(6000), pick(piece, 'x1-m-full'), '9x16'), piece).toBe(false);
+    }
+  });
+
+  it('is false for a UiScroll whose full page lacks the element: the scroll would land on no target', () => {
+    const lone = box('x1-m-s15', 'price', '$ 3.000 Agregar', 66, 300, 648, 80);
+    expect(framesCleanly(site([screen, page], [lone]), pick('UiFocus', 'x1-m-s15', 0), '9x16')).toBe(true);
+    expect(framesCleanly(site([screen, page], [lone]), pick('UiScroll', 'x1-m-s15', 0), '9x16')).toBe(false);
+  });
+});
+
+describe('the take UiFocus films', () => {
+  it('leaves a screen whose landing could hold the target at the focus point but is not clean', () => {
+    // The screen of s14 starts partway through a card the camera aims at (its price row is in it): the screen could bring
+    // that card to the focus point, but any view of it either cuts the card at the top or leaves it out.
+    const screen = shot('x1-m-s14', 'mobile', 1688, 's14');
+    const page = shot('x1-m-full', 'mobile', 3072);
+    const row: Box = { shotId: 'x1-m-s14', sectionId: 's13', kind: 'price', text: '$ 4.500 Agregar', x: 66, y: 366, w: 648, h: 80 };
+    const pageRow: Box = { ...row, shotId: 'x1-m-full', y: 1166 };
+    const clippedCard: Block = { shotId: 'x1-m-s14', x: 32, y: 0, w: 716, h: 480, clippedTop: true };
+    const store = site([screen, page], [row, pageRow], [clippedCard, block('x1-m-full', 32, 562, 716, 719)]);
+    expect(focusLanding(row, screen, '9x16', store.boxes, store.blocks).clean).toBe(false);
+    expect(focusShot(store, uiScene('UiFocus', 'x1-m-s14', 0), '9x16')).toEqual({ shot: page, box: pageRow });
+  });
+
+  it('keeps the element the director chose on a full-page take, even when a look-alike shares its section', () => {
+    // A grid under one heading: two identical buttons in s1, the second too near the end of the page to center.
+    const page = shot('m-full', 'mobile', 3000);
+    const first = box('m-full', 'cta', 'Agregar', 66, 600, 172, 72);
+    const second = box('m-full', 'cta', 'Agregar', 66, 2900, 172, 72);
+    const grid = site([page], [{ ...first, sectionId: 's1' }, { ...second, sectionId: 's1' }]);
+    expect(focusShot(grid, uiScene('UiFocus', 'm-full', 1), '9x16')).toEqual({ shot: page, box: { ...second, sectionId: 's1' } });
   });
 });

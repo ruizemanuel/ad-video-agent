@@ -1,9 +1,9 @@
-// The camera of the UI scenes, as plain math: which shot a format films, how it frames it, and where it moves. The real
-// UI sits in a card under the caption; the camera holds a point of the shot at the card's focus point, the middle of the
-// part of the card the platform UI leaves visible. Rules from the prueba (spec 6.5): frame the content and not the
-// margins, zoom a phone shot 1.12x at most, aim at the page's card (block) that holds the target or else a heading at
-// what it titles, never let the top edge slice a box or a block, and take the full page when a one-screen shot cannot
-// center the target.
+// The camera of the UI scenes, as plain math: which shot a format films, how it frames it, where it moves, and whether the
+// frame the review sees shows the target cleanly (framesCleanly). The real UI sits in a card under the caption; the camera
+// holds a point of the shot at the card's focus point, the middle of the part of the card the platform UI leaves visible.
+// Rules from the prueba (spec 6.5): frame the content and not the margins, zoom a phone shot 1.12x at most, aim at the
+// page's card (block) that holds the target or else a heading at what it titles, never let the top edge slice a box or a
+// block, and take the full page when a one-screen shot cannot center the target.
 import type { Scene } from './edl';
 import { FORMATS, PREFERRED_VIEWPORT, type Format } from './formats';
 import { blockOf } from './product';
@@ -123,22 +123,27 @@ export const resolveShot = (site: SiteData, shotId: string | undefined, boxIndex
   return { shot, box };
 };
 
+/** What a UI scene films, as the director writes it: the shot, and the box in it (see resolveShot). */
+export type ShotPick = Pick<Scene, 'shotId' | 'boxIndex'>;
+
 /**
  * UiFocus: the director's take, or the full page of the same viewport when a one-screen shot cannot center the target or
  * frame it cleanly (see Landing): a section shot starts partway down the page, and the element exists whole in the full page.
+ * A take of the full page is kept as it is: there the first look-alike of the section could be another element.
  */
-export const focusShot = (site: SiteData, scene: Scene, format: Format): Take => {
+export const focusShot = (site: SiteData, scene: ShotPick, format: Format): Take => {
   const take = resolveShot(site, scene.shotId, scene.boxIndex, format);
   if (!take.box) return take;
   const keeps = canCenter(take.shot, take.box, format, site.boxes, site.blocks) && focusLanding(take.box, take.shot, format, site.boxes, site.blocks).clean;
   if (keeps) return take;
   const full = fullShotOf(site, take.shot);
-  const match = full && sameElement(site, full, take.box);
-  return full && match ? { shot: full, box: match } : take;
+  if (!full || full.id === take.shot.id) return take;
+  const match = sameElement(site, full, take.box);
+  return match ? { shot: full, box: match } : take;
 };
 
 /** UiScroll: a scroll wants a page, so a one-screen pick becomes the full page of the viewport the format films. */
-export const scrollShot = (site: SiteData, scene: Scene, format: Format): Take => {
+export const scrollShot = (site: SiteData, scene: ShotPick, format: Format): Take => {
   const take = resolveShot(site, scene.shotId, scene.boxIndex, format);
   if (take.shot.id.endsWith('-full')) return take;
   const full = fullShotOf(site, take.shot, PREFERRED_VIEWPORT[format]);
@@ -404,3 +409,24 @@ export const cameraAt = ({ from, to }: Move, p: number): Camera => ({
   x: from.x * (1 - p) + to.x * p,
   y: from.y * (1 - p) + to.y * p,
 });
+
+// ---------- what the review sees ----------
+
+/** A UI scene as the director writes it: the piece, and the shot and box it films. */
+export type UiPick = ShotPick & { piece: 'UiFocus' | 'UiScroll' };
+
+/**
+ * Whether a UI scene frames its target cleanly in `format`, in the frame the review sees: where the piece's move lands,
+ * on the take the format films (see focusShot and scrollShot, which may leave the director's shot for its full page), on
+ * the view placeShot shows. Clean as Landing says: the top edge cuts no box and no card, and the target (the card the
+ * camera aims at, else the box) is whole above the platform UI. False when the pick names no box of a shot, and for a
+ * scroll whose full page lacks the element (it would land on no target).
+ */
+export const framesCleanly = (site: SiteData, { piece, shotId, boxIndex }: UiPick, format: Format): boolean => {
+  const shot = site.shots.find((s) => s.id === shotId);
+  const box = shot && boxIndex !== undefined ? site.boxes.filter((b) => b.shotId === shot.id)[boxIndex] : undefined;
+  if (!box) return false;
+  const take = piece === 'UiScroll' ? scrollShot(site, { shotId, boxIndex }, format) : focusShot(site, { shotId, boxIndex }, format);
+  const landing = piece === 'UiScroll' ? scrollLanding : focusLanding;
+  return take.box !== undefined && landing(take.box, take.shot, format, site.boxes, site.blocks).clean;
+};

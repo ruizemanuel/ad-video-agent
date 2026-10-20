@@ -297,6 +297,64 @@ describe('validateEdl: structure', () => {
     });
   });
 
+  describe('UiFocus and UiScroll frame their target cleanly in 9x16', () => {
+    // The demo store of paid run 5: a phone page of 3072 px whose last cards sit in the bottom of the page, which never gets
+    // above the platform UI without the top edge cutting the "Guía" card, and the phone screen of s15.
+    const page = 'x1-m-full';
+    const screen = 'x1-m-s15';
+    const row = (shotId: string, sectionId: string, text: string, y: number): Box => ({ shotId, sectionId, kind: 'price', text, x: 66, y, w: 648, h: 80 });
+    const store: SiteData = {
+      ...siteShop,
+      shots: [
+        ...siteShop.shots,
+        { id: screen, file: `media/${screen}.png`, viewport: 'mobile', dpr: 2, sectionId: 's15', width: 780, height: 1688 },
+        { id: page, file: `media/${page}.png`, viewport: 'mobile', dpr: 2, width: 780, height: 3072 },
+      ],
+      boxes: [
+        ...siteShop.boxes,
+        { shotId: screen, sectionId: 's15', kind: 'heading', text: 'Guía: Monetiza tu Instagram', x: 66, y: 407, w: 648, h: 48 },
+        row(screen, 's15', '$ 8.900 Agregar', 533),
+        row(screen, 's16', '$ 3.000 Agregar', 838),
+        row(page, 's15', '$ 8.900 Agregar', 1917),
+        row(page, 's16', '$ 3.000 Agregar', 2222),
+        { shotId: page, sectionId: 's17', kind: 'heading', text: 'Text card', x: 66, y: 2400, w: 648, h: 48 },
+        row(page, 's18', '$ 15.000 Pedir', 2879),
+      ],
+      blocks: [
+        { shotId: screen, x: 32, y: 0, w: 716, h: 647, clippedTop: true },
+        { shotId: screen, x: 32, y: 679, w: 716, h: 274 },
+        { shotId: page, x: 32, y: 1312, w: 716, h: 719 },
+        { shotId: page, x: 32, y: 2063, w: 716, h: 274 },
+        { shotId: page, x: 32, y: 2368, w: 716, h: 274 },
+        { shotId: page, x: 32, y: 2674, w: 716, h: 319 },
+      ],
+    };
+    const ui = (piece: 'UiFocus' | 'UiScroll', shotId: string, boxIndex: number): Case =>
+      inBody({ piece, beats: 4, shotId, boxIndex, lines: [framing('Mirá')] }, store);
+    const unframeable = (piece: string, boxIndex: number, shotId: string) =>
+      `${piece} cannot frame box ${boxIndex} of ${shotId} cleanly in 9x16 (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`;
+
+    it("reports run 5's UiFocus, whose target cannot get above the platform UI without a card cut at the top, with what the corrector can do", () => {
+      // "$ 3.000 Agregar" on the screen of s15: UiFocus takes the full page, where its card stays under the platform UI.
+      expect(problemsOf(ui('UiFocus', screen, 2))).toEqual([{ where: 'body[0]', rule: 'structure', detail: unframeable('UiFocus', 2, screen) }]);
+    });
+
+    it("reports run 5's UiScroll to the last card of the page", () => {
+      expect(problemsOf(ui('UiScroll', page, 3))).toEqual([{ where: 'body[0]', rule: 'structure', detail: unframeable('UiScroll', 3, page) }]);
+    });
+
+    it('accepts a product box the camera frames cleanly, for either piece', () => {
+      for (const piece of ['UiFocus', 'UiScroll'] as const) {
+        clean(ui(piece, page, 0));
+        clean(ui(piece, screen, 1));
+      }
+    });
+
+    it('reports a text card once, as marketing, not also as unframeable', () => {
+      expect(problemsOf(ui('UiFocus', page, 2)).map((p) => p.detail)).toEqual([expect.stringContaining('UiFocus must film product UI: box 2 ("Text card")')]);
+    });
+  });
+
   describe('ClaimStack', () => {
     const means = ['Mercado Pago', 'Transferencia', 'Efectivo', 'Débito'];
     const stack = (n: number): Case => inBody({ piece: 'ClaimStack', beats: 6, lines: means.slice(0, n).map((m) => claimLine(m, 'c5')) });

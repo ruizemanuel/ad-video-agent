@@ -2,7 +2,9 @@
 // on screen are in their quote, framing lines carry no data, no filler phrases, and the structure the schema
 // leaves open. The same module builds what the semantic judge reads and applies the fixes a corrector returns.
 import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
+import { framesCleanly } from './camera';
 import type { Claim, Edl, Scene } from './edl';
+import { MAIN_FORMAT } from './formats';
 import { isProductTarget } from './product';
 import type { SiteData } from './site';
 import { FPS, layoutScenes, MIN_AT_BEAT, MIN_ENDCARD_BEATS, wordCycleMinBeats, type TimedScene } from './timing';
@@ -119,19 +121,29 @@ const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, bann
 };
 
 // A UiFocus or a UiScroll films the page: its target is a box of the shot, and the box has to be product UI, because a
-// text card (a feature, a "why us" section) filmed under a caption reads as the product the caption talks about.
+// text card (a feature, a "why us" section) filmed under a caption reads as the product the caption talks about. The
+// camera has to frame it cleanly in the main video, too (see framesCleanly): near the end of a short page the top edge
+// would cut a card or the target would sink under the platform UI, which the key frame review blocks and no fix of the
+// caption can mend.
 const checkShot = (path: string, scene: Scene, site: SiteData, report: Report): void => {
   const shot = site.shots.find((s) => s.id === scene.shotId);
   const target = shot && scene.boxIndex !== undefined ? site.boxes.filter((b) => b.shotId === shot.id)[scene.boxIndex] : undefined;
   if (!shot) report(path, 'structure', `${scene.piece} with unknown shotId ${scene.shotId ?? 'none'}`);
   else if (scene.boxIndex !== undefined && !target) report(path, 'structure', `boxIndex ${scene.boxIndex} out of range for ${shot.id}`);
   if (scene.boxIndex === undefined) report(path, 'structure', `${scene.piece} needs a boxIndex`);
-  if (shot && target && scene.boxIndex !== undefined && !isProductTarget(site, shot.id, scene.boxIndex)) {
+  if (!shot || !target || scene.boxIndex === undefined) return;
+  if (!isProductTarget(site, shot.id, scene.boxIndex)) {
     const named = target.text === undefined ? target.kind : `"${target.text}"`;
     report(
       path,
       'structure',
       `${scene.piece} must film product UI: box ${scene.boxIndex} (${named}) of ${shot.id} has no image or price in its section or card; state this claim in a type scene or aim at product UI`,
+    );
+  } else if ((scene.piece === 'UiFocus' || scene.piece === 'UiScroll') && !framesCleanly(site, { piece: scene.piece, shotId: shot.id, boxIndex: scene.boxIndex }, MAIN_FORMAT)) {
+    report(
+      path,
+      'structure',
+      `${scene.piece} cannot frame box ${scene.boxIndex} of ${shot.id} cleanly in ${MAIN_FORMAT} (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`,
     );
   }
 };

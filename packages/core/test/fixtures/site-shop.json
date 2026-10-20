@@ -60,7 +60,7 @@
   "boxes": [
     { "shotId": "s1-mobile", "sectionId": "s1", "kind": "heading", "text": "Vendé por WhatsApp sin comisiones", "x": 56, "y": 239, "w": 668, "h": 166 },
     { "shotId": "s1-mobile", "sectionId": "s1", "kind": "cta", "text": "Crear mi tienda", "x": 56, "y": 724, "w": 403, "h": 102 },
-    { "shotId": "s1-mobile", "sectionId": "s1", "kind": "image", "x": 120, "y": 960, "w": 540, "h": 640 },
+    { "shotId": "s1-mobile", "sectionId": "s1", "kind": "image", "x": 120, "y": 960, "w": 540, "h": 380 },
     { "shotId": "s4-mobile", "sectionId": "s4", "kind": "heading", "text": "Mirá una tienda de ejemplo", "x": 56, "y": 240, "w": 668, "h": 128 },
     { "shotId": "s4-mobile", "sectionId": "s4", "kind": "image", "x": 56, "y": 520, "w": 668, "h": 560 },
     { "shotId": "s4-mobile", "sectionId": "s4", "kind": "cta", "text": "Ver demo", "x": 56, "y": 1180, "w": 300, "h": 102 }

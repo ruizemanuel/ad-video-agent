@@ -18,6 +18,12 @@ export const TYPE: Record<Format, { headline: number; caption: number; min: numb
   '4x5': { headline: 128, caption: 88, min: 40, logo: 72, align: 'left' },
 };
 
+/**
+ * The format of the main video: the one the key frame review sees, so the one in which the camera of a UI scene must
+ * frame its target cleanly (see framesCleanly) for the director to be offered that target.
+ */
+export const MAIN_FORMAT = '9x16' satisfies Format;
+
 // Which capture viewport reads best in each frame shape.
 export const PREFERRED_VIEWPORT: Record<Format, 'desktop' | 'mobile'> = {
   '9x16': 'mobile',
