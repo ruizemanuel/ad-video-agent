@@ -78,14 +78,27 @@ export const pageOf = (shotId: string): string => shotId.match(/^x\d+-/)?.[0] ??
 export const fullShotOf = (site: SiteData, shot: Shot, viewport: Shot['viewport'] = shot.viewport): Shot | undefined =>
   site.shots.find((s) => s.id === `${pageOf(shot.id)}${viewport === 'desktop' ? 'd' : 'm'}-full`);
 
-const sameElement = (site: SiteData, shot: Shot, box: Box): Box | undefined =>
-  site.boxes.find((b) => b.shotId === shot.id && b.kind === box.kind && b.text === box.text);
+/** The boxes of the shot that look like `box` (same kind and text): a store repeats its buttons and pictures. */
+const lookAlikes = (site: SiteData, shot: Shot, box: Box): Box[] =>
+  site.boxes.filter((b) => b.shotId === shot.id && b.kind === box.kind && b.text === box.text);
+
+/** The look-alike that sits in the same section as `box`, when the box has one: it is the very element the director chose. */
+const inSectionOf = (box: Box, candidates: readonly Box[]): Box | undefined =>
+  box.sectionId === undefined ? undefined : candidates.find((b) => b.sectionId === box.sectionId);
+
+/** The same element in another shot: the look-alike of its own section, else the first look-alike. */
+const sameElement = (site: SiteData, shot: Shot, box: Box): Box | undefined => {
+  const candidates = lookAlikes(site, shot, box);
+  return inSectionOf(box, candidates) ?? candidates[0];
+};
 
 export type Take = { shot: Shot; box: Box | undefined };
 
 /**
  * The director picks a shot and a box in it (`boxIndex` counts the boxes of that shot); each format films the viewport
- * that reads best in it, so the same element is looked up by kind and text in the other viewport's shots of that page.
+ * that reads best in it, so the same element is looked up in the other viewport's shots of that page: by kind and text,
+ * and in the same section when the box has one (a store repeats its buttons and pictures). A shot of the page that has
+ * the element in its section wins over an earlier one that has only a look-alike from another section.
  */
 export const resolveShot = (site: SiteData, shotId: string | undefined, boxIndex: number | undefined, format: Format): Take => {
   const shot = site.shots.find((s) => s.id === shotId) ?? site.shots[0];
@@ -97,9 +110,13 @@ export const resolveShot = (site: SiteData, shotId: string | undefined, boxIndex
   const alternatives = site.shots
     .filter((s) => s.viewport === want && pageOf(s.id) === page && (s.sectionId === shot.sectionId || !s.sectionId))
     .sort((a, b) => Number(b.sectionId === shot.sectionId) - Number(a.sectionId === shot.sectionId));
+  if (!box) return { shot: alternatives[0] ?? shot, box: undefined };
   for (const alternative of alternatives) {
-    if (!box) return { shot: alternative, box: undefined };
-    const match = sameElement(site, alternative, box);
+    const match = inSectionOf(box, lookAlikes(site, alternative, box));
+    if (match) return { shot: alternative, box: match };
+  }
+  for (const alternative of alternatives) {
+    const match = lookAlikes(site, alternative, box)[0];
     if (match) return { shot: alternative, box: match };
   }
   return { shot, box };

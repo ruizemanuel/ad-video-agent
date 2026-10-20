@@ -329,3 +329,70 @@ describe('the shot a format films', () => {
     expect(resolveShot(pages, 'x1-m-full', undefined, '16x9').shot.id).toBe('x1-d-full');
   });
 });
+
+describe('the same element in another shot', () => {
+  // A store whose products repeat: each of the sections s13-s15 has a picture and an identical "Agregar" button.
+  const sections = ['s13', 's14', 's15'] as const;
+  type Section = (typeof sections)[number];
+  const products = (shotId: string, tops: Record<Section, number>, only: readonly Section[] = sections): Box[] =>
+    only.flatMap((sectionId): Box[] => [
+      { shotId, sectionId, kind: 'image', x: 60, y: tops[sectionId], w: 640, h: 400 },
+      { shotId, sectionId, kind: 'cta', text: 'Agregar', x: 60, y: tops[sectionId] + 420, w: 300, h: 80 },
+    ]);
+  // The screen of s13 shows the three products (the shot of a section also holds what is below it); s15's button sits
+  // near its bottom edge, where the phone cannot center it.
+  const phoneSection = shot('m-s13', 'mobile', 1688, 's13');
+  const desktopSection = shot('d-s13', 'desktop', 1800, 's13');
+  const phoneBoxes = products('m-s13', { s13: 100, s14: 600, s15: 1100 });
+  const desktopBoxes = products('d-s13', { s13: 100, s14: 600, s15: 1100 });
+  const phoneFullBoxes = products('m-full', { s13: 1000, s14: 1700, s15: 2400 });
+  const desktopFullBoxes = products('d-full', { s13: 1000, s14: 1700, s15: 2400 });
+  const store = site([phoneSection, desktopSection, phonePage, desktopPage], [...phoneBoxes, ...desktopBoxes, ...phoneFullBoxes, ...desktopFullBoxes]);
+  const at = (shotId: string, sectionId: Section, kind: Box['kind'], boxes: readonly Box[] = store.boxes): { index: number; box: Box } => {
+    const own = boxes.filter((b) => b.shotId === shotId);
+    const index = own.findIndex((b) => b.sectionId === sectionId && b.kind === kind);
+    return { index, box: own[index]! };
+  };
+
+  it('lands on the product the director chose in the other viewport, not on the first look-alike', () => {
+    for (const kind of ['cta', 'image'] as const) {
+      const { index } = at('m-s13', 's15', kind);
+      expect(resolveShot(store, 'm-s13', index, '16x9')).toEqual({ shot: desktopSection, box: at('d-s13', 's15', kind).box });
+    }
+  });
+
+  it('lands on the same product in the full page', () => {
+    for (const kind of ['cta', 'image'] as const) {
+      const { index } = at('m-s13', 's15', kind);
+      const phoneFull = { shot: phonePage, box: at('m-full', 's15', kind).box };
+      // The first look-alike would be s13's, a whole screen above.
+      expect(focusShot(store, uiScene('UiFocus', 'm-s13', index), '9x16')).toEqual(phoneFull);
+      // A scroll always goes to the full page, whichever viewport the format films.
+      expect(scrollShot(store, uiScene('UiScroll', 'm-s13', index), '9x16')).toEqual(phoneFull);
+      expect(scrollShot(store, uiScene('UiScroll', 'm-s13', index), '16x9')).toEqual({ shot: desktopPage, box: at('d-full', 's15', kind).box });
+    }
+  });
+
+  it('tries the next shot of the page before settling for a look-alike of another section', () => {
+    // The desktop screen of s13 ends before s15, so its only "Agregar" is s13's; the full page has s15's.
+    const shortScreen = site(
+      [phoneSection, desktopSection, desktopPage],
+      [...phoneBoxes, ...products('d-s13', { s13: 100, s14: 600, s15: 1100 }, ['s13']), ...desktopFullBoxes],
+    );
+    const { index } = at('m-s13', 's15', 'cta', shortScreen.boxes);
+    expect(resolveShot(shortScreen, 'm-s13', index, '16x9')).toEqual({ shot: desktopPage, box: at('d-full', 's15', 'cta').box });
+  });
+
+  it('keeps the first look-alike for a box with no section', () => {
+    const unsectioned = phoneBoxes.map(({ sectionId: _sectionId, ...rest }): Box => rest);
+    const loose = site([phoneSection, desktopSection], [...unsectioned, ...desktopBoxes]);
+    const { index } = at('m-s13', 's15', 'cta');
+    expect(resolveShot(loose, 'm-s13', index, '16x9')).toEqual({ shot: desktopSection, box: at('d-s13', 's13', 'cta').box });
+  });
+
+  it('keeps the first look-alike when no shot of the page has one in the box\'s section', () => {
+    const noS15 = site([phoneSection, desktopSection], [...phoneBoxes, ...products('d-s13', { s13: 100, s14: 600, s15: 1100 }, ['s13', 's14'])]);
+    const { index } = at('m-s13', 's15', 'cta', noS15.boxes);
+    expect(resolveShot(noS15, 'm-s13', index, '16x9')).toEqual({ shot: desktopSection, box: at('d-s13', 's13', 'cta', noS15.boxes).box });
+  });
+});
