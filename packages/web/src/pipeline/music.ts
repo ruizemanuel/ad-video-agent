@@ -2,24 +2,34 @@
 // the one that suits the video is chosen by those figures. When neither does and the order's spending cap allows it, a
 // third is asked for. When no track passes, the video goes out without music and says so. Every track is kept in Blob and
 // every call is recorded on the order as it is made. A candidate that does not come (Lyria fails, or its track cannot be
-// measured) is one that did not pass, never a failure of the order.
+// measured) is one that did not pass, never a failure of the order. Each candidate asks for the model of its number
+// (MUSIC_MODELS: Lyria 3.5 for the first two, Lyria 3 Pro for the third) and keeps it: the chosen track says which made it.
 import {
   chooseTrack,
   FPS,
   layoutScenes,
   measureTrack,
+  MUSIC_MODELS,
   musicPrompt,
   parseWav,
   type Edl,
+  type MusicModel,
   type RejectReason,
   type TrackMeasure,
 } from '@app/core';
 import { MusicOutputInvalid, type BlobPort, type MusicPort, type Order, type OrderStore } from '../ports';
 import { canAfford, EST } from './budget';
 
-/** How many tracks are asked for at first, and at most. Candidates are numbered from 1. */
+/** How many tracks are asked for at first, and at most: one per model of MUSIC_MODELS. Candidates are numbered from 1. */
 const FIRST_CANDIDATES = 2;
-const MAX_CANDIDATES = 3;
+const MAX_CANDIDATES = MUSIC_MODELS.length;
+
+/** The model the candidate with this number (from 1) is asked of. A RangeError for a number no candidate has. */
+export function modelForCandidate(index: number): MusicModel {
+  const model = Number.isInteger(index) ? MUSIC_MODELS[index - 1] : undefined;
+  if (model === undefined) throw new RangeError(`There is no candidate ${index}: they are numbered from 1 to ${MAX_CANDIDATES}.`);
+  return model;
+}
 
 export type MusicDeps = {
   store: Pick<OrderStore, 'addCost' | 'orderCost'>;
@@ -46,14 +56,15 @@ export function musicRequest(orderId: string, edl: Edl): MusicRequest {
 }
 
 /**
- * One candidate, as the flow keeps it. `measure` is null when it cannot be chosen: `path` is then null if Lyria gave no
- * track (the call failed), or the track's own if it has no tempo to find (silence, noise, something that is not music).
- * `problem` says why, and is null otherwise. All of it is plain data, so it can be the result of a workflow step.
+ * One candidate, as the flow keeps it. `model` is the one that made the track (or, when there is none, the one asked for).
+ * `measure` is null when it cannot be chosen: `path` is then null if Lyria gave no track (the call failed), or the track's
+ * own if it has no tempo to find (silence, noise, something that is not music). `problem` says why, and is null otherwise.
+ * All of it is plain data, so it can be the result of a workflow step.
  */
-export type Candidate = { index: number; path: string | null; measure: TrackMeasure | null; problem: string | null };
+export type Candidate = { index: number; model: MusicModel; path: string | null; measure: TrackMeasure | null; problem: string | null };
 
-/** The track the video uses, and what the render needs to know of it. */
-export type ChosenTrack = { path: string; measuredBpm: number; firstBeat: number; seconds: number };
+/** The track the video uses, and what the render needs to know of it. `model` made it: music.md says so. */
+export type ChosenTrack = { path: string; model: MusicModel; measuredBpm: number; firstBeat: number; seconds: number };
 
 /** Why a candidate was not chosen: the check it failed, or that it could not be measured, or that Lyria gave no track. */
 export type Rejection = { index: number; reason: RejectReason | 'unmeasurable' | 'failed'; detail?: string };
@@ -68,25 +79,33 @@ const describeFailure = (error: unknown): string => {
 };
 
 /** The candidate for a Lyria call that failed, for the flow to build when the step that made it ran out of tries. */
-export const failedCandidate = (index: number, error: unknown): Candidate => ({ index, path: null, measure: null, problem: describeFailure(error) });
+export const failedCandidate = (index: number, error: unknown): Candidate => ({
+  index,
+  model: modelForCandidate(index),
+  path: null,
+  measure: null,
+  problem: describeFailure(error),
+});
 
 /**
- * One candidate: asks Lyria, records what the call cost, keeps the WAV at `orders/<id>/music/cand-<index>.wav` and
- * measures it. It stands alone, as one step of the flow, and does the same when it runs again for the same `index`
- * (it writes the same path; the new call is billed again, and recorded again). A track that cannot be measured is not a
- * failure of the step, which would only be retried and paid for again: it comes back with `measure: null`.
+ * One candidate: asks Lyria for the model of its number, records what the call cost, keeps the WAV at
+ * `orders/<id>/music/cand-<index>.wav` and measures it. It stands alone, as one step of the flow, and does the same when
+ * it runs again for the same `index` (it asks the same model and writes the same path; the new call is billed again, and
+ * recorded again). A track that cannot be measured is not a failure of the step, which would only be retried and paid
+ * for again: it comes back with `measure: null`.
  *
  * It throws when the call fails. When Lyria billed an answer it could not use (`MusicOutputInvalid`), that cost is
- * recorded before the error goes on.
+ * recorded before the error goes on. A candidate no model is listed for (a RangeError) asks for nothing.
  */
 export async function generateCandidate(input: MusicRequest & { index: number }, deps: MusicDeps): Promise<Candidate> {
   const { orderId, prompt, index, bpm, videoSeconds } = input;
   const { store, blob, music } = deps;
   const item = `music:cand-${index}`;
+  const requested = modelForCandidate(index);
 
   let answer: Awaited<ReturnType<MusicPort['generate']>>;
   try {
-    answer = await music.generate(prompt);
+    answer = await music.generate(prompt, requested);
   } catch (error) {
     if (error instanceof MusicOutputInvalid) await store.addCost(orderId, item, error.usd, 'card');
     throw error;
@@ -95,12 +114,14 @@ export async function generateCandidate(input: MusicRequest & { index: number },
   await store.addCost(orderId, item, answer.usd, 'card');
   const path = `orders/${orderId}/music/cand-${index}.wav`;
   await blob.put(path, answer.wav, 'audio/wav');
+  // The candidate keeps the model that made the track, as the port says it.
+  const { model } = answer;
   try {
     const { mono, sampleRate } = parseWav(answer.wav);
-    return { index, path, measure: measureTrack(mono, sampleRate, bpm, videoSeconds), problem: null };
+    return { index, model, path, measure: measureTrack(mono, sampleRate, bpm, videoSeconds), problem: null };
   } catch (error) {
     // Both only read bytes, and throw an Error when the track is not one they can read or find a beat in.
-    if (error instanceof Error) return { index, path, measure: null, problem: error.message };
+    if (error instanceof Error) return { index, model, path, measure: null, problem: error.message };
     throw error;
   }
 }
@@ -147,7 +168,7 @@ const choose = (candidates: Candidate[], bpm: number, videoSeconds: number): Pic
   const best = choice.chosen === null ? undefined : measured[choice.chosen];
   if (best === undefined || best.candidate.path === null) return { track: null, rejected };
   const { measuredBpm, firstBeat, seconds } = best.measure;
-  return { track: { path: best.candidate.path, measuredBpm, firstBeat, seconds }, rejected };
+  return { track: { path: best.candidate.path, model: best.candidate.model, measuredBpm, firstBeat, seconds }, rejected };
 };
 
 /**

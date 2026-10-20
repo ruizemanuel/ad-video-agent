@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FatalError } from 'workflow';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { FPS, layoutScenes, musicPrompt } from '@app/core';
+import { FPS, layoutScenes, MUSIC_MODELS, musicPrompt } from '@app/core';
 import { clickWav, encodeWav } from '@app/core/testing';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FakeMusic } from '../src/adapters/fake/music';
 import { FileStore } from '../src/adapters/fake/store';
 import { LyriaMusic, type LyriaClient } from '../src/adapters/real/music';
-import { failedCandidate, generateCandidate, musicRequest, pickTrack, runMusic, type Candidate, type MusicDeps } from '../src/pipeline/music';
+import { failedCandidate, generateCandidate, modelForCandidate, musicRequest, pickTrack, runMusic, type Candidate, type MusicDeps } from '../src/pipeline/music';
 import { MusicOutputInvalid, type CostKind, type MusicPort, type Order } from '../src/ports';
 import { edlShop as shopEdl } from './support/shop';
 
@@ -36,16 +36,17 @@ const silence = () => encodeWav([new Float32Array(22 * 44100)], { sampleRate: 44
 const stored = async (path: string, bytes: Uint8Array): Promise<boolean> => Buffer.from(await blob.get(path)).equals(bytes);
 const isStored = (path: string): Promise<boolean> => blob.get(path).then(() => true, () => false);
 
-// Lyria, call by call: a track is given back, an error is thrown. It counts its calls.
+// Lyria, call by call: a track is given back, an error is thrown. It counts its calls, and a track says it was made by the
+// model it was asked for.
 const scripted = (outcomes: (Uint8Array | Error)[]): MusicPort & { calls: number } => {
   const port: MusicPort & { calls: number } = {
     calls: 0,
-    async generate() {
+    async generate(_prompt, model) {
       const outcome = outcomes[port.calls];
       port.calls += 1;
       if (outcome === undefined) throw new Error('the script has no outcome for this call');
       if (outcome instanceof Error) throw outcome;
-      return { wav: outcome, model: 'lyria-3.5' as const, usd: LYRIA_USD };
+      return { wav: outcome, model, usd: LYRIA_USD };
     },
   };
   return port;
@@ -258,6 +259,59 @@ describe('runMusic', () => {
     expect(chosen?.seconds).toBeGreaterThanOrEqual(VIDEO_SECONDS);
     expect(music.calls).toBe(2);
   });
+
+  describe('the models of the candidates', () => {
+    it('asks the first two candidates for Lyria 3.5', async () => {
+      music.queue = [track(113, -10), track(113, -6)];
+      await run();
+      expect(music.models).toEqual(['lyria-3.5', 'lyria-3.5']);
+    });
+
+    it('asks the third candidate, when neither of the first passes, for Lyria 3 Pro', async () => {
+      music.queue = [track(140, -6), track(140, -6), track(113, -6)];
+      await run();
+      expect(music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+    });
+
+    it('asks for the models in the order of MUSIC_MODELS, whatever comes of the candidates', async () => {
+      music.failAt = [1, 2, 3];
+      await run();
+      expect(music.models).toEqual([...MUSIC_MODELS]);
+    });
+
+    it('names the model that made the chosen track: Lyria 3.5 for either of the first two', async () => {
+      music.queue = [track(113, -10), track(113, -6)];
+      expect((await run()).track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3.5' });
+    });
+
+    it('names the model that made the chosen track: Lyria 3 Pro for the third, at the price of the others', async () => {
+      music.queue = [track(140, -6), track(140, -6), track(113, -6)];
+      const result = await run();
+      expect(result.track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3-pro-preview' });
+      expect(costs).toEqual([1, 2, 3].map((n) => ({ orderId: id, item: `music:cand-${n}`, usd: LYRIA_USD, kind: 'card' })));
+    });
+
+    it('names the model the track says it was made by, not the one of its number', async () => {
+      const port = scripted([track(140, -6), track(140, -6), track(113, -6)]);
+      const generate = port.generate.bind(port);
+      port.generate = async (prompt, model) => ({ ...(await generate(prompt, model)), model: 'lyria-3.5' });
+      expect((await run('music', port)).track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3.5' });
+    });
+  });
+});
+
+describe('modelForCandidate', () => {
+  it('gives the model of each candidate, numbered from 1: two Lyria 3.5 and then Lyria 3 Pro', () => {
+    expect([1, 2, 3].map(modelForCandidate)).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+  });
+
+  it('is the list of MUSIC_MODELS, in order', () => {
+    expect(MUSIC_MODELS.map((_, k) => modelForCandidate(k + 1))).toEqual([...MUSIC_MODELS]);
+  });
+
+  it.each([0, 4, -1, 1.5, Number.NaN])('refuses a candidate numbered %s: there is no model for it', (index) => {
+    expect(() => modelForCandidate(index)).toThrow(RangeError);
+  });
 });
 
 describe('generateCandidate', () => {
@@ -347,11 +401,47 @@ describe('generateCandidate', () => {
     expect(failure).toEqual(new Error('503 Service Unavailable'));
     expect(costs).toEqual([]);
   });
+
+  describe('the model of the candidate', () => {
+    it.each([
+      [1, 'lyria-3.5'],
+      [2, 'lyria-3.5'],
+      [3, 'lyria-3-pro-preview'],
+    ] as const)('asks for the model of its number: candidate %i asks for %s, and keeps it', async (index, model) => {
+      music.queue = [track(113, -6)];
+      const candidate = await generateCandidate(args(index), deps);
+      expect(music.models).toEqual([model]);
+      expect(candidate).toMatchObject({ index, model });
+    });
+
+    it('asks for the same model when it runs again for the same candidate, as a retried step does', async () => {
+      music.queue = [track(113, -10), track(113, -6), track(113, -10), track(113, -6)];
+      await generateCandidate(args(3), deps);
+      await generateCandidate(args(3), deps);
+      await generateCandidate(args(1), deps);
+      await generateCandidate(args(1), deps);
+      expect(music.models).toEqual(['lyria-3-pro-preview', 'lyria-3-pro-preview', 'lyria-3.5', 'lyria-3.5']);
+    });
+
+    it('keeps the model the track says it was made by', async () => {
+      const port = scripted([track(113, -6)]);
+      const generate = port.generate.bind(port);
+      port.generate = async (prompt) => generate(prompt, 'lyria-3-pro-preview');
+      expect(await generateCandidate(args(1), { ...deps, music: port })).toMatchObject({ index: 1, model: 'lyria-3-pro-preview' });
+    });
+
+    it.each([0, 4])('asks Lyria for nothing, and records nothing, for a candidate numbered %i', async (index) => {
+      const failure = await generateCandidate(args(index), deps).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(RangeError);
+      expect(music.calls).toBe(0);
+      expect(costs).toEqual([]);
+    });
+  });
 });
 
 describe('failedCandidate', () => {
   it('stands for a candidate that has no track, and says only the kind of error', () => {
-    expect(failedCandidate(2, new Error('the request held the prompt'))).toEqual({ index: 2, path: null, measure: null, problem: 'Error' });
+    expect(failedCandidate(2, new Error('the request held the prompt'))).toEqual({ index: 2, model: 'lyria-3.5', path: null, measure: null, problem: 'Error' });
   });
 
   it('says the HTTP status of the error when it has one', () => {
@@ -365,6 +455,10 @@ describe('failedCandidate', () => {
 
   it('is not an Error, so a thing that was thrown and is not one is named as such', () => {
     expect(failedCandidate(1, 'boom').problem).toBe('unknown error');
+  });
+
+  it('names the model the candidate was asked for, by its number', () => {
+    expect([1, 2, 3].map((index) => failedCandidate(index, new Error('x')).model)).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
   });
 });
 
@@ -403,6 +497,7 @@ describe('pickTrack', () => {
     const { track: chosen } = await pickTrack({ ...base(), candidates: first ? [first] : [] }, deps);
     expect(chosen).toEqual({
       path: first?.path,
+      model: 'lyria-3.5',
       measuredBpm: first?.measure?.measuredBpm,
       firstBeat: first?.measure?.firstBeat,
       seconds: first?.measure?.seconds,
@@ -416,6 +511,17 @@ describe('pickTrack', () => {
     const picked = await pickTrack({ ...base(), candidates: second ? [second] : [] }, deps);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-3.wav`);
     expect(picked.candidates.map((c) => c.index)).toEqual([2, 3]);
+    // The extra candidate asks for the model of its number: the third is Lyria 3 Pro.
+    expect(music.models).toEqual(['lyria-3.5', 'lyria-3-pro-preview']);
+    expect(picked.track?.model).toBe('lyria-3-pro-preview');
+  });
+
+  it('asks for the model of its number when the extra candidate is the second, after a first that failed', async () => {
+    music.queue = [track(113, -6)];
+    const picked = await pickTrack({ ...base(), candidates: [failedCandidate(1, new Error('x'))] }, deps);
+    expect(picked.candidates.map((c) => c.index)).toEqual([1, 2]);
+    expect(music.models).toEqual(['lyria-3.5']);
+    expect(picked.track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3.5' });
   });
 
   it('counts the candidates that failed, if it is given them', async () => {
@@ -450,6 +556,6 @@ describe('pickTrack', () => {
     music.failAt = [1];
     const picked = await pickTrack({ ...base(), candidates: [] }, deps);
     expect(picked.track).toBeNull();
-    expect(picked.candidates).toEqual([{ index: 1, path: null, measure: null, problem: 'Error' }]);
+    expect(picked.candidates).toEqual([{ index: 1, model: 'lyria-3.5', path: null, measure: null, problem: 'Error' }]);
   });
 });

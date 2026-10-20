@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, claimsMarkdown, musicMarkdown, type Edl, type Scene, type SiteData } from '../src/index';
+import { EdlSchema, MUSIC_MODELS, claimsMarkdown, musicMarkdown, type Edl, type Scene, type SiteData } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
@@ -68,11 +68,39 @@ describe('claimsMarkdown', () => {
   });
 });
 
+describe('MUSIC_MODELS', () => {
+  it('lists the model of each candidate in the order they are asked for: two Lyria 3.5 and one Lyria 3 Pro', () => {
+    expect(MUSIC_MODELS).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+  });
+});
+
 describe('musicMarkdown', () => {
-  const markdown = musicMarkdown({ measuredBpm: 112, musicPrompt: edlShop.musicPrompt });
+  const markdown = musicMarkdown({ measuredBpm: 112, musicPrompt: edlShop.musicPrompt, model: 'lyria-3.5' });
 
   it('names the model, the tempo, the watermark, the use in paid ads and the version without music', () => {
     for (const text of ['Google Lyria 3.5', '112 BPM', 'SynthID', 'paid ads', 'hook-a-9x16-muted.mp4']) expect(markdown).toContain(text);
+  });
+
+  it('names Lyria 3 Pro, and not Lyria 3.5, when the track came from it', () => {
+    const pro = musicMarkdown({ measuredBpm: 112, musicPrompt: edlShop.musicPrompt, model: 'lyria-3-pro-preview' });
+    expect(pro).toContain('made for this video by Google Lyria 3 Pro, an AI music model');
+    expect(pro).not.toContain('3.5');
+  });
+
+  it('names Lyria 3.5, and not Lyria 3 Pro, when the track came from it', () => {
+    expect(markdown).toContain('made for this video by Google Lyria 3.5, an AI music model');
+    expect(markdown).not.toContain('3 Pro');
+  });
+
+  it('says the same of the watermark and of the use of the track, whichever model made it', () => {
+    const pro = musicMarkdown({ measuredBpm: 112, musicPrompt: edlShop.musicPrompt, model: 'lyria-3-pro-preview' });
+    const lines = (text: string): string =>
+      text
+        .split('\n')
+        .filter((line) => /SynthID|paid ads|AI-generated/.test(line))
+        .join('\n');
+    expect(lines(pro)).toBe(lines(markdown));
+    expect(lines(pro)).toContain('SynthID');
   });
 
   it('quotes the direction the music was made from', () => {
@@ -80,6 +108,6 @@ describe('musicMarkdown', () => {
   });
 
   it('gives a measured tempo to a tenth of a beat per minute', () => {
-    expect(musicMarkdown({ measuredBpm: 113.19, musicPrompt: 'Calm piano.' })).toContain('113.2 BPM');
+    expect(musicMarkdown({ measuredBpm: 113.19, musicPrompt: 'Calm piano.', model: 'lyria-3.5' })).toContain('113.2 BPM');
   });
 });

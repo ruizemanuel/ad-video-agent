@@ -1,5 +1,6 @@
 // The order workflow from the paid order to the delivery or the refund, on the fake adapters, with the test as the VM.
 import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, type Edl, type RenderInput } from '@app/core';
+import { clickWav } from '@app/core/testing';
 import { waitForHook, waitForSleep } from '@workflow/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRun, start } from 'workflow/api';
@@ -111,9 +112,34 @@ describe('an order that goes through', () => {
     expect(render).toMatchObject({ hook: 0, format: '9x16' });
     const bpm = Number.isInteger(render.edl.bpm) ? String(render.edl.bpm) : render.edl.bpm.toFixed(1);
     expect(await text(`orders/${id}/out/music.md`)).toContain(`${bpm} BPM`);
+    // One of the first two candidates, which Lyria 3.5 makes: that is the model music.md names.
+    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5']);
+    const note = await text(`orders/${id}/out/music.md`);
+    expect(note).toContain('made for this video by Google Lyria 3.5, an AI music model');
+    expect(note).not.toContain('3 Pro');
     // The key frames are of the edit list as the director wrote it and the checks passed it.
     expect(queued[1]?.input).toEqual({ edl: edlShop, hook: 0, format: '9x16', round: 0 });
     expect(queued[0]?.input).toEqual({ url: 'https://tiendita.example', extraUrls: [], followDemoLinks: 2 });
+  });
+
+  it('names Lyria 3 Pro in music.md when the track that was chosen is the third candidate, which it makes', async () => {
+    // The first two (Lyria 3.5) are at the wrong tempo; the third, asked for after them, is the one that passes.
+    const wrong = clickWav({ bpm: 140, seconds: 22, offset: 0.2, gainDb: -6, clickSeconds: 0.25 });
+    const right = clickWav({ bpm: 113, seconds: 22, offset: 0.2, gainDb: -6, clickSeconds: 0.25 });
+    fakes.music.queue = [wrong, wrong, right];
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'render', 0, null, RENDERED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
+
+    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+    const render = (await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input as RenderInput;
+    expect(render.music?.path).toBe(`orders/${id}/music/cand-3.wav`);
+    const note = await text(`orders/${id}/out/music.md`);
+    expect(note).toContain('made for this video by Google Lyria 3 Pro, an AI music model');
+    expect(note).not.toContain('3.5');
+    // The watermark and the use of the track are the same whichever model made it.
+    expect(note).toContain('SynthID');
+    expect(note).toContain('paid ads');
   });
 
   it('rents the VM with a script that carries the order permit, and keeps only its hash', async () => {
@@ -190,6 +216,8 @@ describe('an order that goes through', () => {
     expect((await fakes.store.getOrder(id))?.steps.music).toBe('failed');
     // Each of the first two candidates is tried twice; the third, asked for when they give nothing, once.
     expect(fakes.music.calls).toBe(5);
+    // A candidate tried again asks for the same model, and the third for Lyria 3 Pro.
+    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
     // Why no track passed is for whoever looks into the order, in the log.
     expect(warn).toHaveBeenCalledWith('[music_rejected]', id, expect.stringContaining('"reason":"failed"'));
     expect((await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input).toMatchObject({ edl: edlShop, music: null });

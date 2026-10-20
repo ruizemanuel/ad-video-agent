@@ -2,13 +2,14 @@
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
 // VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
 // models, as far as the tasks so far use them), the BuyPort (renting the VM, following it, and what the chain says
-// about a payment), the MusicPort (Lyria) and the RefundPort (the refunds' wallet on Celo).
+// about a payment), the MusicPort (Lyria, 3.5 and 3 Pro) and the RefundPort (the refunds' wallet on Celo).
 import type {
   CaptureFile,
   Claim,
   Edl,
   FramingItem,
   JudgeItem,
+  MusicModel,
   OrderRequestSchema,
   Problem,
   ScenePatch,
@@ -453,15 +454,16 @@ export interface LlmPort {
 }
 
 /**
- * The music model. It writes one track per call and bills it whole: the caller records `usd` on the order, and measures
+ * The music models. One writes one track per call and bills it whole: the caller records `usd` on the order, and measures
  * the track, since Lyria does not keep the tempo or the length the prompt asks for.
  */
 export interface MusicPort {
   /**
-   * One track for the prompt, as a WAV file. When Lyria answered but not with a WAV it throws `MusicOutputInvalid`: the
-   * call was billed, and it is not retried. Any other failure is the provider's, and the call was not billed.
+   * One track for the prompt from the model asked for (see `MUSIC_MODELS`), as a WAV file; `model` in the answer is the
+   * one that made it. When Lyria answered but not with a WAV it throws `MusicOutputInvalid`: the call was billed, and it
+   * is not retried. Any other failure is the provider's, and the call was not billed.
    */
-  generate(prompt: string): Promise<{ wav: Uint8Array; model: 'lyria-3.5'; usd: number }>;
+  generate(prompt: string, model: MusicModel): Promise<{ wav: Uint8Array; model: MusicModel; usd: number }>;
 }
 
 /** A refund as the RefundPort is asked for it: `amount` (atomic units) of the token at `asset`, to `to`. */

@@ -55,14 +55,29 @@ export function claimsMarkdown(edl: Edl, site: SiteData, hook = 0): string {
 const bpmText = (bpm: number): string => (Number.isInteger(bpm) ? String(bpm) : bpm.toFixed(1));
 
 /**
+ * The model that makes each candidate track, in the order the candidates are asked for (the first candidate is the first
+ * model): two of Lyria 3.5 and one of Lyria 3 Pro, since 5 of the 8 Lyria 3.5 tracks measured skipped once in the part the
+ * video plays and the 2 Lyria 3 Pro tracks did not. It is here, and not with the music step, because music.md names the
+ * model of the track that was chosen and this package cannot read the service's. The ids are the Gemini API's.
+ */
+export const MUSIC_MODELS = ['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview'] as const;
+export type MusicModel = (typeof MUSIC_MODELS)[number];
+
+/** What music.md calls each model. */
+const MUSIC_MODEL_NAMES: Record<MusicModel, string> = {
+  'lyria-3.5': 'Google Lyria 3.5',
+  'lyria-3-pro-preview': 'Google Lyria 3 Pro',
+};
+
+/**
  * music.md, for an order delivered with music: the model that made the track, the direction it was made from, the
  * tempo measured on it, and how it may be used.
  */
-export function musicMarkdown({ measuredBpm, musicPrompt }: { measuredBpm: number; musicPrompt: string }): string {
+export function musicMarkdown({ measuredBpm, musicPrompt, model }: { measuredBpm: number; musicPrompt: string; model: MusicModel }): string {
   return [
     '# Music',
     '',
-    'The music of hook-a-9x16.mp4 was made for this video by Google Lyria 3.5, an AI music model, from this direction:',
+    `The music of hook-a-9x16.mp4 was made for this video by ${MUSIC_MODEL_NAMES[model]}, an AI music model, from this direction:`,
     '',
     ...musicPrompt
       .trim()

@@ -586,8 +586,9 @@ async function writeScript(orderId: string): Promise<{ ok: true; edl: Edl } | Fa
 writeScript.maxRetries = 1;
 
 /**
- * One candidate track. A call Lyria refused after billing it is not made again (its cost is recorded); any other failure
- * is tried once more, and then it is a candidate that did not pass. What leaves the step names only the kind of
+ * One candidate track, of the model of its number (a try again asks the same one). A call Lyria refused after billing it
+ * is not made again (its cost is recorded); any other failure is tried once more, and then it is a candidate that did
+ * not pass. What leaves the step names only the kind of
  * failure: the SDK's errors can hold the request.
  */
 async function musicCandidate(orderId: string, edl: Edl, index: number): Promise<Candidate> {
@@ -722,7 +723,7 @@ async function deliver(
   if (withMusic !== null) files.push({ name: 'hook-a-9x16.mp4', path: videos.withMusic, bytes: withMusic });
   files.push({ name: 'hook-a-9x16-muted.mp4', path: videos.muted, bytes: video.mutedBytes });
   files.push(await put('claims.md', claimsMarkdown(edl, capture.site)));
-  if (track !== null && withMusic !== null) files.push(await put('music.md', musicMarkdown({ measuredBpm: track.measuredBpm, musicPrompt: edl.musicPrompt })));
+  if (track !== null && withMusic !== null) files.push(await put('music.md', musicMarkdown({ measuredBpm: track.measuredBpm, musicPrompt: edl.musicPrompt, model: track.model })));
   else if (track !== null) await noMusic(store, orderId);
 
   // A second try of this step finds the order delivered by the first.

@@ -1,12 +1,18 @@
-// The MusicPort over the Gemini API: Lyria 3.5, asked for a WAV. The call is the Interactions API (`interactions.create`)
-// and the track comes back in `output_audio`, base64. Lyria takes no tempo or length, so those go in the prompt and the
-// track is measured afterwards (pipeline/music.ts).
+// The MusicPort over the Gemini API: Lyria 3.5 or Lyria 3 Pro (the model it is asked for), asked for a WAV. The call is the
+// Interactions API (`interactions.create`) and the track comes back in `output_audio`, base64. Lyria takes no tempo or
+// length, so those go in the prompt and the track is measured afterwards (pipeline/music.ts).
+import type { MusicModel } from '@app/core';
 import { MusicOutputInvalid, type MusicPort } from '../../ports';
 
-export const LYRIA_MODEL = 'lyria-3.5';
-
-/** US$ per track (Gemini API pricing, 17/10/2026): the whole track is billed, whether or not it is used. */
-const PRICE_PER_TRACK_USD = 0.08;
+/**
+ * US$ per track and model: the whole track is billed, whether or not it is used. Gemini API pricing, checked on
+ * 20/10/2026 at https://ai.google.dev/gemini-api/docs/pricing: `lyria-3.5` "Full Song" and `lyria-3-pro-preview` "Full Song"
+ * (listed there under the legacy Lyria 3 family) are both US$ 0.08 per song.
+ */
+const PRICE_PER_TRACK_USD: Record<MusicModel, number> = {
+  'lyria-3.5': 0.08,
+  'lyria-3-pro-preview': 0.08,
+};
 
 /** Lyria answers in 18 to 26 s (quality test, 17/10/2026); a call that takes this long is given up on. */
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -23,7 +29,7 @@ export type LyriaClient = {
   interactions: {
     create(
       params: {
-        model: typeof LYRIA_MODEL;
+        model: MusicModel;
         input: string;
         response_format: { type: 'audio'; mime_type: 'audio/wav' };
       },
@@ -41,19 +47,20 @@ export class LyriaMusic implements MusicPort {
     private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
   ) {}
 
-  async generate(prompt: string): ReturnType<MusicPort['generate']> {
+  async generate(prompt: string, model: MusicModel): ReturnType<MusicPort['generate']> {
     const interaction = await this.client.interactions.create(
-      { model: LYRIA_MODEL, input: prompt, response_format: { type: 'audio', mime_type: 'audio/wav' } },
+      { model, input: prompt, response_format: { type: 'audio', mime_type: 'audio/wav' } },
       { timeout_ms: this.timeoutMs, retries: { strategy: 'none' } },
     );
     const audio = interaction.output_audio;
     // From here on the call has been billed, so a refusal says what it cost.
-    if (!audio?.data) throw new MusicOutputInvalid('Lyria answered with no audio.', PRICE_PER_TRACK_USD);
+    const usd = PRICE_PER_TRACK_USD[model];
+    if (!audio?.data) throw new MusicOutputInvalid('Lyria answered with no audio.', usd);
     const wav = new Uint8Array(Buffer.from(audio.data, 'base64'));
     // The file is the one Lyria sent: nothing here converts an MP3 into a WAV.
     if (!isRiff(wav)) {
-      throw new MusicOutputInvalid(`Lyria did not answer with a WAV file (${audio.mime_type ?? 'no content type'}).`, PRICE_PER_TRACK_USD);
+      throw new MusicOutputInvalid(`Lyria did not answer with a WAV file (${audio.mime_type ?? 'no content type'}).`, usd);
     }
-    return { wav, model: LYRIA_MODEL, usd: PRICE_PER_TRACK_USD };
+    return { wav, model, usd };
   }
 }

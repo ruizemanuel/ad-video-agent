@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { GoogleGenAI } from '@google/genai';
 import { FatalError } from 'workflow';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { MusicModel } from '@app/core';
 import { clickWav } from '@app/core/testing';
 import { LyriaMusic, type LyriaClient } from '../src/adapters/real/music';
 import { MusicOutputInvalid } from '../src/ports';
@@ -30,21 +31,34 @@ const client = (reply: Reply) => {
 const wav = clickWav({ bpm: 112, seconds: 2, offset: 0.2, gainDb: -6 });
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
 const audio = (bytes: Uint8Array, mime_type = 'audio/wav') => ({ output_audio: { data: base64(bytes), mime_type } });
-const refusal = async (music: LyriaMusic): Promise<unknown> => music.generate('x').catch((error: unknown) => error);
+const refusal = async (music: LyriaMusic, model: MusicModel = 'lyria-3.5'): Promise<unknown> => music.generate('x', model).catch((error: unknown) => error);
 
 describe('LyriaMusic.generate', () => {
-  it('asks Lyria 3.5 for a WAV with the prompt', async () => {
+  it('asks the model it is given for a WAV with the prompt: Lyria 3.5', async () => {
     const { stub, asked } = client(audio(wav));
-    await new LyriaMusic(stub).generate('Upbeat Latin pop');
+    await new LyriaMusic(stub).generate('Upbeat Latin pop', 'lyria-3.5');
     expect(asked.map(([params]) => params)).toEqual([
       { model: 'lyria-3.5', input: 'Upbeat Latin pop', response_format: { type: 'audio', mime_type: 'audio/wav' } },
     ]);
   });
 
-  it('gives back the bytes of the WAV, the model and what the track costs', async () => {
+  it('asks the model it is given for a WAV with the prompt: Lyria 3 Pro', async () => {
+    const { stub, asked } = client(audio(wav));
+    await new LyriaMusic(stub).generate('Upbeat Latin pop', 'lyria-3-pro-preview');
+    expect(asked.map(([params]) => params)).toEqual([
+      { model: 'lyria-3-pro-preview', input: 'Upbeat Latin pop', response_format: { type: 'audio', mime_type: 'audio/wav' } },
+    ]);
+  });
+
+  it.each(['lyria-3.5', 'lyria-3-pro-preview'] as const)('gives back the bytes of the WAV, the model that made it (%s) and what the track costs', async (model) => {
     const { stub } = client(audio(wav));
-    const answer = await new LyriaMusic(stub).generate('x');
-    expect({ ...answer, wav: Buffer.from(answer.wav).equals(wav) }).toEqual({ wav: true, model: 'lyria-3.5', usd: 0.08 });
+    const answer = await new LyriaMusic(stub).generate('x', model);
+    expect({ ...answer, wav: Buffer.from(answer.wav).equals(wav) }).toEqual({ wav: true, model, usd: 0.08 });
+  });
+
+  it.each(['lyria-3.5', 'lyria-3-pro-preview'] as const)('says what a refused answer cost for %s', async (model) => {
+    const { stub } = client({});
+    expect(await refusal(new LyriaMusic(stub), model)).toMatchObject({ usd: 0.08 });
   });
 
   it('refuses an answer that is not a WAV, without converting it, and says what it cost', async () => {
@@ -91,8 +105,8 @@ describe('LyriaMusic.generate', () => {
 
   it('asks for no retries by the SDK and for a time limit on the call', async () => {
     const { stub, asked } = client(audio(wav));
-    await new LyriaMusic(stub).generate('x');
-    await new LyriaMusic(stub, 12_000).generate('x');
+    await new LyriaMusic(stub).generate('x', 'lyria-3.5');
+    await new LyriaMusic(stub, 12_000).generate('x', 'lyria-3-pro-preview');
     expect(asked.map(([, options]) => options)).toEqual([
       { timeout_ms: 90_000, retries: { strategy: 'none' } },
       { timeout_ms: 12_000, retries: { strategy: 'none' } },

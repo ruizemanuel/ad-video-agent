@@ -1,7 +1,9 @@
 // The MusicPort as a double, for the tests that make the music without Lyria. It hands out the tracks a test queues, one
 // per call, and when there are none queued it makes a click track that suits the prompt it is given (the tempo and the
 // length that musicPrompt writes in it), so a flow that tells it nothing still ends with a track that passes the checks.
-// It counts its calls and keeps the prompts, so a test can say Lyria was (or was not) asked, and with what.
+// It counts its calls and keeps the prompts and the models asked for, so a test can say Lyria was (or was not) asked, and
+// with what. The track it gives back says it was made by the model it was asked for.
+import type { MusicModel } from '@app/core';
 import { clickWav } from '@app/core/testing';
 import type { MusicPort } from '../../ports';
 
@@ -29,6 +31,8 @@ export class FakeMusic implements MusicPort {
   calls = 0;
   /** What each call was asked, in order. */
   readonly prompts: string[] = [];
+  /** The model each call asked for, in order (one per prompt). */
+  readonly models: MusicModel[] = [];
   /** The WAV files the next calls give back, one each, in order. */
   queue: Uint8Array[] = [];
   /** The calls (counting from 1) that fail, as a provider's error does: nothing is billed for them. */
@@ -36,10 +40,11 @@ export class FakeMusic implements MusicPort {
   /** What each call costs. */
   usd = 0.08;
 
-  async generate(prompt: string): ReturnType<MusicPort['generate']> {
+  async generate(prompt: string, model: MusicModel): ReturnType<MusicPort['generate']> {
     this.calls += 1;
     this.prompts.push(prompt);
+    this.models.push(model);
     if (this.failAt.includes(this.calls)) throw new Error('Lyria is down');
-    return { wav: this.queue.shift() ?? suitedTrack(prompt), model: 'lyria-3.5', usd: this.usd };
+    return { wav: this.queue.shift() ?? suitedTrack(prompt), model, usd: this.usd };
   }
 }
