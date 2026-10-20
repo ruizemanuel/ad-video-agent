@@ -4,7 +4,7 @@
 // margins, zoom a phone shot 1.12x at most, aim at the page's card (block) that holds the target or else a heading at
 // what it titles, never let the top edge slice a box or a block, and take the full page when a one-screen shot cannot
 // center the target.
-import { FORMATS, PREFERRED_VIEWPORT, type Block, type Box, type Format, type Scene, type Shot, type SiteData } from '@app/core';
+import { blockOf, FORMATS, PREFERRED_VIEWPORT, type Block, type Box, type Format, type Scene, type Shot, type SiteData } from '@app/core';
 
 /** The layout of a UI scene: a caption block on top and, under it, the card with the shot, bleeding off the bottom edge. */
 export type Stage = {
@@ -163,11 +163,7 @@ export const focusRegion = (box: Box): Box =>
  */
 const targetBlock = (box: Box, shot: Shot, format: Format, blocks: readonly Block[], scaleFor: (block: Block) => number): Block | undefined => {
   const { focusY } = stageLayout(format);
-  const cx = box.x + box.w / 2;
-  const cy = box.y + box.h / 2;
-  const block = blocks
-    .filter((b) => b.shotId === shot.id && b.x <= cx && cx <= b.x + b.w && b.y <= cy && cy <= b.y + b.h)
-    .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+  const block = blockOf(blocks, shot.id, box);
   return block && block.h * scaleFor(block) <= BLOCK_FIT * 2 * focusY ? block : undefined;
 };
 
