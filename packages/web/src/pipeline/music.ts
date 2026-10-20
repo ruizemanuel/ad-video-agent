@@ -3,7 +3,8 @@
 // third is asked for. When no track passes, the video goes out without music and says so. Every track is kept in Blob and
 // every call is recorded on the order as it is made. A candidate that does not come (Lyria fails, or its track cannot be
 // measured) is one that did not pass, never a failure of the order. Each candidate asks for the model of its number
-// (MUSIC_MODELS: Lyria 3.5 for the first two, Lyria 3 Pro for the third) and keeps it: the chosen track says which made it.
+// (MUSIC_MODELS: Lyria 3.5, Lyria 3 Pro, Lyria 3.5) and keeps it: the chosen track says which made it. The first two are
+// always made, so every order gets one track of each model; the third, a Lyria 3.5, is only the fallback.
 import {
   chooseTrack,
   FPS,
@@ -66,8 +67,11 @@ export type Candidate = { index: number; model: MusicModel; path: string | null;
 /** The track the video uses, and what the render needs to know of it. `model` made it: music.md says so. */
 export type ChosenTrack = { path: string; model: MusicModel; measuredBpm: number; firstBeat: number; seconds: number };
 
-/** Why a candidate was not chosen: the check it failed, or that it could not be measured, or that Lyria gave no track. */
-export type Rejection = { index: number; reason: RejectReason | 'unmeasurable' | 'failed'; detail?: string };
+/**
+ * Why a candidate was not chosen: the check it failed, or that it could not be measured, or that Lyria gave no track.
+ * `model` is the candidate's own, so the log says which model skipped or failed without knowing which build wrote it.
+ */
+export type Rejection = { index: number; model: MusicModel; reason: RejectReason | 'unmeasurable' | 'failed'; detail?: string };
 
 // What went wrong, said without what was sent or got back: the SDK's errors carry the request and the provider's answer.
 // The kind of error and the HTTP status are enough to tell a Lyria that is down from one that refuses.
@@ -154,14 +158,15 @@ const choose = (candidates: Candidate[], bpm: number, videoSeconds: number): Pic
   );
   const unmeasured = candidates
     .filter((candidate) => candidate.measure === null)
-    .map<Rejection>(({ index, path, problem }) => ({
+    .map<Rejection>(({ index, model, path, problem }) => ({
       index,
+      model,
       reason: path === null ? 'failed' : 'unmeasurable',
       ...(problem === null ? {} : { detail: problem }),
     }));
-  const failedChecks = choice.rejected.flatMap(({ index, reason }) => {
+  const failedChecks = choice.rejected.flatMap(({ index, reason }): Rejection[] => {
     const entry = measured[index];
-    return entry === undefined ? [] : [{ index: entry.candidate.index, reason }];
+    return entry === undefined ? [] : [{ index: entry.candidate.index, model: entry.candidate.model, reason }];
   });
   const rejected = [...unmeasured, ...failedChecks].sort((a, b) => a.index - b.index);
 

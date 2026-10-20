@@ -129,9 +129,9 @@ describe('runMusic', () => {
     const result = await run();
     expect(result).toMatchObject({ track: null, warnings: ['music_unavailable'] });
     expect(result.rejected).toEqual([
-      { index: 1, reason: 'bpm' },
-      { index: 2, reason: 'bpm' },
-      { index: 3, reason: 'bpm' },
+      { index: 1, model: 'lyria-3.5', reason: 'bpm' },
+      { index: 2, model: 'lyria-3-pro-preview', reason: 'bpm' },
+      { index: 3, model: 'lyria-3.5', reason: 'bpm' },
     ]);
     // Three tries, and no more.
     expect(music.calls).toBe(3);
@@ -184,7 +184,7 @@ describe('runMusic', () => {
     music.queue = [track(113, -6, 15), track(113, -10)];
     const result = await run();
     expect(result.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
-    expect(result.rejected).toEqual([{ index: 1, reason: 'too-short' }]);
+    expect(result.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'too-short' }]);
   });
 
   it('counts a track it cannot measure as one that failed, not as an error', async () => {
@@ -192,7 +192,7 @@ describe('runMusic', () => {
     const result = await run();
     expect(result.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
     expect(music.calls).toBe(2);
-    expect(result.rejected).toEqual([{ index: 1, reason: 'unmeasurable', detail: expect.stringContaining('could not measure the tempo') }]);
+    expect(result.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'unmeasurable', detail: expect.stringContaining('could not measure the tempo') }]);
   });
 
   it('delivers without music and warns when every track is silent', async () => {
@@ -206,7 +206,7 @@ describe('runMusic', () => {
     const result = await run();
     expect(result.track?.path).toBe(`orders/${id}/music/cand-1.wav`);
     expect(result.warnings).toEqual([]);
-    expect(result.rejected).toEqual([{ index: 2, reason: 'failed', detail: 'Error' }]);
+    expect(result.rejected).toEqual([{ index: 2, model: 'lyria-3-pro-preview', reason: 'failed', detail: 'Error' }]);
     // Only the call that gave a track was billed.
     expect(await store.orderCost(id)).toBeCloseTo(LYRIA_USD, 6);
     // One track is enough: nothing more is asked for.
@@ -219,8 +219,8 @@ describe('runMusic', () => {
     expect(music.calls).toBe(3);
     expect(result.track?.path).toBe(`orders/${id}/music/cand-3.wav`);
     expect(result.rejected).toEqual([
-      { index: 1, reason: 'failed', detail: 'Error' },
-      { index: 2, reason: 'failed', detail: 'Error' },
+      { index: 1, model: 'lyria-3.5', reason: 'failed', detail: 'Error' },
+      { index: 2, model: 'lyria-3-pro-preview', reason: 'failed', detail: 'Error' },
     ]);
   });
 
@@ -235,7 +235,7 @@ describe('runMusic', () => {
     const port = scripted([billedRefusal(), track(113, -6)]);
     const result = await run('music', port);
     expect(result.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
-    expect(result.rejected).toEqual([{ index: 1, reason: 'failed', detail: 'Lyria did not answer with a WAV file (audio/mpeg).' }]);
+    expect(result.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'failed', detail: 'Lyria did not answer with a WAV file (audio/mpeg).' }]);
     expect(costs.map(({ item, usd }) => [item, usd])).toEqual([
       ['music:cand-1', LYRIA_USD],
       ['music:cand-2', LYRIA_USD],
@@ -261,16 +261,16 @@ describe('runMusic', () => {
   });
 
   describe('the models of the candidates', () => {
-    it('asks the first two candidates for Lyria 3.5', async () => {
+    it('asks the first two candidates, which are always made together, for one track of each model: Lyria 3.5 and Lyria 3 Pro', async () => {
       music.queue = [track(113, -10), track(113, -6)];
       await run();
-      expect(music.models).toEqual(['lyria-3.5', 'lyria-3.5']);
+      expect(music.models).toEqual(['lyria-3.5', 'lyria-3-pro-preview']);
     });
 
-    it('asks the third candidate, when neither of the first passes, for Lyria 3 Pro', async () => {
+    it('asks the third candidate, when neither of the first passes, for Lyria 3.5', async () => {
       music.queue = [track(140, -6), track(140, -6), track(113, -6)];
       await run();
-      expect(music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+      expect(music.models).toEqual(['lyria-3.5', 'lyria-3-pro-preview', 'lyria-3.5']);
     });
 
     it('asks for the models in the order of MUSIC_MODELS, whatever comes of the candidates', async () => {
@@ -279,30 +279,56 @@ describe('runMusic', () => {
       expect(music.models).toEqual([...MUSIC_MODELS]);
     });
 
-    it('names the model that made the chosen track: Lyria 3.5 for either of the first two', async () => {
-      music.queue = [track(113, -10), track(113, -6)];
-      expect((await run()).track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3.5' });
+    it('names the model that made the chosen track: Lyria 3.5 for the first', async () => {
+      music.queue = [track(113, -6), track(113, -10)];
+      expect((await run()).track).toMatchObject({ path: `orders/${id}/music/cand-1.wav`, model: 'lyria-3.5' });
     });
 
-    it('names the model that made the chosen track: Lyria 3 Pro for the third, at the price of the others', async () => {
+    it('names the model that made the chosen track: Lyria 3 Pro for the second', async () => {
+      music.queue = [track(113, -10), track(113, -6)];
+      expect((await run()).track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3-pro-preview' });
+    });
+
+    it('names the model that made the chosen track: Lyria 3.5 again for the third, at the price of the others', async () => {
       music.queue = [track(140, -6), track(140, -6), track(113, -6)];
       const result = await run();
-      expect(result.track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3-pro-preview' });
+      expect(result.track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3.5' });
       expect(costs).toEqual([1, 2, 3].map((n) => ({ orderId: id, item: `music:cand-${n}`, usd: LYRIA_USD, kind: 'card' })));
     });
 
     it('names the model the track says it was made by, not the one of its number', async () => {
       const port = scripted([track(140, -6), track(140, -6), track(113, -6)]);
       const generate = port.generate.bind(port);
-      port.generate = async (prompt, model) => ({ ...(await generate(prompt, model)), model: 'lyria-3.5' });
-      expect((await run('music', port)).track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3.5' });
+      port.generate = async (prompt, model) => ({ ...(await generate(prompt, model)), model: 'lyria-3-pro-preview' });
+      expect((await run('music', port)).track).toMatchObject({ path: `orders/${id}/music/cand-3.wav`, model: 'lyria-3-pro-preview' });
+    });
+
+    it('says in the rejections which model made the candidate that failed a check: Lyria 3.5 for the first', async () => {
+      music.queue = [track(140, -6), track(113, -6)];
+      expect((await run()).rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'bpm' }]);
+    });
+
+    it('says in the rejections which model made the candidate that failed a check: Lyria 3 Pro for the second', async () => {
+      music.queue = [track(113, -6), track(140, -6)];
+      expect((await run()).rejected).toEqual([{ index: 2, model: 'lyria-3-pro-preview', reason: 'bpm' }]);
+    });
+
+    it('says in the rejections the model of a candidate that could not be measured', async () => {
+      music.queue = [track(113, -6), silence()];
+      expect((await run()).rejected).toEqual([{ index: 2, model: 'lyria-3-pro-preview', reason: 'unmeasurable', detail: expect.any(String) }]);
+    });
+
+    it('says in the rejections the model of a candidate whose call failed', async () => {
+      music.queue = [track(113, -6)];
+      music.failAt = [2];
+      expect((await run()).rejected).toEqual([{ index: 2, model: 'lyria-3-pro-preview', reason: 'failed', detail: 'Error' }]);
     });
   });
 });
 
 describe('modelForCandidate', () => {
-  it('gives the model of each candidate, numbered from 1: two Lyria 3.5 and then Lyria 3 Pro', () => {
-    expect([1, 2, 3].map(modelForCandidate)).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+  it('gives the model of each candidate, numbered from 1: Lyria 3.5, Lyria 3 Pro and Lyria 3.5', () => {
+    expect([1, 2, 3].map(modelForCandidate)).toEqual(['lyria-3.5', 'lyria-3-pro-preview', 'lyria-3.5']);
   });
 
   it('is the list of MUSIC_MODELS, in order', () => {
@@ -405,8 +431,8 @@ describe('generateCandidate', () => {
   describe('the model of the candidate', () => {
     it.each([
       [1, 'lyria-3.5'],
-      [2, 'lyria-3.5'],
-      [3, 'lyria-3-pro-preview'],
+      [2, 'lyria-3-pro-preview'],
+      [3, 'lyria-3.5'],
     ] as const)('asks for the model of its number: candidate %i asks for %s, and keeps it', async (index, model) => {
       music.queue = [track(113, -6)];
       const candidate = await generateCandidate(args(index), deps);
@@ -416,8 +442,8 @@ describe('generateCandidate', () => {
 
     it('asks for the same model when it runs again for the same candidate, as a retried step does', async () => {
       music.queue = [track(113, -10), track(113, -6), track(113, -10), track(113, -6)];
-      await generateCandidate(args(3), deps);
-      await generateCandidate(args(3), deps);
+      await generateCandidate(args(2), deps);
+      await generateCandidate(args(2), deps);
       await generateCandidate(args(1), deps);
       await generateCandidate(args(1), deps);
       expect(music.models).toEqual(['lyria-3-pro-preview', 'lyria-3-pro-preview', 'lyria-3.5', 'lyria-3.5']);
@@ -441,7 +467,7 @@ describe('generateCandidate', () => {
 
 describe('failedCandidate', () => {
   it('stands for a candidate that has no track, and says only the kind of error', () => {
-    expect(failedCandidate(2, new Error('the request held the prompt'))).toEqual({ index: 2, model: 'lyria-3.5', path: null, measure: null, problem: 'Error' });
+    expect(failedCandidate(2, new Error('the request held the prompt'))).toEqual({ index: 2, model: 'lyria-3-pro-preview', path: null, measure: null, problem: 'Error' });
   });
 
   it('says the HTTP status of the error when it has one', () => {
@@ -458,7 +484,7 @@ describe('failedCandidate', () => {
   });
 
   it('names the model the candidate was asked for, by its number', () => {
-    expect([1, 2, 3].map((index) => failedCandidate(index, new Error('x')).model)).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+    expect([1, 2, 3].map((index) => failedCandidate(index, new Error('x')).model)).toEqual(['lyria-3.5', 'lyria-3-pro-preview', 'lyria-3.5']);
   });
 });
 
@@ -475,7 +501,7 @@ describe('pickTrack', () => {
     const candidates = await made(1, 2);
     const picked = await pickTrack({ ...base(), candidates }, deps);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-1.wav`);
-    expect(picked.rejected).toEqual([{ index: 2, reason: 'bpm' }]);
+    expect(picked.rejected).toEqual([{ index: 2, model: 'lyria-3-pro-preview', reason: 'bpm' }]);
     expect(picked.candidates).toEqual(candidates);
     expect(music.calls).toBe(2);
   });
@@ -486,7 +512,7 @@ describe('pickTrack', () => {
     if (first?.measure == null) throw new Error('the first candidate was not measured');
     const candidates = [{ ...first, measure: { ...first.measure, maxJumpMs: 40 } }];
     const picked = await pickTrack({ ...base(), candidates }, deps);
-    expect(picked.rejected).toEqual([{ index: 1, reason: 'jump' }]);
+    expect(picked.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'jump' }]);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
     expect(music.calls).toBe(2);
   });
@@ -511,17 +537,17 @@ describe('pickTrack', () => {
     const picked = await pickTrack({ ...base(), candidates: second ? [second] : [] }, deps);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-3.wav`);
     expect(picked.candidates.map((c) => c.index)).toEqual([2, 3]);
-    // The extra candidate asks for the model of its number: the third is Lyria 3 Pro.
-    expect(music.models).toEqual(['lyria-3.5', 'lyria-3-pro-preview']);
-    expect(picked.track?.model).toBe('lyria-3-pro-preview');
+    // The extra candidate asks for the model of its number: the third is Lyria 3.5, after the second (Lyria 3 Pro) that was given.
+    expect(music.models).toEqual(['lyria-3-pro-preview', 'lyria-3.5']);
+    expect(picked.track?.model).toBe('lyria-3.5');
   });
 
   it('asks for the model of its number when the extra candidate is the second, after a first that failed', async () => {
     music.queue = [track(113, -6)];
     const picked = await pickTrack({ ...base(), candidates: [failedCandidate(1, new Error('x'))] }, deps);
     expect(picked.candidates.map((c) => c.index)).toEqual([1, 2]);
-    expect(music.models).toEqual(['lyria-3.5']);
-    expect(picked.track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3.5' });
+    expect(music.models).toEqual(['lyria-3-pro-preview']);
+    expect(picked.track).toMatchObject({ path: `orders/${id}/music/cand-2.wav`, model: 'lyria-3-pro-preview' });
   });
 
   it('counts the candidates that failed, if it is given them', async () => {
@@ -530,8 +556,8 @@ describe('pickTrack', () => {
     const picked = await pickTrack({ ...base(), candidates }, deps);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-3.wav`);
     expect(picked.rejected).toEqual([
-      { index: 1, reason: 'failed', detail: 'Error' },
-      { index: 2, reason: 'failed', detail: 'Error' },
+      { index: 1, model: 'lyria-3.5', reason: 'failed', detail: 'Error' },
+      { index: 2, model: 'lyria-3-pro-preview', reason: 'failed', detail: 'Error' },
     ]);
   });
 

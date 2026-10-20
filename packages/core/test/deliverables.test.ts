@@ -69,8 +69,8 @@ describe('claimsMarkdown', () => {
 });
 
 describe('MUSIC_MODELS', () => {
-  it('lists the model of each candidate in the order they are asked for: two Lyria 3.5 and one Lyria 3 Pro', () => {
-    expect(MUSIC_MODELS).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+  it('lists the model of each candidate in the order they are asked for: Lyria 3.5, Lyria 3 Pro, and Lyria 3.5 again for the one asked for last', () => {
+    expect(MUSIC_MODELS).toEqual(['lyria-3.5', 'lyria-3-pro-preview', 'lyria-3.5']);
   });
 });
 

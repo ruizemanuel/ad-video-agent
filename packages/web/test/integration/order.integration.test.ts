@@ -1,5 +1,5 @@
 // The order workflow from the paid order to the delivery or the refund, on the fake adapters, with the test as the VM.
-import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, type Edl, type RenderInput } from '@app/core';
+import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, type Edl, type MusicModel, type RenderInput } from '@app/core';
 import { clickWav } from '@app/core/testing';
 import { waitForHook, waitForSleep } from '@workflow/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +62,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// A track for the shop's video (112 bpm asked): hits long enough to read as music, longer than the video.
+const track = (bpm: number, gainDb: number): Uint8Array => clickWav({ bpm, seconds: 22, offset: 0.2, gainDb, clickSeconds: 0.25 });
+
+/**
+ * Has the music double answer with the track of the model that is asked, whichever candidate asks first (the first two are
+ * made at once, so their order of arrival is not for a test to rely on). A model with no track gets the double's own.
+ */
+function answerByModel(tracks: Partial<Record<MusicModel, Uint8Array>>): void {
+  const music = fakes.music;
+  const generate = music.generate.bind(music);
+  music.generate = async (prompt, model) => {
+    const wav = tracks[model];
+    if (wav !== undefined) music.queue.unshift(wav);
+    return generate(prompt, model);
+  };
+}
+
 const text = async (path: string): Promise<string> => new TextDecoder().decode(await fakes.blob.get(path));
 const kinds = async (orderId: string) => (await tasks(fakes.store, orderId)).map((t) => `${t.kind}:${t.round}`);
 const rentals = () => fakes.buy.vmRentals.length;
@@ -86,6 +103,8 @@ async function timeOut(run: Awaited<ReturnType<typeof start>>, orderId: string, 
 
 describe('an order that goes through', () => {
   it('delivers the muted and music MP4s, claims.md and music.md, then shuts the VM down', async () => {
+    // Both tracks pass; the more energetic is the first candidate's, which Lyria 3.5 makes.
+    answerByModel({ 'lyria-3.5': track(113, -6), 'lyria-3-pro-preview': track(113, -10) });
     const run = await captureAndPreview(id);
     await actAsVm(run, id, 'render', 0, null, RENDERED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
@@ -106,14 +125,14 @@ describe('an order that goes through', () => {
 
     // The render gets the edit list moved to the tempo measured on the chosen track, and the track.
     const render = queued[2]?.input as RenderInput;
-    expect(render.music).toEqual({ firstBeat: expect.any(Number), seconds: expect.any(Number), path: expect.stringMatching(new RegExp(`^orders/${id}/music/cand-[12]\\.wav$`)) });
+    expect(render.music).toEqual({ firstBeat: expect.any(Number), seconds: expect.any(Number), path: `orders/${id}/music/cand-1.wav` });
     expect(render.edl).toEqual(retimeForBpm(edlShop, render.edl.bpm));
     expect(EdlSchema.parse(render.edl)).toEqual(render.edl);
     expect(render).toMatchObject({ hook: 0, format: '9x16' });
     const bpm = Number.isInteger(render.edl.bpm) ? String(render.edl.bpm) : render.edl.bpm.toFixed(1);
     expect(await text(`orders/${id}/out/music.md`)).toContain(`${bpm} BPM`);
-    // One of the first two candidates, which Lyria 3.5 makes: that is the model music.md names.
-    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5']);
+    // Every order makes one track of each model; the chosen one is the first, and music.md names its model.
+    expect([...fakes.music.models].sort()).toEqual(['lyria-3-pro-preview', 'lyria-3.5']);
     const note = await text(`orders/${id}/out/music.md`);
     expect(note).toContain('made for this video by Google Lyria 3.5, an AI music model');
     expect(note).not.toContain('3 Pro');
@@ -122,24 +141,38 @@ describe('an order that goes through', () => {
     expect(queued[0]?.input).toEqual({ url: 'https://tiendita.example', extraUrls: [], followDemoLinks: 2 });
   });
 
-  it('names Lyria 3 Pro in music.md when the track that was chosen is the third candidate, which it makes', async () => {
-    // The first two (Lyria 3.5) are at the wrong tempo; the third, asked for after them, is the one that passes.
-    const wrong = clickWav({ bpm: 140, seconds: 22, offset: 0.2, gainDb: -6, clickSeconds: 0.25 });
-    const right = clickWav({ bpm: 113, seconds: 22, offset: 0.2, gainDb: -6, clickSeconds: 0.25 });
-    fakes.music.queue = [wrong, wrong, right];
+  it('names Lyria 3 Pro in music.md when the track that was chosen is the one Lyria 3 Pro made', async () => {
+    // The Lyria 3.5 track is at the wrong tempo; the Lyria 3 Pro one passes, so nothing more is asked for.
+    answerByModel({ 'lyria-3.5': track(140, -6), 'lyria-3-pro-preview': track(113, -6) });
     const run = await captureAndPreview(id);
     await actAsVm(run, id, 'render', 0, null, RENDERED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
 
-    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
+    expect([...fakes.music.models].sort()).toEqual(['lyria-3-pro-preview', 'lyria-3.5']);
     const render = (await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input as RenderInput;
-    expect(render.music?.path).toBe(`orders/${id}/music/cand-3.wav`);
+    expect(render.music?.path).toBe(`orders/${id}/music/cand-2.wav`);
     const note = await text(`orders/${id}/out/music.md`);
     expect(note).toContain('made for this video by Google Lyria 3 Pro, an AI music model');
     expect(note).not.toContain('3.5');
     // The watermark and the use of the track are the same whichever model made it.
     expect(note).toContain('SynthID');
     expect(note).toContain('paid ads');
+  });
+
+  it('names Lyria 3.5 in music.md when the track that was chosen is the third candidate, asked for after the other two did not pass', async () => {
+    // The first two (one of each model) are at the wrong tempo; the third, a Lyria 3.5, is the one that passes.
+    fakes.music.queue = [track(140, -6), track(140, -6), track(113, -6)];
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'render', 0, null, RENDERED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
+
+    expect([...fakes.music.models.slice(0, 2)].sort()).toEqual(['lyria-3-pro-preview', 'lyria-3.5']);
+    expect(fakes.music.models[2]).toBe('lyria-3.5');
+    const render = (await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input as RenderInput;
+    expect(render.music?.path).toBe(`orders/${id}/music/cand-3.wav`);
+    const note = await text(`orders/${id}/out/music.md`);
+    expect(note).toContain('made for this video by Google Lyria 3.5, an AI music model');
+    expect(note).not.toContain('3 Pro');
   });
 
   it('rents the VM with a script that carries the order permit, and keeps only its hash', async () => {
@@ -216,10 +249,17 @@ describe('an order that goes through', () => {
     expect((await fakes.store.getOrder(id))?.steps.music).toBe('failed');
     // Each of the first two candidates is tried twice; the third, asked for when they give nothing, once.
     expect(fakes.music.calls).toBe(5);
-    // A candidate tried again asks for the same model, and the third for Lyria 3 Pro.
-    expect(fakes.music.models).toEqual(['lyria-3.5', 'lyria-3.5', 'lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview']);
-    // Why no track passed is for whoever looks into the order, in the log.
+    // A candidate tried again asks for the same model (two of each in the first four calls), and the third is a Lyria 3.5.
+    expect([...fakes.music.models.slice(0, 4)].sort()).toEqual(['lyria-3-pro-preview', 'lyria-3-pro-preview', 'lyria-3.5', 'lyria-3.5']);
+    expect(fakes.music.models[4]).toBe('lyria-3.5');
+    // Why no track passed is for whoever looks into the order, in the log, with the model of each candidate.
     expect(warn).toHaveBeenCalledWith('[music_rejected]', id, expect.stringContaining('"reason":"failed"'));
+    const logged = JSON.parse(String(warn.mock.calls.find(([tag]) => tag === '[music_rejected]')?.[2]));
+    expect(logged).toEqual([
+      { index: 1, model: 'lyria-3.5', reason: 'failed', detail: 'Error' },
+      { index: 2, model: 'lyria-3-pro-preview', reason: 'failed', detail: 'Error' },
+      { index: 3, model: 'lyria-3.5', reason: 'failed', detail: 'Error' },
+    ]);
     expect((await tasks(fakes.store, id)).find((t) => t.kind === 'render')?.input).toMatchObject({ edl: edlShop, music: null });
   });
 

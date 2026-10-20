@@ -588,8 +588,7 @@ writeScript.maxRetries = 1;
 /**
  * One candidate track, of the model of its number (a try again asks the same one). A call Lyria refused after billing it
  * is not made again (its cost is recorded); any other failure is tried once more, and then it is a candidate that did
- * not pass. What leaves the step names only the kind of
- * failure: the SDK's errors can hold the request.
+ * not pass. What leaves the step names only the kind of failure: the SDK's errors can hold the request.
  */
 async function musicCandidate(orderId: string, edl: Edl, index: number): Promise<Candidate> {
   'use step';

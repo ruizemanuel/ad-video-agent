@@ -56,11 +56,13 @@ const bpmText = (bpm: number): string => (Number.isInteger(bpm) ? String(bpm) : 
 
 /**
  * The model that makes each candidate track, in the order the candidates are asked for (the first candidate is the first
- * model): two of Lyria 3.5 and one of Lyria 3 Pro, since 5 of the 8 Lyria 3.5 tracks measured skipped once in the part the
- * video plays and the 2 Lyria 3 Pro tracks did not. It is here, and not with the music step, because music.md names the
- * model of the track that was chosen and this package cannot read the service's. The ids are the Gemini API's.
+ * model): Lyria 3.5, Lyria 3 Pro and Lyria 3.5 again. The first two candidates are always made together and the third only
+ * when neither passes, so Lyria 3 Pro goes in the pair that is always made: every order gets a track of each model, since
+ * 5 of the 8 Lyria 3.5 tracks measured skipped once in the part the video plays and the 2 Lyria 3 Pro tracks did not. It
+ * is here, and not with the music step, because music.md names the model of the track that was chosen and this package
+ * cannot read the service's. The ids are the Gemini API's.
  */
-export const MUSIC_MODELS = ['lyria-3.5', 'lyria-3.5', 'lyria-3-pro-preview'] as const;
+export const MUSIC_MODELS = ['lyria-3.5', 'lyria-3-pro-preview', 'lyria-3.5'] as const;
 export type MusicModel = (typeof MUSIC_MODELS)[number];
 
 /** What music.md calls each model. */
