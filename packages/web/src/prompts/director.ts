@@ -47,8 +47,8 @@ export const STRUCTURE_RULES = `# Structure and timing
 - \`style.energy\` and \`style.density\` describe the site: "bold" for strong colors and big type,
   "calm" otherwise; "airy" for lots of white space, "dense" otherwise.
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
-  get the same ad: a bold site cuts every 2 beats in its hooks and leans on \`WordCycle\` and
-  \`TypeIn\`; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
+  get the same ad: a bold site cuts every 2 beats in its hooks and leans on \`TypeIn\` there and on
+  \`WordCycle\` in its body; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
   \`UiScroll\`; a dense site can stack its points in a \`ClaimStack\`; an airy one keeps one short
   line per scene.`;
 
@@ -73,7 +73,8 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   states (payment methods, channels, who it is for). \`lines[0]\` is the prefix, a framing line; then
   2 or 3 lines of one word (or two) each, and every word that says something about the product is a
   claim with its quote. The words are spread evenly over the scene, two beats each at least, so the
-  scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3).
+  scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3), too long for a hook
+  scene (2 to 4 beats): it goes in the body.
 - **TypeIn**: a field where 1 line is typed, then a button is pressed. Exactly 1 line, framing, and
   a \`variant\`: "url" types the site's address, which is exactly the \`host\` of the site data (no
   "www.", no "https://", no path); "prompt" types a short question the audience would ask.

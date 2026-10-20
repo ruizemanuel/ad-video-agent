@@ -57,6 +57,16 @@ describe('DIRECTOR_SYSTEM', () => {
       expect(rules).toContain('at least two beats per word plus one (5 beats for 2 words, 7 for 3)');
     });
 
+    it.each([
+      ['the director', DIRECTOR_SYSTEM],
+      ['the corrector', PATCH_SYSTEM],
+    ])('tells %s a WordCycle is too long for a hook and goes in the body', (_, system) => {
+      const rules = flat(system);
+      expect(rules).toContain('too long for a hook scene (2 to 4 beats): it goes in the body');
+      expect(rules).toContain('a bold site cuts every 2 beats in its hooks and leans on `TypeIn` there and on `WordCycle` in its body');
+      expect(rules).not.toContain('leans on `WordCycle` and `TypeIn`');
+    });
+
     it('no longer allows 4 or 5 words, or a beat per word', () => {
       for (const rules of [flat(DIRECTOR_SYSTEM), flat(PATCH_SYSTEM)]) {
         expect(rules).not.toContain('2 to 5 lines of one word');
