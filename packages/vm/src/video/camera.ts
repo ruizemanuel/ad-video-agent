@@ -237,7 +237,9 @@ const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[], 
  * that backs the caption, like a scroll that settles. It aims at the card of the page the element is in when it can frame it
  * whole (see targetBlock), else at the element (see focusRegion). It zooms until the target takes 78% of the card's
  * width or 60% of its height, within the limits of the shot's viewport, and pans sideways only when the view gets
- * narrower than most of the content. `blocks` are the cards of the capture: a capture without them frames as before.
+ * narrower than most of the content. The top edge rule (see avoidTopCut) then moves the landing, in up to 3 moves, so that
+ * the top of the view slices no box and no card, and the opening follows the landing. `blocks` are the cards of the
+ * capture: a capture without them aims at the element, and the top edge rule has the boxes alone to go by.
  */
 export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = [], blocks: readonly Block[] = []): Move => {
   const { cardW, cardH } = stageLayout(format);
