@@ -202,6 +202,24 @@ describe('the logo finder, in a page of its own', () => {
   });
 });
 
+describe('a stats band right before a one-word title, and a title shaped like a figure', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}figures.html`, extraUrls: [], followDemoLinks: 0 }));
+  const section = (heading: string) => run.site.sections.find((s) => s.heading === heading)!;
+
+  it('opens a section on a one-word title that follows a figure from afar: it is no piece of the figure', () => {
+    expect(run.site.sections.map((s) => s.heading)).toEqual(['Payments for every shop', 'Pricing', 'Get started']);
+    expect(section('Payments for every shop').text).toBe('One account for cards and transfers.\nMerchants\n10,000+');
+    const pricing = section('Pricing');
+    expect(run.site.shots.filter((s) => s.sectionId === pricing.id).map((s) => s.viewport)).toEqual(['desktop', 'mobile']);
+  });
+
+  // The trade-off of the figure rule: "24/7 support" has the shape of "1 second", and no rule of syntax tells them
+  // apart. Its words stay, in the section before it; its section and its shot go.
+  it('reads a title shaped like a figure ("24/7 support") as text of the section before it', () => {
+    expect(section('Pricing').text).toBe('One plan, no setup fee.\n24/7 support\nSomeone answers every message, day and night.');
+  });
+});
+
 describe('a site with a demo page, followed once as a link and once as an extra', () => {
   const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: [`${fixtureUrl}demo.html#again`], followDemoLinks: 2 }));
 

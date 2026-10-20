@@ -110,9 +110,10 @@ export function inPageAnchors(): { href: string; text: string }[] {
  * The text of the page split into sections (a heading and what follows), and its metadata. Tags each heading that opens a
  * section `data-capsec`. A heading opens one only if it reads as a title, not as a piece of a figure: it has two letters
  * or more, and it is no figure (a number with at most one word: "453K", "1 second", "$0.0004"). Framer splits a figure
- * over several headings ("$" + "6.2" + "Billion"), so headings with no text between them are read together for this. A
- * figure's text joins the section it is in, as one line, which keeps it with its label, above it or under it. A line
- * repeated in a section (a carousel repeats its cards) is kept once, where it first comes.
+ * over several headings ("$" + "6.2" + "Billion"), so headings with no text between them, no more than a line apart on
+ * the page, are read together for this. A figure's text joins the section it is in, as one line, which keeps it with
+ * its label, above it or under it. A line repeated in a section (a carousel repeats its cards) is kept once, where it
+ * first comes.
  */
 export function inPageExtractText(): PageText {
   const { clean, visible, isButtonLike } = (window as unknown as CapWindow).__cap;
@@ -140,6 +141,17 @@ export function inPageExtractText(): PageText {
     const words = heading.split(' ').filter((w) => /\p{L}/u.test(w)).length;
     return /^\P{L}*\p{N}/u.test(heading) && words <= 1;
   };
+  // Whether a heading is near enough to the one before it to be the rest of it: their boxes are no more than a line
+  // (of the one before) apart, across or down. On celo.org the pieces of a figure touch: "1.5" and "B" side by side,
+  // "Billion" right under "$ 6.2". The title of the next section is a section's padding away.
+  const near = (before: Element, el: Element): boolean => {
+    const a = before.getBoundingClientRect();
+    const b = el.getBoundingClientRect();
+    const cs = getComputedStyle(before);
+    const line = cs.lineHeight === 'normal' ? 1.2 * parseFloat(cs.fontSize) : parseFloat(cs.lineHeight);
+    const gap = Number.isFinite(line) ? line : a.height;
+    return Math.max(0, b.left - a.right, a.left - b.right) <= gap && Math.max(0, b.top - a.bottom, a.top - b.bottom) <= gap;
+  };
   // The fragments of headings read since the last text, together; and the last of them, whose text is already taken.
   let figure = '';
   let figureEl: Element | null = null;
@@ -161,10 +173,11 @@ export function inPageExtractText(): PageText {
       const el = n as HTMLElement;
       if (/^h[1-3]$/.test(el.localName)) {
         const heading = clean(el.innerText);
-        const together = figure ? `${figure} ${heading}` : heading;
-        if (heading && (isFragment(heading) || (figure && isFragment(together)))) {
+        const joined = figure !== '' && figureEl !== null && near(figureEl, el);
+        const together = joined ? `${figure} ${heading}` : heading;
+        if (heading && (isFragment(heading) || (joined && isFragment(together)))) {
           // On the line of the fragments right before it, else on a line of its own.
-          if (!figure && cur.lastBlock) cur.parts.push('\n');
+          if (!joined && cur.lastBlock) cur.parts.push('\n');
           cur.parts.push(heading);
           cur.lastBlock = el;
           figure = together;
