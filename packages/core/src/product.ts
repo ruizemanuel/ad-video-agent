@@ -20,8 +20,9 @@ export const blockOf = (blocks: readonly Block[], shotId: string, box: Region): 
 
 // What makes a "price" box show money. The capture calls a price any short text with a currency symbol, a percentage, a
 // currency code or a billing period, so "0% de comisión", the stat of a feature card, is a price box too: it takes a
-// currency or a billing period, with a number, to be product UI.
-const NUMBER = String.raw`\d[\d.,]*`;
+// currency or a billing period, with a number, to be product UI. A number followed by a percent sign is no amount, whatever
+// stands before it ("USDC 0% fee", "ARS 15% off", "$0%"), and the number is taken whole, so a shorter one cannot match.
+const NUMBER = String.raw`\d[\d.,]*(?![\d.,]|\s?%)`;
 const SYMBOL = '[$€£¥₹₩₽₺₫₪₱₦฿]';
 const CODE =
   '(?:USDT|USDC|cUSD|USD|EUR|GBP|ARS|BRL|MXN|CLP|COP|PEN|UYU|BOB|PYG|VES|CAD|AUD|NZD|CHF|JPY|CNY|INR|KRW|RUB|TRY|ZAR|SEK|NOK|DKK|PLN|CZK|HUF|AED|SAR|ILS|NGN|KES|PHP|THB|IDR|VND|SGD|HKD|TWD)';

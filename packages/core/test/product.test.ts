@@ -167,8 +167,14 @@ describe('isProductTarget: a price box has to show money', () => {
     (text) => expect(isProductTarget(priced(text), SHOT, 0)).toBe(false),
   );
 
-  it.each(['$ 4.500', '$4.990', '$0', 'US$ 10', 'R$ 50', '€9', '£12.50', '¥1,200', '9 €', 'ARS 4500', '4500 ARS', 'USD 10', '10 USD', 'USDT 10', 'cUSD 5',
-    '4.990 / mes', '4990/mes', '9 per month', '4990 por mes', '99 /year', '49 / año', '5 al mes', 'Pack de Presets Lightroom $ 4.500', 'Plan Pro: 4.990 por MES'])(
+  // A percentage right after a currency symbol or code is the same stat, written the other way round.
+  it.each(['USDT 0%', 'USDC 0% fee', 'ARS 15% off', '$0%', '$ 0 %', '€ 5 %', '12.5% USD', '0% USD'])(
+    'does not take "%s" for evidence: a number followed by a percent sign is never money',
+    (text) => expect(isProductTarget(priced(text), SHOT, 0)).toBe(false),
+  );
+
+  it.each(['$ 4.500', '$4.990', '$0', 'US$ 10', 'R$ 50', 'R$ 29,90', '€9', '£12.50', '¥1,200', '9 €', 'ARS 4500', '4500 ARS', '1.200 ARS', 'USD 10', '10 USD', 'USDT 10', 'cUSD 5',
+    'US$ 10 (0% fee)', '0% fee, USDC 10', '4.990 / mes', '4990/mes', '9 per month', '4990 por mes', '99 /year', '49 / año', '5 al mes', 'Pack de Presets Lightroom $ 4.500', 'Plan Pro: 4.990 por MES'])(
     'takes "%s" for evidence: the heading of its section is product UI',
     (text) => expect(isProductTarget(priced(text), SHOT, 0)).toBe(true),
   );
