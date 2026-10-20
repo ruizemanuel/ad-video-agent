@@ -1,3 +1,4 @@
+import MusicTempo from 'music-tempo';
 import { describe, expect, it } from 'vitest';
 import { EdlSchema, MAX_TRACK_SHORT_FALL_SECONDS, chooseTrack, layoutScenes, measureTrack, musicPrompt, parseWav, trackCoversVideo, type TrackMeasure } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
@@ -219,20 +220,20 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     Array.from({ length: Math.ceil((SECONDS - first) / BEAT) }, (_, beat) => first + beat * BEAT + shift(beat, first + beat * BEAT));
   // A hit on the grid at `first`, then three beats a 16th early (an intro figure), then the grid again.
   const introFigure = (first: number) => beats(first, (beat) => (beat >= 1 && beat <= 3 ? -SIXTEENTH : 0));
-  const measure = (mono: Float32Array) => measureTrack(mono, SAMPLE_RATE, 112, VIDEO_SECONDS);
-  const verdict = (track: TrackMeasure) => chooseTrack([track], 112, VIDEO_SECONDS);
+  const measure = (mono: Float32Array, requestedBpm = 112) => measureTrack(mono, SAMPLE_RATE, requestedBpm, VIDEO_SECONDS);
+  const verdict = (track: TrackMeasure, requestedBpm = 112) => chooseTrack([track], requestedBpm, VIDEO_SECONDS);
 
-  // The time of beat `beat` of a grid that starts at FIRST.
+  // The time of beat `beat` of a grid that starts at FIRST, at `bpm` (the tempo of the tracks above if left out).
   const FIRST = 0.5;
-  const beatAt = (beat: number) => FIRST + beat * BEAT;
+  const beatAt = (beat: number, bpm = 110) => FIRST + (beat * 60) / bpm;
   const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
-  // A track that opens on a soft count-in: ticks (-26 dB, about the softest a tracker still hears in a track this plain)
-  // on the beats `ticks`, a 16th-note fill (-12 dB: a hit of its own, but 9 dB under the groove) on beat `fill`, and the
-  // groove (-3 dB, hits of 0.25 s) from beat `groove`, all on the grid that starts at FIRST.
-  const countIn = ({ ticks, fill, groove }: { ticks: number[]; fill: number; groove: number }): Float32Array => {
-    const mono = addClicks(silence(), range(groove, 40).map(beatAt), { gainDb: -3 });
-    addClicks(mono, ticks.map(beatAt), { gainDb: -26, clickSeconds: 0.03 });
-    for (let n = 0; n < 4; n++) addClicks(mono, [beatAt(fill) + n * SIXTEENTH], { gainDb: -12, clickSeconds: 0.1 });
+  // A track that opens on a soft count-in: ticks (gain -26 dB, about the softest a tracker still hears in a track this
+  // plain) on the beats `ticks`, a 16th-note fill (gain -12 dB: a hit of its own, but 9 dB under the groove) on beat `fill`,
+  // and the groove (gain -3 dB, hits of 0.25 s) from beat `groove`, all on the grid that starts at FIRST.
+  const countIn = ({ ticks, fill, groove, bpm = 110 }: { ticks: number[]; fill: number; groove: number; bpm?: number }): Float32Array => {
+    const mono = addClicks(silence(), range(groove, 40).map((beat) => beatAt(beat, bpm)), { gainDb: -3 });
+    addClicks(mono, ticks.map((beat) => beatAt(beat, bpm)), { gainDb: -26, clickSeconds: 0.03 });
+    for (let n = 0; n < 4; n++) addClicks(mono, [beatAt(fill, bpm) + (n * 15) / bpm], { gainDb: -12, clickSeconds: 0.1 });
     return mono;
   };
 
@@ -301,7 +302,7 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     expect(track.firstBeat).toBeCloseTo(beatAt(4), 1);
     expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
     // The levels are the groove's own: those of the same groove with nothing before it.
-    const groove = measure(addClicks(silence(), range(4, 40).map(beatAt), { gainDb: -3 }));
+    const groove = measure(addClicks(silence(), range(4, 40).map((beat) => beatAt(beat)), { gainDb: -3 }));
     expect(track.startRmsDb).toBeCloseTo(groove.startRmsDb, 0);
     expect(track.energyDb).toBeCloseTo(groove.energyDb, 1);
     expect(track.audioStart).toBeCloseTo(FIRST, 2);
@@ -329,10 +330,70 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
     expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
   });
 
+  it.each([96, 110, 120])('takes the groove on beat 8 of a two-bar count-in: %d bpm', (bpm) => {
+    // The grid sits a few ms off the first sound, either way, so the edge of the lead-in is half a beat past beat 8.
+    const track = measure(countIn({ ticks: range(0, 7), fill: 7, groove: 8, bpm }), bpm);
+    expect(track.firstBeat).toBeCloseTo(beatAt(8, bpm), 1);
+    expect(verdict(track, bpm)).toEqual({ chosen: 0, rejected: [] });
+  });
+
+  it.each([96, 110, 120])('leaves the start on the count-in when the groove is on beat 9: %d bpm', (bpm) => {
+    // Beyond the lead-in, so nothing there is both a hit and strong: the start stays on the first tick (a weak start).
+    const track = measure(countIn({ ticks: range(0, 8), fill: 8, groove: 9, bpm }), bpm);
+    expect(track.firstBeat).toBeCloseTo(FIRST, 1);
+    expect(verdict(track, bpm)).toEqual({ chosen: null, rejected: [{ index: 0, reason: 'weak-start' }] });
+  });
+
+  describe('on a pulse the tracker follows at double time', () => {
+    // 8th notes at 90 bpm: the tracker beats at 180, and the measure folds that back to the 90 of the music. Ticks on
+    // every 8th note up to beat `groove`, then the groove on every 8th; with `pickup` the groove's first hit is the
+    // off-beat 8th before its downbeat, and with `fill` there is a fill (a hit of its own, 9 dB under the groove) on that beat.
+    const eighths = ({ groove, pickup = false, fill }: { groove: number; pickup?: boolean; fill?: number }): Float32Array => {
+      const at = (eighth: number) => beatAt(eighth / 2, 90);
+      const firstGroove = groove * 2 - (pickup ? 1 : 0);
+      const mono = addClicks(silence(), range(0, firstGroove).map(at), { gainDb: -22, clickSeconds: 0.03 });
+      addClicks(mono, range(firstGroove, 80).map(at), { gainDb: -3, clickSeconds: 0.2 });
+      if (fill !== undefined) for (let n = 0; n < 4; n++) addClicks(mono, [beatAt(fill, 90) + (n * 15) / 90], { gainDb: -12, clickSeconds: 0.1 });
+      return mono;
+    };
+
+    it('counts the lead-in in beats of the music, not of the tracker: the groove on beat 6 is in', () => {
+      const mono = eighths({ groove: 6 });
+      expect(new MusicTempo(mono, { hopSize: 441, timeStep: 0.01 }).beatInterval).toBeCloseTo(60 / 180, 2); // double time
+      const track = measure(mono, 96);
+      expect(track.measuredBpm).toBeCloseTo(90, 0);
+      expect(track.firstBeat).toBeCloseTo(beatAt(6, 90), 1); // 5.7 s of lead-in, not the 2.8 s of 8 tracker beats
+      expect(verdict(track, 96)).toEqual({ chosen: 0, rejected: [] });
+    });
+
+    it('steps by beats of the music: it opens on the downbeat, not on the off-beat 8th that leads into it', () => {
+      const track = measure(eighths({ groove: 6, pickup: true }), 96);
+      expect(track.firstBeat).toBeCloseTo(beatAt(6, 90), 1);
+      expect(verdict(track, 96)).toEqual({ chosen: 0, rejected: [] });
+    });
+
+    it('tells the strong beats from 4 beats of the music past the lead-in: a fill is not taken for a groove on beat 12', () => {
+      const track = measure(eighths({ groove: 12, fill: 6 }), 96);
+      expect(track.firstBeat).toBeCloseTo(FIRST, 1);
+      expect(verdict(track, 96)).toEqual({ chosen: null, rejected: [{ index: 0, reason: 'weak-start' }] });
+    });
+  });
+
+  it('does not search from a start that chooseTrack would accept: -30.03 dB reads as -30.0', () => {
+    // Four hits at gain -15.41 dB, which read -30.03 dB over 250 ms from the grid (-30.0 to the tenth, as chooseTrack sees
+    // it), and the louder groove from beat 4: the video opens on the first hit.
+    const mono = addClicks(silence(), range(0, 4).map((beat) => beatAt(beat)), { gainDb: -15.41 });
+    addClicks(mono, range(4, 40).map((beat) => beatAt(beat)), { gainDb: -3 });
+    const track = measure(mono);
+    expect(track.startRmsDb).toBe(-30);
+    expect(track.firstBeat).toBeCloseTo(FIRST, 1);
+    expect(verdict(track)).toEqual({ chosen: 0, rejected: [] });
+  });
+
   it('does not take for the groove a beat inside a tone that no hit starts on', () => {
     // A tone that starts 0.2 s before beat 3 and rings past it: loud on that beat, but nothing starts within 40 ms of it.
-    const mono = addClicks(silence(), range(6, 40).map(beatAt), { gainDb: -3 });
-    addClicks(mono, [...range(0, 3), 5].map(beatAt), { gainDb: -26, clickSeconds: 0.03 });
+    const mono = addClicks(silence(), range(6, 40).map((beat) => beatAt(beat)), { gainDb: -3 });
+    addClicks(mono, [...range(0, 3), 5].map((beat) => beatAt(beat)), { gainDb: -26, clickSeconds: 0.03 });
     addClicks(mono, [beatAt(3) - 0.2], { gainDb: -3, clickSeconds: 1 });
     const track = measure(mono);
     expect(track.firstBeat).toBeCloseTo(beatAt(6), 1);
@@ -341,8 +402,8 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
 
   it('does not move a start that is already a hit, however much louder the groove after it is', () => {
     // Four beats of hits at -25 dB, then the groove at -16 dB: the video opens on the first hit, as it always did.
-    const mono = addClicks(silence(), range(0, 4).map(beatAt), { gainDb: -12 });
-    addClicks(mono, range(4, 40).map(beatAt), { gainDb: -3 });
+    const mono = addClicks(silence(), range(0, 4).map((beat) => beatAt(beat)), { gainDb: -12 });
+    addClicks(mono, range(4, 40).map((beat) => beatAt(beat)), { gainDb: -3 });
     const track = measure(mono);
     expect(track.firstBeat).toBeCloseTo(FIRST, 1);
     expect(track.startRmsDb).toBeGreaterThan(-30);
@@ -361,7 +422,7 @@ describe('chooseTrack', () => {
       [
         { ...ok(-20), measuredBpm: 140 },
         { ...ok(-20), beatResidualMs: 45 },
-        { ...ok(-20), firstBeat: 4.5 }, // 8 beats at 113 bpm are 4.25 s
+        { ...ok(-20), firstBeat: 4.7 }, // 8.5 beats at 113 bpm are 4.51 s
         { ...ok(-20), startRmsDb: -40 },
         ok(-20),
         ok(-16),
@@ -393,27 +454,27 @@ describe('chooseTrack', () => {
   });
 
   it('accepts a short intro: the render cuts the track from its first beat', () => {
-    // 1.4 s and 1.115 s (the cobrame track the user chose by ear) are fine, and so is 2.1 s: 8 beats at 113 bpm are 4.25 s.
+    // 1.4 s and 1.115 s (the cobrame track the user chose by ear) are fine, and so is 2.1 s: 8.5 beats at 113 bpm are 4.51 s.
     expect(reasons([{ ...ok(-16), firstBeat: 1.4 }, { ...ok(-16), firstBeat: 1.115 }, { ...ok(-16), firstBeat: 2.1 }])).toEqual([]);
   });
 
   it.each([
-    { bpm: 96, justUnder: 4.95, justOver: 5.05 }, // 8 beats are 5 s
-    { bpm: 120, justUnder: 3.95, justOver: 4.05 }, // 8 beats are 4 s
-  ])('calls a start late when it is more than 8 beats after the first sound: $bpm bpm', ({ bpm, justUnder, justOver }) => {
+    { bpm: 96, justUnder: 5.25, justOver: 5.4 }, // 8.5 beats are 5.31 s
+    { bpm: 120, justUnder: 4.2, justOver: 4.3 }, // 8.5 beats are 4.25 s
+  ])('calls a start late when it is more than 8.5 beats after the first sound: $bpm bpm', ({ bpm, justUnder, justOver }) => {
     expect(reasons([{ ...ok(-16), measuredBpm: bpm, firstBeat: justUnder }], bpm)).toEqual([]);
     expect(reasons([{ ...ok(-16), measuredBpm: bpm, firstBeat: justOver }], bpm)).toEqual(['late-start']);
   });
 
   it('counts a late start from where the sound starts, when the measure says (silence before it is never heard)', () => {
-    // 8 beats at 120 bpm are 4 s: 3.9 s after the sound is fine and 4.1 s is not, whatever the silence before it.
-    expect(reasons([{ ...ok(-16), measuredBpm: 120, firstBeat: 6.1, audioStart: 2.2 }])).toEqual([]);
-    expect(reasons([{ ...ok(-16), measuredBpm: 120, firstBeat: 6.3, audioStart: 2.2 }])).toEqual(['late-start']);
+    // 8.5 beats at 120 bpm are 4.25 s: 4.2 s after the sound is fine and 4.4 s is not, whatever the silence before it.
+    expect(reasons([{ ...ok(-16), measuredBpm: 120, firstBeat: 6.4, audioStart: 2.2 }])).toEqual([]);
+    expect(reasons([{ ...ok(-16), measuredBpm: 120, firstBeat: 6.6, audioStart: 2.2 }])).toEqual(['late-start']);
   });
 
   it('keeps tracks that sit exactly on a limit', () => {
-    // 8 beats at 120 bpm are exactly 4 s.
-    const onTheLimit = { ...ok(-16), measuredBpm: 120, beatResidualMs: 30, firstBeat: 4, startRmsDb: -30, seconds: 24 };
+    // 8.5 beats at 120 bpm are exactly 4.25 s.
+    const onTheLimit = { ...ok(-16), measuredBpm: 120, beatResidualMs: 30, firstBeat: 4.25, startRmsDb: -30, seconds: 24.25 };
     expect(chooseTrack([onTheLimit], 112, 20)).toEqual({ chosen: 0, rejected: [] });
   });
 

@@ -108,8 +108,12 @@ const ONSET_TOLERANCE_SECONDS = 0.04;
 const BEFORE_SOUND_TOLERANCE_SECONDS = 0.05;
 // The lead-in: how many beats from the first sound a track may take to get going (two bars of 4/4). A track that opens on
 // a soft count-in is cut at its first strong beat, and only a beat of the lead-in can be it. It is also how late a start
-// chooseTrack lets through; counted in beats, it follows the tempo.
+// chooseTrack lets through. Every count here is of the beats of the music, 60 / the measured tempo, and not of the
+// tracker's grid, which can run at double or half time.
 const MAX_LEAD_IN_BEATS = 8;
+// The lead-in ends this far past its last beat. The grid sits a few ms before or after the first sound, so a groove on
+// beat 8 would otherwise fall on either side of the line by a hair; half a beat keeps it in and leaves beat 9 out.
+const LEAD_IN_EDGE_BEATS = 0.5;
 // How many beats past the lead-in the strong beats are told from, so that a groove that comes in on the last beat of the
 // lead-in is measured against the groove itself, and not only against the count-in before it.
 const GROOVE_LOOKAHEAD_BEATS = 4;
@@ -201,6 +205,8 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
   const audible = 10 ** (AUDIBLE_DBFS / 20);
   const firstSound = mono.findIndex((x) => Math.abs(x) > audible);
   const audioStart = firstSound < 0 ? 0 : firstSound / sampleRate;
+  // Level (dBFS) of the quarter of a second from `time`: is there a hit there.
+  const levelAt = (time: number) => rmsDb(mono, sampleRate, time, time + START_WINDOW_SECONDS);
   // The start: the grid's first beat, moved back a beat at a time while the beat before it is a hit the video can open
   // on (the tracker heard an onset there, it is as loud as chooseTrack asks of a start, and it is not before the first
   // sound). The tracker can come in after the first hit, on a figure that follows it, and the grid's first beat is then
@@ -208,26 +214,27 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
   const isHit = (time: number) =>
     time >= audioStart - BEFORE_SOUND_TOLERANCE_SECONDS &&
     tracker.events.some((onset) => Math.abs(onset - time) <= ONSET_TOLERANCE_SECONDS) &&
-    rmsDb(mono, sampleRate, time, time + START_WINDOW_SECONDS) >= MIN_START_RMS_DB;
+    levelAt(time) >= MIN_START_RMS_DB;
   let start = phase;
   while (isHit(start - slope)) start -= slope;
-  // Only a weak start moves (one softer than MIN_START_RMS_DB: a track that opens on a soft count-in, ticks and then a
-  // fill). It goes on, a beat at a time, to the first beat of the lead-in that is a hit and a strong one, that is, within
-  // GROOVE_MARGIN_DB of the loudest beat from the start to the end of the lead-in and a little past it. A fill into the
-  // groove is a hit but not a strong one, so the cut lands on the groove. If no beat qualifies the start stays, and the
-  // track is still a weak start.
-  const levelAt = (time: number) => rmsDb(mono, sampleRate, time, time + START_WINDOW_SECONDS);
-  if (levelAt(start) < MIN_START_RMS_DB) {
-    const leadInEnd = audioStart + MAX_LEAD_IN_BEATS * slope;
-    const gridBeats: { time: number; level: number }[] = [];
-    for (let n = 0; start + n * slope <= leadInEnd + GROOVE_LOOKAHEAD_BEATS * slope; n++) {
-      const time = start + n * slope;
-      gridBeats.push({ time, level: levelAt(time) });
+  // Only a weak start moves (one that chooseTrack would call weak: a track that opens on a soft count-in, ticks and then a
+  // fill). It goes on, a beat of the music at a time and on the phase it has, to the first beat of the lead-in that is a
+  // hit and a strong one, that is, within GROOVE_MARGIN_DB of the loudest beat from the start to the end of the lead-in
+  // and a little past it. A fill into the groove is a hit but not a strong one, so the cut lands on the groove. If no beat
+  // qualifies the start stays, and the track is still a weak start. A beat is a beat of the music (60 / the folded tempo),
+  // which is the tracker's beat when it follows the music, twice it when the tracker runs at double time (the steps then
+  // keep to the beats of the music, and do not land on an 8th note off them) and half of it at half time (they skip none).
+  // A step that falls between two grid lines is judged the same way.
+  if (round(levelAt(start), 1) < MIN_START_RMS_DB) {
+    const beatSeconds = 60 / folded;
+    const leadInEnd = audioStart + (MAX_LEAD_IN_BEATS + LEAD_IN_EDGE_BEATS) * beatSeconds;
+    const steps: { time: number; level: number }[] = [];
+    for (let n = 0; start + n * beatSeconds <= leadInEnd + GROOVE_LOOKAHEAD_BEATS * beatSeconds; n++) {
+      const time = start + n * beatSeconds;
+      steps.push({ time, level: levelAt(time) });
     }
-    const loudest = Math.max(...gridBeats.map((beat) => beat.level));
-    const strong = gridBeats.find(
-      (beat) => beat.time > start && beat.time <= leadInEnd && beat.level >= loudest - GROOVE_MARGIN_DB && isHit(beat.time),
-    );
+    const loudest = Math.max(...steps.map((step) => step.level));
+    const strong = steps.find((step) => step.time > start && step.time <= leadInEnd && step.level >= loudest - GROOVE_MARGIN_DB && isHit(step.time));
     if (strong) start = strong.time;
   }
 
@@ -237,7 +244,7 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
     firstBeat: round(start, 3),
     beatResidualMs: Math.round(residual * 1000),
     // To the tenth of a dB: a difference no ear hears is a tie, and ties go to the better tempo (chooseTrack).
-    startRmsDb: round(rmsDb(mono, sampleRate, start, start + START_WINDOW_SECONDS), 1),
+    startRmsDb: round(levelAt(start), 1),
     energyDb: round(rmsDb(mono, sampleRate, start, start + videoSeconds), 1),
     audioStart: round(audioStart, 3),
     droppedBeats: dropped,
@@ -256,9 +263,9 @@ const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: numb
   if (Math.abs(track.measuredBpm - requestedBpm) / requestedBpm > MAX_BPM_DEVIATION) return 'bpm';
   if (track.beatResidualMs > MAX_RESIDUAL_MS) return 'unsteady';
   // The render cuts the track from its first beat, so a short intro costs nothing; this only keeps out a track that takes
-  // long to get going: more than MAX_LEAD_IN_BEATS beats at its tempo. It counts from the first sound, because the
-  // silence before it is never heard.
-  if (track.firstBeat - (track.audioStart ?? 0) > (MAX_LEAD_IN_BEATS * 60) / track.measuredBpm) return 'late-start';
+  // long to get going: past the lead-in, that is, more than MAX_LEAD_IN_BEATS beats (and the edge) at its tempo. It
+  // counts from the first sound, because the silence before it is never heard.
+  if (track.firstBeat - (track.audioStart ?? 0) > ((MAX_LEAD_IN_BEATS + LEAD_IN_EDGE_BEATS) * 60) / track.measuredBpm) return 'late-start';
   if (track.startRmsDb < MIN_START_RMS_DB) return 'weak-start';
   if (track.seconds - track.firstBeat < videoSeconds) return 'too-short';
   return undefined;
