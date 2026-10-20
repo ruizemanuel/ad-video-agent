@@ -106,10 +106,11 @@ const ONSET_TOLERANCE_SECONDS = 0.04;
 // How far before the first sound the start may go, in seconds: the grid line of the hit that opens a track can fall a
 // few milliseconds before its first sample.
 const BEFORE_SOUND_TOLERANCE_SECONDS = 0.05;
-// The lead-in: how many beats from the first sound a track may take to get going (two bars of 4/4). A track that opens on
-// a soft count-in is cut at its first strong beat, and only a beat of the lead-in can be it. It is also how late a start
-// chooseTrack lets through. Every count here is of the beats of the music, 60 / the measured tempo, and not of the
-// tracker's grid, which can run at double or half time.
+// The lead-in: the beats from the first sound, 0 to MAX_LEAD_IN_BEATS, that a track may take to get going (two bars of
+// 4/4). A track that opens on a soft count-in is cut at its first strong beat, and only a beat of the lead-in can be it.
+// It is also how late a start chooseTrack lets through. Every count here is of the beats of the music, 60 / the measured
+// tempo, and not of the tracker's grid, which can run at double or half time. The lead-in's edge is not the 8th beat
+// itself but LEAD_IN_EDGE_BEATS past it: 8.5 beats from the first sound, in the search and in the late-start check alike.
 const MAX_LEAD_IN_BEATS = 8;
 // The lead-in ends this far past its last beat. The grid sits a few ms before or after the first sound, so a groove on
 // beat 8 would otherwise fall on either side of the line by a hair; half a beat keeps it in and leaves beat 9 out.

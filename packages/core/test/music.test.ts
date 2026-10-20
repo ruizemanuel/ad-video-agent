@@ -309,16 +309,17 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
   });
 
   it('leaves the start on the count-in when no groove comes within 8 beats of the first sound', () => {
-    // Nine soft beats and a fill, and the groove on beat 10: nothing in the 8 beats from the first sound is both a hit
-    // and strong. The start stays on the first tick, so it is not a late start but a weak one.
+    // Nine soft beats and a fill, and the groove on beat 10: nothing in the lead-in (beats 0 to 8, which ends half a beat
+    // past beat 8, at 8.5) is both a hit and strong. The start stays on the first tick, so it is not a late start but a weak one.
     const track = measure(countIn({ ticks: range(0, 10), fill: 9, groove: 10 }));
     expect(track.firstBeat).toBeCloseTo(FIRST, 1);
     expect(verdict(track)).toEqual({ chosen: null, rejected: [{ index: 0, reason: 'weak-start' }] });
   });
 
   it('does not take a fill in the first 8 beats for the groove that comes 4 beats after it', () => {
-    // The fill on beat 6 is a hit and the loudest thing in the first 8 beats, but the groove on beat 10 is 9 dB louder and
-    // the strong beats are told from the 4 beats after those 8 too: the fill is not strong, and nothing else is a hit.
+    // The fill on beat 6 is a hit and the loudest thing in the lead-in (beats 0 to 8, edge at 8.5), but the groove on beat
+    // 10 is 9 dB louder and the strong beats are told from the 4 beats past the edge too: the fill is not strong, and
+    // nothing else is a hit.
     const track = measure(countIn({ ticks: [...range(0, 6), ...range(7, 10)], fill: 6, groove: 10 }));
     expect(track.firstBeat).toBeCloseTo(FIRST, 1);
     expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'weak-start' }]);
@@ -362,7 +363,7 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
       expect(new MusicTempo(mono, { hopSize: 441, timeStep: 0.01 }).beatInterval).toBeCloseTo(60 / 180, 2); // double time
       const track = measure(mono, 96);
       expect(track.measuredBpm).toBeCloseTo(90, 0);
-      expect(track.firstBeat).toBeCloseTo(beatAt(6, 90), 1); // 5.7 s of lead-in, not the 2.8 s of 8 tracker beats
+      expect(track.firstBeat).toBeCloseTo(beatAt(6, 90), 1); // 4.0 s after the first sound, past the 2.8 s that 8.5 tracker beats (at 180 bpm) would give
       expect(verdict(track, 96)).toEqual({ chosen: 0, rejected: [] });
     });
 
