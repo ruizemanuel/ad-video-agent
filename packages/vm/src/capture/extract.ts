@@ -374,9 +374,9 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
 /**
  * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
  * order. In pixels of the shot, measured like the boxes. A block is 40 to 98% of the screen's width (a band as wide as the
- * page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all four sides, a shadow, a
- * background color unlike the one behind it (the nearest ancestor's that is not transparent, else white), or a
- * background image.
+ * page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all four sides, a shadow that is
+ * not transparent, a background color unlike the one behind it (the nearest ancestor's that is not transparent, else
+ * white), or a background image. What is fixed or sticky, and what is in it, floats over the page: it is no card of it.
  */
 export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
   const { visible, toRgba, hex } = (window as unknown as CapWindow).__cap;
@@ -385,6 +385,22 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
   const vh = innerHeight;
   const offY = fullPage ? scrollY : 0;
   const limitH = fullPage ? Math.min(document.documentElement.scrollHeight, maxFullPagePx) : vh;
+  const floating = new Map<Element, boolean>();
+  const floats = (el: Element | null): boolean => {
+    if (!el || el === document.documentElement) return false;
+    const known = floating.get(el);
+    if (known !== undefined) return known;
+    const { position } = getComputedStyle(el);
+    const result = position === 'fixed' || position === 'sticky' || floats(el.parentElement);
+    floating.set(el, result);
+    return result;
+  };
+  // A shadow whose colors are all transparent draws nothing: a hover effect at rest, a framework's empty shadow.
+  const COLOR = /(rgba?|oklch|oklab|lab|lch|hsla?|color)\([^)]*\)|#[0-9a-f]{3,8}\b|transparent/gi;
+  const drawsShadow = (shadow: string): boolean => {
+    const colors = shadow.match(COLOR);
+    return shadow !== 'none' && (!colors || colors.some((c) => (toRgba(c)?.a ?? 0) > 0));
+  };
   const behind = (el: Element): string => {
     for (let p = el.parentElement; p; p = p.parentElement) {
       const c = toRgba(getComputedStyle(p).backgroundColor);
@@ -402,7 +418,7 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
     ];
     // A border whose style is none or hidden is computed 0 px wide.
     if (sides.every(([width, color]) => parseFloat(width) >= 1 && (toRgba(color)?.a ?? 0) > 0)) return true;
-    if (cs.boxShadow !== 'none' || cs.backgroundImage !== 'none') return true;
+    if (drawsShadow(cs.boxShadow) || cs.backgroundImage !== 'none') return true;
     const bg = toRgba(cs.backgroundColor);
     return bg !== null && bg.a > 0.5 && hex(bg) !== behind(el);
   };
@@ -414,7 +430,7 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
     const y = r.top + offY;
     const ix = Math.max(0, Math.min(vw, x + r.width) - Math.max(0, x));
     const iy = Math.max(0, Math.min(limitH, y + r.height) - Math.max(0, y));
-    if ((ix * iy) / (r.width * r.height) < 0.6 || !visible(el) || !drawsSurface(el)) continue;
+    if ((ix * iy) / (r.width * r.height) < 0.6 || !visible(el) || floats(el) || !drawsSurface(el)) continue;
     out.push({ x: Math.round(Math.max(0, x) * dpr), y: Math.round(Math.max(0, y) * dpr), w: Math.round(ix * dpr), h: Math.round(iy * dpr) });
   }
   return out;

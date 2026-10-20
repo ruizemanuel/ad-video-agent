@@ -164,7 +164,8 @@ describe('a site that is not asked to follow its links, with an extra page nobod
       for (const shotId of [`${v}-${why.id}`, `${v}-full`]) {
         const blocks = site.blocks.filter((b) => b.shotId === shotId);
         // The bordered card, the one with a shadow and the one with a background of its own, in document order. Not the
-        // band as wide as the page, the plain div, the div the color of the section or the 20 px badge.
+        // band as wide as the page, the plain div, the div the color of the section, the 20 px badge, the div whose shadow
+        // is transparent, the card stuck to the top of the screen, or the bar fixed to the screen and the card inside it.
         expect(
           blocks.map(({ x, w, h }) => ({ x, w, h })),
           shotId,
