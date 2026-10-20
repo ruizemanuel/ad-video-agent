@@ -60,8 +60,8 @@ const MIN_CONTENT = 0.3;
 // The target takes at most this share of the card.
 const TARGET_WIDTH = 0.78;
 const TARGET_HEIGHT = 0.6;
-// The opening framing sits this share of the card above the target, so the move also travels down the page to it: the
-// page moves up into place, the same way the card it is in rises.
+// The opening framing sits this share of the card above the landing one, so the move always travels down the page, and
+// as far: the page moves up into place, the same way the card it is in rises.
 const OPENING_DROP = 0.12;
 // A block is framed whole when it takes at most this share of the visible part of the card.
 const BLOCK_FIT = 0.9;
@@ -158,13 +158,15 @@ export const focusRegion = (box: Box): Box =>
 
 /**
  * The card of the page a box sits in: the smallest block of the shot that holds the box's center, when the camera can
- * frame it whole, its height at `scaleFor(block)` (card pixels per shot pixel) within 90% of the visible part of the
- * card. Undefined when there is none or it is too tall.
+ * frame it whole at `scaleFor(block)` (card pixels per shot pixel): its height within 90% of the visible part of the
+ * card, its width within the card's. Undefined when there is none or it does not fit.
  */
 const targetBlock = (box: Box, shot: Shot, format: Format, blocks: readonly Block[], scaleFor: (block: Block) => number): Block | undefined => {
-  const { focusY } = stageLayout(format);
+  const { cardW, focusY } = stageLayout(format);
   const block = blockOf(blocks, shot.id, box);
-  return block && block.h * scaleFor(block) <= BLOCK_FIT * 2 * focusY ? block : undefined;
+  if (!block) return undefined;
+  const scale = scaleFor(block);
+  return block.h * scale <= BLOCK_FIT * 2 * focusY && block.w * scale <= cardW ? block : undefined;
 };
 
 /**
@@ -231,8 +233,8 @@ const canCenter = (shot: Shot, box: Box, format: Format, boxes: readonly Box[], 
 // ---------- moves ----------
 
 /**
- * UiFocus: the camera starts wide on the real UI, a little above the target, and eases down and in to the element that
- * backs the caption, like a scroll that settles. It aims at the card of the page the element is in when it can frame it
+ * UiFocus: the camera starts wide on the real UI, a little above where it lands, and eases down and in to the element
+ * that backs the caption, like a scroll that settles. It aims at the card of the page the element is in when it can frame it
  * whole (see targetBlock), else at the element (see focusRegion). It zooms until the target takes 78% of the card's
  * width or 60% of its height, within the limits of the shot's viewport, and pans sideways only when the view gets
  * narrower than most of the content. `blocks` are the cards of the capture: a capture without them frames as before.
@@ -250,8 +252,9 @@ export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxe
   const scale = zoomFor(target);
   const pan = cardW / scale < (x1 - x0) * 0.8;
   const targetY = target.y + target.h / 2;
-  const from: Camera = { scale: 1, x: middle, y: targetY - (cardH * OPENING_DROP) / base };
   const to = avoidTopCut({ scale: scale / base, x: pan ? target.x + target.w / 2 : middle, y: targetY }, scale, shot, format, boxes, blocks, block ?? box);
+  // Anchored to the landing, not to the target: the top edge rule may move the landing up or down.
+  const from: Camera = { scale: 1, x: middle, y: to.y - (cardH * OPENING_DROP) / base };
   return { from, to };
 };
 

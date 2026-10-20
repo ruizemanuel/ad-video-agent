@@ -209,6 +209,39 @@ describe('the camera on a page with cards', () => {
     expect(move.from.y).toBeLessThan(move.to.y);
   });
 
+  it('opens above where it lands even when it lands higher, to show the card above whole', () => {
+    const target = block('m-full', 40, 2600, 700, 300);
+    const title = box('m-full', 'heading', 'Get paid your way', 80, 2630, 400, 60);
+    // Sliced in its upper half: showing it whole is the smaller move, and it lifts the landing more than the opening drop.
+    const before = block('m-full', 40, 2200, 700, 360);
+    const move = focusMove(title, phonePage, '9x16', [title], [before, target]);
+    expect(viewOf(phonePage, move.to, [title]).top).toBeLessThanOrEqual(before.y);
+    expect(move.from.y).toBeLessThan(move.to.y);
+    // The page moves up into place, the same way as the card rises.
+    const center = { x: title.x + title.w / 2, y: title.y + title.h / 2 };
+    expect(inFrame(phonePage, center, move.from, [title]).y).toBeGreaterThan(inFrame(phonePage, center, move.to, [title]).y);
+  });
+
+  it('scrolls in the same length wherever the top edge rule puts the landing', () => {
+    const plain = focusMove(heading, phonePage, '9x16', [heading], [card]);
+    const pushed = focusMove(heading, phonePage, '9x16', [heading], [above, card]);
+    // The card above was pushed out of view: the landing is lower than the card's center.
+    expect(pushed.to.y).toBeGreaterThan(plain.to.y);
+    expect(pushed.to.y - pushed.from.y).toBeCloseTo(plain.to.y - plain.from.y);
+  });
+
+  it('aims at a card only when it also fits the width of the card, else at the heading as before', () => {
+    // A desktop page whose content is a column in the middle: the base framing fills the card with that column.
+    const title = box('d-full', 'heading', 'Get paid your way', 1000, 1800, 800, 80);
+    const button = box('d-full', 'cta', 'Start free', 960, 2500, 960, 80);
+    const boxes = [title, button];
+    const narrow = block('d-full', 980, 1760, 900, 400);
+    expect(focusCamera(title, desktopPage, '16x9', boxes, [narrow]).y).toBeCloseTo(narrow.y + narrow.h / 2);
+    // As tall, but wider than the card at the landing scale: its sides would be cut.
+    const wide = block('d-full', 400, 1760, 2080, 400);
+    expect(focusCamera(title, desktopPage, '16x9', boxes, [wide])).toEqual(focusCamera(title, desktopPage, '16x9', boxes));
+  });
+
   it('takes the smallest card of the same shot that holds the target', () => {
     const panel = block('m-full', 20, 2560, 740, 640);
     const next = block('m-full', 40, 3140, 700, 400);
