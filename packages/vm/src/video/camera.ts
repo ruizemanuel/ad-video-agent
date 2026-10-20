@@ -209,7 +209,7 @@ const holds = (outer: Region, inner: Region): boolean =>
   outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.w >= inner.x + inner.w && outer.y + outer.h >= inner.y + inner.h;
 
 // How a top for the view ranks, best first, compared item by item (see avoidTopCut).
-type TopRank = [cuts: number, notWhole: number, around: number, hidden: number, distance: number];
+type TopRank = [cuts: number, notWhole: number, around: number, flush: number, hidden: number, distance: number];
 const better = (a: TopRank, b: TopRank): boolean => {
   const i = a.findIndex((value, n) => value !== b[n]);
   return i >= 0 && a[i]! < b[i]!;
@@ -222,11 +222,12 @@ const better = (a: TopRank, b: TopRank): boolean => {
  * it. A block that holds the target is the page around it, not a card above it, and may run past the edge.
  *
  * The tops it weighs are where the camera aims (held within those limits), the two limits, and for each box and block of
- * the shot the one that shows it whole and the one that pushes it out of view, 24 px clear of it. Of those, the one that
- * slices the fewest boxes and blocks; then one that keeps `target` whole above the platform UI; then the one that
- * slices the fewest blocks around the target; then the one that hides the least of the target; then the nearest. The
- * top of the shot slices nothing, so the top edge always ends clean: when no clean top keeps the target whole (it sits
- * too near the end of the shot, or is taller than the view), the target gives way, as little as it can.
+ * the shot the one that shows it whole and the one that pushes it out of view, 24 px clear of it, or else flush with
+ * it (cards closer together than that). Of those, the one that slices the fewest boxes and blocks; then one that keeps
+ * `target` whole above the platform UI; then the one that slices the fewest blocks around the target; then one 24 px
+ * clear; then the one that hides the least of the target; then the nearest. The top of the shot slices nothing, so the
+ * top edge always ends clean: when no clean top keeps the target whole (it sits too near the end of the shot, or is
+ * taller than the view), the target gives way, as little as it can.
  */
 const avoidTopCut = (
   camera: Camera,
@@ -245,17 +246,18 @@ const avoidTopCut = (
   const aimed = camera.y - focusY / scale;
   const start = Math.min(Math.max(aimed, 0), lowest);
   const hidden = (top: number): number => (target ? Math.min(target.h, Math.max(0, top - target.y) + Math.max(0, target.y + target.h - (top + visible))) : 0);
-  const rank = (top: number): TopRank => {
+  const rank = ({ top, flush }: { top: number; flush: boolean }): TopRank => {
     const sliced = top <= 0 ? [] : own.filter((r) => r.y < top && r.y + r.h > top);
     const cutAround = sliced.filter((r) => around.has(r)).length;
     const lost = hidden(top);
-    return [sliced.length - cutAround, lost > 0 ? 1 : 0, cutAround, lost, Math.abs(top - start)];
+    return [sliced.length - cutAround, lost > 0 ? 1 : 0, cutAround, flush ? 1 : 0, lost, Math.abs(top - start)];
   };
   const clear = [start, 0, ...(Number.isFinite(lowest) ? [lowest] : []), ...own.flatMap((r) => [r.y - TOP_CUT_MARGIN, r.y + r.h + TOP_CUT_MARGIN])];
+  const flush = own.flatMap((r) => [r.y, r.y + r.h]);
   // The first of equals is kept, and the first is where the camera aims.
-  const best = clear
-    .filter((top) => top >= 0 && top <= lowest)
-    .map((top) => ({ top, rank: rank(top) }))
+  const best = [...clear.map((top) => ({ top, flush: false })), ...flush.map((top) => ({ top, flush: true }))]
+    .filter(({ top }) => top >= 0 && top <= lowest)
+    .map((candidate) => ({ top: candidate.top, rank: rank(candidate) }))
     .reduce((kept, candidate) => (better(candidate.rank, kept.rank) ? candidate : kept)).top;
   // A camera aimed above the top of the shot is left as it is: placeShot shows the top of the shot either way, and the
   // opening above it too. One aimed below `lowest` lands where the view stops, so the opening is measured from there.

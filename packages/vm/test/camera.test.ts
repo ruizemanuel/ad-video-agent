@@ -402,6 +402,19 @@ describe('the camera near the end of a shot', () => {
     expect(view.top).toBeCloseTo(to.y - stageLayout('9x16').focusY / placeShot(filmed, to, '9x16', store.boxes).scale);
   });
 
+  it('sits flush on the card above when the cards are closer together than its margin, to keep the target whole', () => {
+    // The product rows of cobrame.app's hero on the phone page, 22 px apart in a panel, in 4x5.
+    const panel = block('m-full', 56, 1215, 668, 943);
+    const rows = [block('m-full', 102, 1427, 576, 229), block('m-full', 102, 1678, 576, 229), block('m-full', 102, 1929, 576, 183)];
+    const prices = rows.map((row, i) => box('m-full', 'price', `Product ${i + 1} $ ${i + 4}.500`, 244, row.y + 26, 212, row.h - 52));
+    const target = prices[2]!;
+    for (const piece of pieces) {
+      const view = viewOf(phonePage, moveOf(piece)(target, phonePage, '4x5', prices, [panel, ...rows]).to, prices, '4x5');
+      expect(nothingSliced(view, [...rows, ...prices])).toEqual([]);
+      expect(shows(view, rows[2]!)).toBe(true);
+    }
+  });
+
   it('starts a picture taller than the view at the top edge rather than cutting it there', () => {
     // A 16x9 product picture (the demo store's, on the desktop page) that no framing shows whole above the platform UI.
     const picture = box('d-full', 'image', '', 962, 1467, 956, 598);
