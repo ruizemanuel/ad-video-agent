@@ -290,7 +290,7 @@ describe('the camera on a page with cards', () => {
     expect(shows(view, target)).toBe(true);
   });
 
-  it('clears what it can when nothing clears everything: a panel around the cards runs past the top edge anyway', () => {
+  it('lets a panel around the card it aims at run past the top edge, and clears the card above', () => {
     const panel = block('m-full', 20, 1800, 740, 1500);
     const view = viewOf(phonePage, focusCamera(heading, phonePage, '9x16', [heading], [panel, above, card]), [heading]);
     expect(slices(view, panel)).toBe(true);
@@ -307,6 +307,113 @@ describe('the camera on a page with cards', () => {
     // ...but not the card it is in, which runs on lower: the shot would end first.
     const cards = [block('m-s2', 40, 680, 700, 600), block('m-full', 40, 2680, 700, 600)];
     expect(focusShot(site([phoneScreen, phonePage], boxes, cards), uiScene('UiFocus', 'm-s2', 0), '9x16')).toEqual({ shot: phonePage, box: onPage });
+  });
+});
+
+describe('the camera near the end of a shot', () => {
+  // placeShot never shows past the bottom of a shot: a landing near its end is pulled up until the shot fills the card,
+  // so the view the frame shows starts higher than the one the camera aimed at. Every view here is the one placeShot
+  // really shows (see viewOf), and so is every slice.
+  const formats = ['9x16', '4x5', '16x9'] as const;
+  const pieces = ['UiFocus', 'UiScroll'] as const;
+  const moveOf = (piece: (typeof pieces)[number]) => (piece === 'UiFocus' ? focusMove : scrollMove);
+  const nothingSliced = (view: { top: number }, regions: readonly { y: number; h: number }[]) => regions.filter((r) => slices(view, r));
+
+  for (const format of formats) {
+    for (const piece of pieces) {
+      it(`${piece} in ${format}: the end of the shot pulls the view up, and the top edge of that view still slices nothing`, () => {
+        const desktop = format === '16x9';
+        const page = shot(desktop ? 'd-full' : 'm-full', desktop ? 'desktop' : 'mobile', 3000);
+        // The content is a column x..x+w: on a desktop page its boxes tell the camera so, and it fills the card's width.
+        const [x, w] = desktop ? [400, 2080] : [40, 700];
+        const stage = stageLayout(format);
+        const scale = placeShot(page, { scale: 1, x: 0, y: 0 }, format, [box(page.id, 'heading', '', x, 0, w, 10), box(page.id, 'heading', '', x, 0, w, 10)]).scale;
+        const visible = (2 * stage.focusY) / scale;
+        // The lowest the top of the view can go: there the shot ends at the bottom of the card.
+        const lowest = page.height - stage.cardH / scale;
+        // A card that ends 80 px above the platform UI when the view is that low: it can be shown whole, but not held at
+        // the focus point.
+        const card = block(page.id, x, lowest + visible - 80 - 240, w, 240);
+        const title = box(page.id, 'heading', 'Get paid your way', x, card.y + 30, w, 60);
+        // A label right where the end of the shot pulls the top edge up to.
+        const label = box(page.id, 'heading', 'Popular', x, lowest - 20, w, 40);
+        const boxes = [label, title];
+        // Aimed at the card's center, the top edge would be under the label: measured there, there is nothing to clear.
+        expect(card.y + card.h / 2 - stage.focusY / scale).toBeGreaterThan(label.y + label.h + 60);
+
+        const move = moveOf(piece)(title, page, format, boxes, [card]);
+        const view = viewOf(page, move.to, boxes, format);
+        expect(placeShot(page, move.to, format, boxes).scale).toBeCloseTo(scale);
+        expect(nothingSliced(view, [label, title, card])).toEqual([]);
+        expect(shows(view, card)).toBe(true);
+        // The camera lands where the view is: placeShot does not have to pull it up.
+        expect(view.top).toBeCloseTo(move.to.y - stage.focusY / scale);
+        if (piece === 'UiFocus') {
+          // So the scroll-in the frame shows is as long as the camera's, and goes down the page.
+          expect(move.to.y - move.from.y).toBeGreaterThan(0);
+          expect(view.top - viewOf(page, move.from, boxes, format).top).toBeCloseTo(move.to.y - move.from.y);
+        }
+      });
+    }
+  }
+
+  // The demo store of paid run 5 (cobrame.app's demo page, 9x16): a column of product cards that ends 79 px above the end
+  // of the phone page, each with its price and button in a box along its bottom. In 9x16 the card runs 420 px under the
+  // platform UI, so the last 341 px of a phone page never get above it.
+  const storePage = shot('x1-m-full', 'mobile', 3072);
+  const storeCards = [
+    block('x1-m-full', 32, 562, 716, 719),
+    block('x1-m-full', 32, 1312, 716, 719),
+    block('x1-m-full', 32, 2063, 716, 274),
+    block('x1-m-full', 32, 2368, 716, 274),
+    block('x1-m-full', 32, 2674, 716, 319),
+  ];
+  const priceRow = (shotId: string, sectionId: string, text: string, y: number): Box => ({ shotId, sectionId, kind: 'price', text, x: 66, y, w: 648, h: 80 });
+  const storePrices = [
+    priceRow('x1-m-full', 's14', '$ 4.500 Agregar', 1166),
+    priceRow('x1-m-full', 's15', '$ 8.900 Agregar', 1917),
+    priceRow('x1-m-full', 's16', '$ 3.000 Agregar', 2222),
+    priceRow('x1-m-full', 's18', '$ 15.000 Pedir', 2879),
+  ];
+
+  it('scrolls to the last card of a short page with the top edge clean, though that card cannot get above the platform UI', () => {
+    const last = storePrices[3]!;
+    const { from, to } = scrollMove(last, storePage, '9x16', storePrices, storeCards);
+    const view = viewOf(storePage, to, storePrices);
+    // Run 5's body[0]: the camera aimed below the second card, and the end of the page pulled the view up through its price.
+    expect(nothingSliced(view, [...storeCards, ...storePrices])).toEqual([]);
+    expect(view.top).toBeCloseTo(to.y - stageLayout('9x16').focusY / placeShot(storePage, to, '9x16', storePrices).scale);
+    expect(to.y).toBeGreaterThan(from.y);
+  });
+
+  it('frames the full page it takes from a one-screen shot with the top edge clean', () => {
+    // The phone screen of s15: the same store, 1384 px down the page, from the bottom of s15's picture to below s18's price.
+    const screen = shot('x1-m-s15', 'mobile', 1688, 's15');
+    const screenCards = [block('x1-m-s15', 32, 0, 716, 647), block('x1-m-s15', 32, 679, 716, 274), block('x1-m-s15', 32, 984, 716, 274), block('x1-m-s15', 32, 1290, 716, 319)];
+    const screenPrices = [priceRow('x1-m-s15', 's15', '$ 8.900 Agregar', 533), priceRow('x1-m-s15', 's16', '$ 3.000 Agregar', 838), priceRow('x1-m-s15', 's18', '$ 15.000 Pedir', 1495)];
+    const store = site([screen, storePage], [...screenPrices, ...storePrices], [...screenCards, ...storeCards]);
+    // Run 5's body[4]: UiFocus on s16's price in the phone screen, which cannot center its card and takes the full page.
+    const { shot: filmed, box: target } = focusShot(store, uiScene('UiFocus', 'x1-m-s15', 1), '9x16');
+    expect(filmed.id).toBe('x1-m-full');
+    expect(target).toEqual(storePrices[2]);
+    const { to } = focusMove(target, filmed, '9x16', store.boxes, store.blocks);
+    const view = viewOf(filmed, to, store.boxes);
+    expect(nothingSliced(view, [...storeCards, ...storePrices])).toEqual([]);
+    expect(view.top).toBeCloseTo(to.y - stageLayout('9x16').focusY / placeShot(filmed, to, '9x16', store.boxes).scale);
+  });
+
+  it('starts a picture taller than the view at the top edge rather than cutting it there', () => {
+    // A 16x9 product picture (the demo store's, on the desktop page) that no framing shows whole above the platform UI.
+    const picture = box('d-full', 'image', '', 962, 1467, 956, 598);
+    const boxes = [box('d-full', 'heading', 'Demo shop', 962, 300, 956, 64), picture];
+    for (const piece of pieces) {
+      const view = viewOf(desktopPage, moveOf(piece)(picture, desktopPage, '16x9', boxes).to, boxes, '16x9');
+      expect(view.bottom - view.top).toBeLessThan(picture.h);
+      expect(slices(view, picture)).toBe(false);
+      // Its top in view, near the edge.
+      expect(picture.y).toBeGreaterThanOrEqual(view.top);
+      expect(picture.y - view.top).toBeLessThan(0.1 * (view.bottom - view.top));
+    }
   });
 });
 
