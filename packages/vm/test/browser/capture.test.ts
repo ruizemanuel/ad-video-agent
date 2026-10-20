@@ -2,7 +2,7 @@
 // The first run downloads chrome-headless-shell, and the fonts come from Google Fonts, so it needs the network.
 // A capture takes half a minute, so the describes below share one capture each.
 import { ensureBrowser } from '@remotion/renderer';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureInput, CaptureResult } from '@app/core';
@@ -74,10 +74,15 @@ describe('capture', () => {
     expect(r).toMatchObject({ ok: false, code: 'error', message: expect.stringContaining('no text') });
   });
 
-  it('fails a capture whose sections lost the text the page shows, saying how much it read of how much', async () => {
+  it('fails a capture whose sections lost the text the page shows, saying how much it read of how much, before the phone pass', async () => {
     // The page shows 100 words, 91 of them in a menu the capture does not read: its one section holds 9.
-    const r = await capture({ url: `${fixtureUrl}thin.html`, extraUrls: [], followDemoLinks: 0 }, runDir());
+    const dir = runDir();
+    const r = await capture({ url: `${fixtureUrl}thin.html`, extraUrls: [], followDemoLinks: 0 }, dir);
     expect(r).toEqual({ ok: false, code: 'error', message: 'The capture read 9 words of the 100 the page shows: too little to write from.' });
+    // It fails as soon as the desktop pass has read the text: the phone is not filmed for an order that is refunded.
+    const shots = readdirSync(join(dir, 'media')).filter((name) => name.endsWith('.png'));
+    expect(shots).toContain('d-full.png');
+    expect(shots.filter((name) => name.startsWith('m-'))).toEqual([]);
   });
 });
 

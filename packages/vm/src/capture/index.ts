@@ -127,8 +127,11 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
   lap('logo-og');
 }
 
-/** `anchors` and `pageWords` (the words the page shows) are read on the site's own page; an extra page has none. */
-type PageOutcome = { blocked: true } | { blocked: false; anchors: Anchor[]; pageWords: number };
+/**
+ * How the capture of a page ended: `blocked` (a wall instead of the site), `failed` (the site's own page gave no text to
+ * write from) or `read`, with the links of the site's own page (none for an extra page).
+ */
+type PageOutcome = { status: 'blocked' } | { status: 'failed'; message: string } | { status: 'read'; anchors: Anchor[] };
 
 /** The words of a text: what stands between spaces and holds a letter or a digit. */
 export const countWords = (text: string): number => text.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
@@ -200,7 +203,7 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
     lap(`${prefix}open-desktop`);
     if (own) {
       const seen = await desktop.page.evaluate(inPageSeen);
-      if (detectBlocked({ ...seen, status: desktop.status })) return { blocked: true };
+      if (detectBlocked({ ...seen, status: desktop.status })) return { status: 'blocked' };
       pageWords = countWords(seen.text);
       anchors = await desktop.page.evaluate(inPageAnchors);
     } else {
@@ -221,6 +224,17 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
     lap(`${prefix}shots-desktop`);
   } finally {
     await desktop.page.close().catch(() => {});
+  }
+
+  // The site's own page fails here, before the phone pass, when it gave no text to write from: the order is refunded,
+  // and does not pay for the phone's capture as well.
+  if (own) {
+    if (site.sections.length === 0) return { status: 'failed', message: 'The page has no text to read.' };
+    const thin = thinCaptureMessage(
+      site.sections.reduce((words, s) => words + countWords(s.heading) + countWords(s.text), 0),
+      pageWords,
+    );
+    if (thin !== null) return { status: 'failed', message: thin };
   }
 
   // The phone: the sections are found again by their heading, and get the ids the desktop gave them.
@@ -245,7 +259,7 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   } finally {
     await mobile.page.close().catch(() => {});
   }
-  return { blocked: false, anchors, pageWords };
+  return { status: 'read', anchors };
 }
 
 /** The address as a full http or https address, or null: a file, a script, ftp or text that is no address is not a page to film. */
@@ -288,10 +302,10 @@ export function pickExtraPages(mainUrl: string, demoLinks: readonly string[], ex
 /**
  * Captures the site into `runDir`. A challenge page instead of the site is `blocked`, an address that cannot be
  * reached is `unreachable`, and a capture whose sections lost the text the page shows is an `error` (see
- * thinCaptureMessage): it is given back before any model is paid to read it. The extra pages (demo links the site
- * shows, `extraUrls`) are best effort: one that fails, is a wall for automated visitors or answers with an error (see
- * checkExtraPage) is left out and noted. `metadataBlocked` says whether this VM is shut away from the cloud's metadata
- * server.
+ * thinCaptureMessage): it is given back right after the desktop pass, before the phone is filmed and before any model
+ * is paid to read it. The extra pages (demo links the site shows, `extraUrls`) are best effort: one that fails, is a
+ * wall for automated visitors or answers with an error (see checkExtraPage) is left out and noted. `metadataBlocked`
+ * says whether this VM is shut away from the cloud's metadata server.
  */
 export async function capture(input: CaptureInput, runDir: string): Promise<CaptureResult> {
   // The browser would open a file: address as readily as a web one.
@@ -323,13 +337,8 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
     const ctx: Context = { browser, runDir, site, log, lap };
 
     const own = await capturePage(ctx, input.url, '');
-    if (own.blocked) return { ok: false, code: 'blocked', message: BLOCKED_MESSAGE };
-    if (site.sections.length === 0) return { ok: false, code: 'error', message: 'The page has no text to read.' };
-    const thin = thinCaptureMessage(
-      site.sections.reduce((words, s) => words + countWords(s.heading) + countWords(s.text), 0),
-      own.pageWords,
-    );
-    if (thin !== null) return { ok: false, code: 'error', message: thin };
+    if (own.status === 'blocked') return { ok: false, code: 'blocked', message: BLOCKED_MESSAGE };
+    if (own.status === 'failed') return { ok: false, code: 'error', message: own.message };
 
     const demo = input.followDemoLinks > 0 ? findDemoLinks(own.anchors, input.url, Math.min(input.followDemoLinks, MAX_FOLLOWED_LINKS)) : [];
     const { pages: extras, ignored } = pickExtraPages(input.url, demo, input.extraUrls);
