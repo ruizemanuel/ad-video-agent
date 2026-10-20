@@ -69,6 +69,8 @@ const OPENING_DROP = 0.12;
 // A block is framed whole when it takes at most this share of the visible part of the card.
 const BLOCK_FIT = 0.9;
 const TOP_CUT_MARGIN = 24;
+// How far from a window of tops a region can be and still give a top in it (see avoidTopCut): its margin, and a pixel more.
+const SOURCE_REACH = TOP_CUT_MARGIN + 1;
 
 // ---------- which shot ----------
 
@@ -132,14 +134,21 @@ export type ShotPick = Pick<Scene, 'shotId' | 'boxIndex'>;
  * A take of the full page is kept as it is: there the first look-alike of the section could be another element.
  */
 export const focusShot = (site: SiteData, scene: ShotPick, format: Format): Take => {
+  const { shot, box } = focusTake(site, scene, format);
+  return { shot, box };
+};
+
+/** focusShot's take, with the landing it weighed on that take when it did: framesCleanly needs it and need not weigh it again. */
+const focusTake = (site: SiteData, scene: ShotPick, format: Format): Take & { landing?: Landing } => {
   const take = resolveShot(site, scene.shotId, scene.boxIndex, format);
   if (!take.box) return take;
-  const keeps = canCenter(take.shot, take.box, format, site.boxes, site.blocks) && focusLanding(take.box, take.shot, format, site.boxes, site.blocks).clean;
-  if (keeps) return take;
+  const landing = canCenter(take.shot, take.box, format, site.boxes, site.blocks) ? focusLanding(take.box, take.shot, format, site.boxes, site.blocks) : undefined;
+  const kept = { ...take, landing };
+  if (landing?.clean) return kept;
   const full = fullShotOf(site, take.shot);
-  if (!full || full.id === take.shot.id) return take;
+  if (!full || full.id === take.shot.id) return kept;
   const match = sameElement(site, full, take.box);
-  return match ? { shot: full, box: match } : take;
+  return match ? { shot: full, box: match } : kept;
 };
 
 /** UiScroll: a scroll wants a page, so a one-screen pick becomes the full page of the viewport the format films. */
@@ -232,6 +241,39 @@ const holds = (outer: Region, inner: Region): boolean =>
 const cutAt = (region: Region, top: number): boolean =>
   (region.clippedTop === true || region.y < top - EDGE_TOLERANCE) && region.y + region.h > top + EDGE_TOLERANCE;
 
+/** How many of the sorted `values` are below `limit` (`orEqual`: at most `limit`). */
+const countBelow = (values: readonly number[], limit: number, orEqual = false): number => {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (values[middle]! < limit || (orEqual && values[middle] === limit)) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
+/**
+ * Counts the regions among `regions` that the top edge of a view at `top` cuts (see cutAt), each count in log time: those
+ * that begin above the edge, less those of them that end above it too. A region that ends above the edge without
+ * beginning above it lies within the tolerance band, 1 px tall: the few regions 2 px tall or less (float noise aside)
+ * are counted one by one.
+ */
+const cutCounter = (regions: readonly Region[]): ((top: number) => number) => {
+  const clipped = regions.filter((r) => r.clippedTop === true);
+  const rest = regions.filter((r) => r.clippedTop !== true);
+  const starts = rest.map((r) => r.y).sort((a, b) => a - b);
+  const ends = rest.map((r) => r.y + r.h).sort((a, b) => a - b);
+  const thin = rest.filter((r) => r.h <= 4 * EDGE_TOLERANCE);
+  return (top) => {
+    const above = top - EDGE_TOLERANCE;
+    const below = top + EDGE_TOLERANCE;
+    const begun = countBelow(starts, above);
+    const ended = countBelow(ends, below, true) - thin.filter((r) => r.y >= above && r.y + r.h <= below).length;
+    return begun - ended + clipped.filter((r) => r.y + r.h > below).length;
+  };
+};
+
 /** Whether the target is whole in a view from `top`, `visible` shot pixels tall (no target: nothing to keep). */
 const wholeIn = (target: Region | undefined, top: number, visible: number): boolean =>
   !target || (!cutAt(target, top) && target.y >= top - EDGE_TOLERANCE && target.y + target.h <= top + visible + EDGE_TOLERANCE);
@@ -278,33 +320,76 @@ type TopCut = {
  * the platform UI; then one 24 px clear; then the one that hides the least of the target; then the nearest to where the
  * camera aims. When no clean top keeps the target whole (it sits too near the end of the shot, or is taller than the
  * view), the target gives way, as little as it can.
+ *
+ * A long page has hundreds of boxes, so the tops are weighed a window at a time, against the regions near the window
+ * alone. A top outside a window that holds every top showing part of the target keeps none of it whole and hides all of
+ * it; and one outside a window around where the camera aims is farther from there than the window reaches. So when the
+ * best top of a window ranks at least as well as the best a top outside it could, it is the best of all. The first window
+ * is the tops that show part of the target (or just where the camera aims, with no target); each next one adds a reach
+ * around where the camera aims, doubled each time, until it holds every top.
  */
 const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowest = lowestTop(shot, scale, format) }: TopCut): Camera => {
   const { focusY } = stageLayout(format);
   const visible = (2 * focusY) / scale;
-  const own: Region[] = [...boxes, ...blocks].filter((r) => r.shotId === shot.id);
+  const own: Region[] = [...boxes.filter((r) => r.shotId === shot.id), ...blocks.filter((r) => r.shotId === shot.id)];
   const kept = obstacles(shot, boxes, blocks, target);
   const aimed = camera.y - focusY / scale;
   const start = Math.min(Math.max(aimed, 0), lowest);
   const hidden = (top: number): number => (target ? Math.min(target.h, Math.max(0, top - target.y) + Math.max(0, target.y + target.h - (top + visible))) : 0);
-  const rank = ({ top, flush }: { top: number; flush: boolean }): TopRank => [
-    kept.filter((r) => cutAt(r, top)).length,
+  const rank = (cuts: (top: number) => number, top: number, flush: boolean): TopRank => [
+    cuts(top),
     wholeIn(target, top, visible) ? 0 : 1,
     flush ? 1 : 0,
     hidden(top),
     Math.abs(top - start),
   ];
-  const clear = [start, 0, ...(Number.isFinite(lowest) ? [lowest] : []), ...own.flatMap((r) => [r.y - TOP_CUT_MARGIN, r.y + r.h + TOP_CUT_MARGIN])];
-  const flush = own.flatMap((r) => [r.y, r.y + r.h]);
-  // The first of equals is kept, and the first is where the camera aims.
-  const best = [...clear.map((top) => ({ top, flush: false })), ...flush.map((top) => ({ top, flush: true }))]
-    .filter(({ top }) => top >= 0 && top <= lowest)
-    .map((candidate) => ({ top: candidate.top, rank: rank(candidate) }))
-    .reduce((winner, candidate) => (better(candidate.rank, winner.rank) ? candidate : winner)).top;
+  /**
+   * The best top in [from, to], weighing only the regions whose tops can fall there (`sources`, by the margins of the tops
+   * each gives) and the regions a top there can cut (counted by `cuts`). Undefined when no top lies there.
+   */
+  const bestIn = (from: number, to: number): { top: number; rank: TopRank } | undefined => {
+    const sources = own.filter((r) => r.y + r.h >= from - SOURCE_REACH && r.y <= to + SOURCE_REACH);
+    const cuts = cutCounter(kept.filter((r) => r.y + r.h > from && (r.clippedTop === true || r.y < to)));
+    const low = Math.max(0, from);
+    const high = Math.min(lowest, to);
+    let winner: { top: number; rank: TopRank } | undefined;
+    const weigh = (top: number, flush: boolean): void => {
+      if (top < low || top > high) return;
+      const candidate = { top, rank: rank(cuts, top, flush) };
+      if (!winner || better(candidate.rank, winner.rank)) winner = candidate;
+    };
+    // The first of equals is kept, and the first is where the camera aims; the tops 24 px clear come before the flush ones.
+    weigh(start, false);
+    weigh(0, false);
+    if (Number.isFinite(lowest)) weigh(lowest, false);
+    for (const r of sources) {
+      weigh(r.y - TOP_CUT_MARGIN, false);
+      weigh(r.y + r.h + TOP_CUT_MARGIN, false);
+    }
+    for (const r of sources) {
+      weigh(r.y, true);
+      weigh(r.y + r.h, true);
+    }
+    return winner;
+  };
+  // The lowest top there is to weigh: past it, a window holds every top.
+  const last = Number.isFinite(lowest) ? lowest : own.reduce((max, r) => Math.max(max, r.y + r.h + TOP_CUT_MARGIN), start);
+  let from = target ? target.y - visible - 1 : start;
+  let to = target ? target.y + target.h + 1 : start;
+  let best: { top: number; rank: TopRank } | undefined;
+  for (let reach = visible; ; reach *= 2) {
+    best = bestIn(from, to);
+    const near = start >= from && start <= to ? Math.min(start - from, to - start) : -1;
+    // The best rank a top outside the window could have; one inside that ranks as well or better wins.
+    const outside: TopRank = [0, target ? 1 : 0, 0, target ? target.h : 0, near];
+    if (best && (!better(outside, best.rank) || (from <= 0 && to >= last))) break;
+    from = Math.min(from, start - reach);
+    to = Math.max(to, start + reach);
+  }
   // A camera aimed above the top of the shot is left as it is: placeShot shows the top of the shot either way, and the
   // opening above it too. One aimed below `lowest` lands where the view stops, so the opening is anchored to the landing
   // the frame shows.
-  return best === start && aimed <= start ? camera : { ...camera, y: best + focusY / scale };
+  return best.top === start && aimed <= start ? camera : { ...camera, y: best.top + focusY / scale };
 };
 
 /**
@@ -426,7 +511,10 @@ export const framesCleanly = (site: SiteData, { piece, shotId, boxIndex }: UiPic
   const shot = site.shots.find((s) => s.id === shotId);
   const box = shot && boxIndex !== undefined ? site.boxes.filter((b) => b.shotId === shot.id)[boxIndex] : undefined;
   if (!box) return false;
-  const take = piece === 'UiScroll' ? scrollShot(site, { shotId, boxIndex }, format) : focusShot(site, { shotId, boxIndex }, format);
-  const landing = piece === 'UiScroll' ? scrollLanding : focusLanding;
-  return take.box !== undefined && landing(take.box, take.shot, format, site.boxes, site.blocks).clean;
+  if (piece === 'UiScroll') {
+    const take = scrollShot(site, { shotId, boxIndex }, format);
+    return take.box !== undefined && scrollLanding(take.box, take.shot, format, site.boxes, site.blocks).clean;
+  }
+  const { landing, ...take } = focusTake(site, { shotId, boxIndex }, format);
+  return (landing ?? focusLanding(take.box, take.shot, format, site.boxes, site.blocks)).clean;
 };

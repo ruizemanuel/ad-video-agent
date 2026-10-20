@@ -424,6 +424,40 @@ describe('siteForModel', () => {
       expect(siteForModel(textOnly()).shots.find((s) => s.id === 'm-s7')?.boxes.map((b) => b.boxIndex)).toEqual([0, 1]));
   });
 
+  it('builds the model site of a dense store catalog in well under a second', () => {
+    // 100 product cards stacked down the full page of each viewport, each with a picture, a name, a price and a button:
+    // 800 boxes and 200 cards, every box a product box the camera is asked to frame.
+    const H = 16000;
+    const step = Math.floor((H - 200) / 100);
+    const catalog: SiteData = {
+      ...site,
+      shots: [
+        { id: 'm-full', file: 'media/m-full.png', viewport: 'mobile', dpr: 2, width: 780, height: H },
+        { id: 'd-full', file: 'media/d-full.png', viewport: 'desktop', dpr: 2, width: 2880, height: H },
+      ],
+      boxes: ['m-full', 'd-full'].flatMap((shotId) =>
+        Array.from({ length: 100 }, (_, i): SiteData['boxes'] => {
+          const y = 100 + i * step;
+          const sectionId = `s${i}`;
+          return [
+            { shotId, sectionId, kind: 'image', x: 40, y: y + 8, w: 700, h: 56 },
+            { shotId, sectionId, kind: 'heading', text: `Item ${i}`, x: 60, y: y + 70, w: 400, h: 20 },
+            { shotId, sectionId, kind: 'price', text: `$ ${i}.000`, x: 60, y: y + 96, w: 200, h: 20 },
+            { shotId, sectionId, kind: 'cta', text: 'Agregar', x: 400, y: y + 96, w: 200, h: 24 },
+          ];
+        }).flat(),
+      ),
+      blocks: ['m-full', 'd-full'].flatMap((shotId) => Array.from({ length: 100 }, (_, i) => ({ shotId, x: 32, y: 100 + i * step, w: 716, h: step - 30 }))),
+    };
+    const started = performance.now();
+    const view = siteForModel(catalog);
+    const took = performance.now() - started;
+    expect(view.shots.flatMap((s) => s.boxes)).toHaveLength(800);
+    expect(view.shots.flatMap((s) => s.boxes).filter((b) => b.product).length).toBeGreaterThan(700);
+    // A budget with room for a slow CI machine: it takes a few tens of milliseconds on a laptop.
+    expect(took).toBeLessThan(1500);
+  }, 60_000);
+
   it('says "whole page" for a shot of no section', () => {
     const whole: SiteData = { ...site, shots: [{ id: 's0-full', file: 'media/s0-full.png', viewport: 'mobile', dpr: 2, width: 780, height: 6000 }] };
     expect(siteForModel(whole).shots[0]?.sectionId).toBe('whole page');

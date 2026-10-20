@@ -712,3 +712,18 @@ describe('the take UiFocus films', () => {
     expect(focusShot(grid, uiScene('UiFocus', 'm-full', 1), '9x16')).toEqual({ shot: page, box: { ...second, sectionId: 's1' } });
   });
 });
+
+describe('the top edge rule on a long page', () => {
+  it('weighs the whole page when no top near the target is clean: a card beside the target that spans every view of it is left whole', () => {
+    // A tall card down the left of the page, and a price beside it: every view that shows the price cuts the card.
+    const card = block('m-full', 0, 600, 300, 2000);
+    const price = box('m-full', 'price', '$ 4.500', 400, 1500, 300, 60);
+    const landing = focusLanding(price, phonePage, '9x16', [price], [card]);
+    const view = viewOf(phonePage, landing.camera, [price]);
+    // The top edge goes up to 24 px above the card, the clean top nearest to where the camera aimed, and the price gives way.
+    expect(slices(view, card)).toBe(false);
+    expect(view.top).toBeCloseTo(card.y - 24);
+    expect(shows(view, price)).toBe(false);
+    expect(landing.clean).toBe(false);
+  });
+});
