@@ -86,6 +86,9 @@ export type TrackMeasure = {
   audioStart?: number;
   // How many of the tracker's beats were left out of the grid as off the groove (see fitBeats). Absent from older measures.
   droppedBeats?: number;
+  // The largest step the pulse takes inside the part of the track the video plays, in ms (see largestJump): a track that
+  // skips once and stays off the grid after it. Absent from older measures, which count as 0.
+  maxJumpMs?: number;
 };
 
 // The tracker finds the tempo from the first 25 s: what a video of this product uses of the track.
@@ -99,6 +102,9 @@ const FRAME_SECONDS = 0.01;
 const MAX_BEAT_OFFSET = 1 / 8;
 // The share of the tracker's beats, counted from the first, that may be left out of the grid: how the track opens.
 const MAX_DROPPED_SHARE = 0.15;
+// How many beats on each side of a split the pulse is told from when looking for a jump: the median of 4 beats shrugs off
+// one beat that strays, and still moves with a pulse that has stepped (see largestJump).
+const JUMP_WINDOW_BEATS = 4;
 // A sample above this level is sound; below it is the digital silence Lyria puts before some tracks.
 const AUDIBLE_DBFS = -60;
 // How near a beat of the grid the tracker must have heard an onset for that beat to be a hit, in seconds.
@@ -136,6 +142,8 @@ const rmsDb = (mono: Float32Array, sampleRate: number, from: number, to: number)
 
 type Beat = { index: number; time: number };
 type Line = { phase: number; slope: number; deviations: number[] };
+// A beat of the fit and how far it is off the grid, in seconds.
+type FittedBeat = { time: number; deviation: number };
 
 // A least-squares line through beats numbered by their place in the tracker's list (time = phase + slope * index), and
 // how far each beat is off it.
@@ -159,7 +167,7 @@ const lineThrough = (beats: Beat[]): Line => {
 // first 15 % of the beats (MAX_DROPPED_SHARE) is more than MAX_BEAT_OFFSET of a beat off the line, the one furthest off
 // is left out and the line fitted again. Only the opening is forgiven: a beat off the grid later in the track counts,
 // however few there are. The residual is the root mean square of what the kept beats are off the line.
-const fitBeats = (times: number[]): { phase: number; slope: number; residual: number; dropped: number } => {
+const fitBeats = (times: number[]): { phase: number; slope: number; residual: number; dropped: number; fitted: FittedBeat[] } => {
   const opening = Math.floor(times.length * MAX_DROPPED_SHARE);
   let kept: Beat[] = times.map((time, index) => ({ index, time }));
   for (;;) {
@@ -173,10 +181,34 @@ const fitBeats = (times: number[]): { phase: number; slope: number; residual: nu
     });
     if (worst < 0) {
       const residual = Math.sqrt(deviations.reduce((sum, x) => sum + x ** 2, 0) / kept.length);
-      return { phase, slope, residual, dropped: times.length - kept.length };
+      const fitted = kept.map(({ time }, i) => ({ time, deviation: deviations[i] ?? 0 }));
+      return { phase, slope, residual, dropped: times.length - kept.length, fitted };
     }
     kept = kept.filter((_, i) => i !== worst);
   }
+};
+
+const median = (xs: number[]): number => {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+};
+
+// The largest step the pulse takes between `from` and `to` (seconds in the file), in seconds: a track that skips once and
+// then keeps its new place: the cuts of the video sit on the grid, so on one side of the skip they fall off the beat. It looks at
+// the beats of the fit (the kept ones, which are those of the first ANALYSIS_SECONDS) in that stretch, each one's
+// deviation from the grid, and at every split with JUMP_WINDOW_BEATS beats on each side takes the difference between the
+// median deviation after it and the median before it. The residual cannot tell: it spreads one step over the whole fit
+// (a 40 ms step reads as about 20 ms), and a step is a jump however the rest of the track sits on the grid.
+const largestJump = (fitted: FittedBeat[], from: number, to: number): number => {
+  const deviations = fitted.filter(({ time }) => time >= from && time <= to).map(({ deviation }) => deviation);
+  let largest = 0;
+  for (let split = JUMP_WINDOW_BEATS; split + JUMP_WINDOW_BEATS <= deviations.length; split++) {
+    const before = median(deviations.slice(split - JUMP_WINDOW_BEATS, split));
+    const after = median(deviations.slice(split, split + JUMP_WINDOW_BEATS));
+    largest = Math.max(largest, Math.abs(after - before));
+  }
+  return largest;
 };
 
 // Measures a mono track. `videoSeconds` is the length of the video the track will play under, for the energy
@@ -197,7 +229,7 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
   if (beats.length < MIN_BEATS) {
     throw new Error(`could not measure the tempo of the track: only ${beats.length} beats in the first ${ANALYSIS_SECONDS} s`);
   }
-  const { phase, slope, residual, dropped } = fitBeats(beats);
+  const { phase, slope, residual, dropped, fitted: fittedBeats } = fitBeats(beats);
 
   // Beat trackers often lock onto half or double time: fold to the octave closest to the request.
   const fitted = 60 / slope;
@@ -249,20 +281,28 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
     energyDb: round(rmsDb(mono, sampleRate, start, start + videoSeconds), 1),
     audioStart: round(audioStart, 3),
     droppedBeats: dropped,
+    // The part the video plays: from the start (the beat the start sits on counts, though the tracker hears it a few ms
+    // before it) over the length of the video, or to the end of the fit if the length is not given.
+    maxJumpMs: Math.round(largestJump(fittedBeats, start - ONSET_TOLERANCE_SECONDS, start + videoSeconds) * 1000),
   };
 };
 
-export type RejectReason = 'bpm' | 'unsteady' | 'late-start' | 'weak-start' | 'too-short';
+export type RejectReason = 'bpm' | 'unsteady' | 'jump' | 'late-start' | 'weak-start' | 'too-short';
 export type TrackChoice = { chosen: number | null; rejected: { index: number; reason: RejectReason }[] };
 
 const MAX_BPM_DEVIATION = 0.15; // of the requested tempo: further than this and the cuts would have to move too much
 const MAX_RESIDUAL_MS = 30;
+// The largest step in the pulse (TrackMeasure.maxJumpMs) a track may have inside the part the video plays. A step of about
+// 40 ms (a Lyria track that skips once) is heard as the audio cutting or speeding up, and passes the residual (about 20 ms).
+const MAX_JUMP_MS = 25;
 const MIN_START_RMS_DB = -30;
 
 // The first check a track fails, if any.
 const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: number): RejectReason | undefined => {
   if (Math.abs(track.measuredBpm - requestedBpm) / requestedBpm > MAX_BPM_DEVIATION) return 'bpm';
   if (track.beatResidualMs > MAX_RESIDUAL_MS) return 'unsteady';
+  // A track measured before the jump was kept has none to check.
+  if ((track.maxJumpMs ?? 0) > MAX_JUMP_MS) return 'jump';
   // The render cuts the track from its first beat, so a short intro costs nothing; this only keeps out a track that takes
   // long to get going: past the lead-in, that is, more than MAX_LEAD_IN_BEATS beats (and the edge) at its tempo. It
   // counts from the first sound, because the silence before it is never heard.

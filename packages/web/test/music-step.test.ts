@@ -386,6 +386,17 @@ describe('pickTrack', () => {
     expect(music.calls).toBe(2);
   });
 
+  it('names the jump as the reason a track that jumps is not chosen, and asks for another', async () => {
+    music.queue = [track(113, -6), track(113, -10)];
+    const [first] = await made(1);
+    if (first?.measure == null) throw new Error('the first candidate was not measured');
+    const candidates = [{ ...first, measure: { ...first.measure, maxJumpMs: 40 } }];
+    const picked = await pickTrack({ ...base(), candidates }, deps);
+    expect(picked.rejected).toEqual([{ index: 1, reason: 'jump' }]);
+    expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
+    expect(music.calls).toBe(2);
+  });
+
   it('gives the tempo, the first beat and the length of the track it chose', async () => {
     music.queue = [track(113, -6)];
     const [first] = await made(1);
