@@ -11,6 +11,13 @@ export type Box = {
   h: number;
 };
 
+/**
+ * A card of the page: an element that draws a surface of its own (a border all round, a shadow, a background unlike what
+ * is behind it, or a background image), narrower than the screen and at most 1.2 screens tall. The camera frames a whole
+ * card and keeps the edges of the view from slicing one.
+ */
+export type Block = { shotId: string; x: number; y: number; w: number; h: number };
+
 export type Shot = {
   id: string;
   file: string;
@@ -63,6 +70,11 @@ export type SiteData = {
   };
   shots: Shot[];
   boxes: Box[];
+  /**
+   * The cards of each shot, nested ones included, in document order. Only the camera reads them: the director never sees
+   * them, so they do not count in `boxIndex`. Captures made before blocks were recorded have none.
+   */
+  blocks?: Block[];
   recordings: { file: string; viewport: 'desktop' | 'mobile'; seconds: number }[];
   /** The sections of the extra pages. Ids continue those of `sections`, so they are unique across pages. */
   extraSections?: ExtraSection[];

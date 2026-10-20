@@ -1,6 +1,6 @@
-import type { Shot } from '@app/core';
+import type { Block, CaptureLog, Shot } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { MAX_DIRECTOR_IMAGES, pngSize, shotsForDirector } from '../src/capture/shots';
+import { addBlocks, MAX_BLOCKS_PER_SHOT, MAX_DIRECTOR_IMAGES, pngSize, shotsForDirector } from '../src/capture/shots';
 
 const shot = (id: string, viewport: Shot['viewport'], sectionId?: string): Shot => ({
   id,
@@ -44,6 +44,34 @@ describe('the pictures for the director', () => {
     const main = Array.from({ length: 24 }, (_, k) => shot(`m-s${k + 1}`, 'mobile', `s${k + 1}`));
     const picked = shotsForDirector([...main, shot('x1-m-s99', 'mobile', 's99')]).map((s) => s.id);
     expect(picked).toEqual(main.slice(0, 20).map((s) => s.id));
+  });
+});
+
+describe('the blocks of a shot', () => {
+  const log = (): CaptureLog => ({ startedAt: '2026-10-19T00:00:00.000Z', notes: [], timings: {} });
+  const found = (n: number) => Array.from({ length: n }, (_, k) => ({ x: 64, y: 100 * k, w: 652, h: 128 }));
+
+  it('are added to the site with the shot they belong to, in the order the page gave them', () => {
+    const site: { blocks?: Block[] } = {};
+    const notes = log();
+    addBlocks(site, 'm-s2', found(2), notes);
+    addBlocks(site, 'm-full', found(1), notes);
+    expect(site.blocks).toEqual([
+      { shotId: 'm-s2', x: 64, y: 0, w: 652, h: 128 },
+      { shotId: 'm-s2', x: 64, y: 100, w: 652, h: 128 },
+      { shotId: 'm-full', x: 64, y: 0, w: 652, h: 128 },
+    ]);
+    expect(notes.notes).toEqual([]);
+  });
+
+  it('are at most 200 per shot, the first ones in document order, and the log says when there were more', () => {
+    const site: { blocks?: Block[] } = { blocks: [] };
+    const notes = log();
+    addBlocks(site, 'd-full', found(203), notes);
+    expect(MAX_BLOCKS_PER_SHOT).toBe(200);
+    expect(site.blocks).toHaveLength(200);
+    expect(site.blocks?.at(-1)).toEqual({ shotId: 'd-full', x: 64, y: 19_900, w: 652, h: 128 });
+    expect(notes.notes).toEqual(['d-full: 203 blocks found, the first 200 kept']);
   });
 });
 

@@ -1,11 +1,11 @@
-// The pictures of a page: one DPR 2 screenshot per section at each viewport, plus the whole page, each with the boxes of
-// what is in it; and the small JPEGs the director looks at.
+// The pictures of a page: one DPR 2 screenshot per section at each viewport, plus the whole page, each with the boxes
+// and the blocks (cards) of what is in it; and the small JPEGs the director looks at.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CaptureLog, Shot, SiteData } from '@app/core';
 import type { Page } from 'puppeteer-core';
 import { buildDirectorJpegArgs, runFfmpeg } from '../render/ffmpeg';
-import { inPageBoxes, MAX_FULL_PAGE_CSS_PX, type RawSection } from './extract';
+import { inPageBlocks, inPageBoxes, MAX_FULL_PAGE_CSS_PX, type PageBlock, type RawSection } from './extract';
 import { addNote, DPR, removeOverlays, sleep, VIEWPORTS, type ViewportName } from './page';
 
 /** The size of a PNG, from its header (the IHDR chunk comes first), or null when the bytes are not a PNG. */
@@ -15,18 +15,28 @@ export const pngSize = (bytes: Buffer): { width: number; height: number } | null
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 };
 
+/** The most blocks a shot keeps: a page of nested cards can have thousands, and the camera looks at a few. */
+export const MAX_BLOCKS_PER_SHOT = 200;
+
+/** Adds the blocks the page found in a shot to `site`: the first MAX_BLOCKS_PER_SHOT in document order, saying so when there were more. */
+export const addBlocks = (site: Pick<SiteData, 'blocks'>, shotId: string, found: readonly PageBlock[], log: CaptureLog): void => {
+  const kept = found.slice(0, MAX_BLOCKS_PER_SHOT);
+  if (found.length > kept.length) addNote(log, `${shotId}: ${found.length} blocks found, the first ${kept.length} kept`);
+  (site.blocks ??= []).push(...kept.map((b) => ({ shotId, ...b })));
+};
+
 /**
  * Shoots each of `sections` (the page scrolled so its heading is near the top) and then the whole page, up to
- * 8000 CSS pixels, and adds the shots and their boxes to `site`. Two sections that frame the page the same way give one
- * shot. The ids are `<prefix><d|m>-<section>` and `<prefix><d|m>-full`; `prefix` is empty for the site and `x<n>-` for
- * its extra pages.
+ * 8000 CSS pixels, and adds the shots, their boxes and their blocks to `site`. Two sections that frame the page the same
+ * way give one shot. The ids are `<prefix><d|m>-<section>` and `<prefix><d|m>-full`; `prefix` is empty for the site and
+ * `x<n>-` for its extra pages.
  */
 export async function shoot(
   page: Page,
   viewport: ViewportName,
   prefix: string,
   sections: readonly RawSection[],
-  site: Pick<SiteData, 'shots' | 'boxes'>,
+  site: Pick<SiteData, 'shots' | 'boxes' | 'blocks'>,
   pageHeight: number,
   { runDir, log }: { runDir: string; log: CaptureLog },
 ): Promise<void> {
@@ -52,6 +62,7 @@ export async function shoot(
     await page.screenshot({ path: join(runDir, file) });
     site.shots.push({ id, file, viewport, dpr: DPR, sectionId: s.id, width: vp.width * DPR, height: vp.height * DPR });
     for (const b of await page.evaluate(inPageBoxes, false, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
+    addBlocks(site, id, await page.evaluate(inPageBlocks, false, MAX_FULL_PAGE_CSS_PX), log);
   }
   await page.evaluate(() => scrollTo(0, 0));
   await sleep(500);
@@ -62,6 +73,7 @@ export async function shoot(
   await page.screenshot({ path: join(runDir, file), clip: { x: 0, y: 0, width: vp.width, height: h }, captureBeyondViewport: true });
   site.shots.push({ id, file, viewport, dpr: DPR, width: vp.width * DPR, height: h * DPR });
   for (const b of await page.evaluate(inPageBoxes, true, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
+  addBlocks(site, id, await page.evaluate(inPageBlocks, true, MAX_FULL_PAGE_CSS_PX), log);
 }
 
 /** The most pictures the director is shown: each is a part of a billed model call, and a site can have many sections. */

@@ -154,6 +154,31 @@ describe('a site that is not asked to follow its links, with an extra page nobod
     expect(site.boxes.find((b) => b.kind === 'price')?.text).toBe('$4.990 / mes');
   });
 
+  it('records the cards of a section shot and of the full page as blocks, in pixels of the shot, and nothing that only looks like one', () => {
+    const { site } = run;
+    const why = site.sections.find((s) => s.heading === 'Why Tiendita')!;
+    for (const [v, viewport] of [['m', 'mobile'], ['d', 'desktop']] as const) {
+      // The cards sit in the section's padding (32 px) and are 640 px wide at most: 326 px on a 390 px phone.
+      const width = viewport === 'mobile' ? 390 - 2 * 32 : 640;
+      const fromHeading: number[][] = [];
+      for (const shotId of [`${v}-${why.id}`, `${v}-full`]) {
+        const blocks = site.blocks.filter((b) => b.shotId === shotId);
+        // The bordered card, the one with a shadow and the one with a background of its own, in document order. Not the
+        // band as wide as the page, the plain div, the div the color of the section or the 20 px badge.
+        expect(
+          blocks.map(({ x, w, h }) => ({ x, w, h })),
+          shotId,
+        ).toEqual([64, 72, 80].map((h) => ({ x: 32 * 2, w: width * 2, h: h * 2 })));
+        const heading = site.boxes.find((b) => b.shotId === shotId && b.kind === 'heading' && b.text === 'Why Tiendita')!;
+        fromHeading.push(blocks.map((b) => b.y - heading.y));
+      }
+      // As far below the heading in the section's shot as in the full page's: the same pixels as the boxes.
+      const [inSection = [], inFull = []] = fromHeading;
+      inSection.forEach((dy, i) => expect(Math.abs(dy - (inFull[i] ?? Infinity)), viewport).toBeLessThanOrEqual(1));
+      expect(inSection[0], viewport).toBeGreaterThan(0);
+    }
+  });
+
   it('follows no link when it is not asked to, and leaves out the extra page it cannot reach, saying so', () => {
     const { site } = run;
     expect(site.extraSections).toHaveLength(0);

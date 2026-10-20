@@ -18,6 +18,17 @@
     .btn { display: inline-block; padding: 12px 24px; background: #c81e6b; color: #ffffff; border-radius: 8px; text-decoration: none; font-weight: 700; }
     .price { font-weight: 700; color: #c81e6b; }
 
+    /* Cards, each 64, 72 or 80 px tall: one with a border, one with a shadow, one with a background of its own. */
+    .card { max-width: 640px; margin: 16px 0; padding: 0 20px; display: flex; align-items: center; border-radius: 12px; }
+    .bordered { height: 64px; border: 1px solid #e3d9d3; }
+    .shadowed { height: 72px; box-shadow: 0 6px 24px rgba(26, 22, 20, 0.12); }
+    .filled { height: 80px; background: #fbf0f5; }
+    /* What is not a card: a band as wide as the page, a plain div, a div the color of the section, a small badge. */
+    .band { margin: 16px -32px; padding: 0 32px; height: 64px; background: #1a1614; color: #ffffff; display: flex; align-items: center; }
+    .plain { max-width: 640px; height: 64px; margin: 16px 0; }
+    .same { max-width: 640px; height: 64px; margin: 16px 0; background: #ffffff; }
+    .badge { display: inline-block; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 12px; line-height: 20px; background: #c81e6b; color: #ffffff; }
+
     /* The consent banner of a Portuguese site: fixed to the bottom, with the button in Portuguese. */
     #consent { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; padding: 16px 32px; background: #111111; color: #ffffff; display: flex; gap: 16px; align-items: center; }
     #consent button { padding: 8px 16px; font-size: 16px; }
@@ -40,6 +51,13 @@
   <section>
     <h2>Why Tiendita</h2>
     <p>0% commission on every sale, and your money goes straight to your account.</p>
+    <div class="card bordered">A link of your own</div>
+    <div class="card shadowed">Every order in one list</div>
+    <div class="card filled">A theme that looks like you</div>
+    <div class="band">Made for small shops</div>
+    <div class="plain">Set it up from your phone.</div>
+    <div class="same">Share it wherever your customers are.</div>
+    <span class="badge">New</span>
   </section>
 
   <section id="pricing">

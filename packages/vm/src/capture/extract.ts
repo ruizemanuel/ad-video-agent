@@ -1,7 +1,7 @@
 // What the capture reads from a page. The `inPage*` functions are sent to the browser and run inside the page, so each
 // one is complete in itself: it can use the DOM and `window.__cap` (made by `inPageSetup`), and nothing else of this
 // module. Their results come back as plain data. `pickColors` runs here, on what the page measured.
-import type { Box, SiteData } from '@app/core';
+import type { Block, Box, SiteData } from '@app/core';
 
 type Rgba = { r: number; g: number; b: number; a: number };
 type Cap = {
@@ -39,6 +39,8 @@ export type FoundLogo = {
 };
 /** A box as the page measures it: the shot it belongs to is known by the caller. */
 export type PageBox = Omit<Box, 'shotId'>;
+/** A block as the page measures it: the shot it belongs to is known by the caller. */
+export type PageBlock = Omit<Block, 'shotId'>;
 
 /** Chrome caps its textures near 16384 device pixels, so a full-page shot stops at 8000 CSS pixels (at DPR 2). */
 export const MAX_FULL_PAGE_CSS_PX = 8000;
@@ -365,6 +367,55 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
     if (el.children.length > 2) continue;
     const t = clean(el.innerText);
     if (t && t.length <= 40 && PRICE_RE.test(t) && ![...el.children].some((c) => clean((c as HTMLElement).innerText) === t)) push(el, 'price', t);
+  }
+  return out;
+}
+
+/**
+ * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
+ * order. In pixels of the shot, measured like the boxes. A block is 40 to 98% of the screen's width (a band as wide as the
+ * page is page, not a card), 48 px to 1.2 screens tall, and draws a surface: a border on all four sides, a shadow, a
+ * background color unlike the one behind it (the nearest ancestor's that is not transparent, else white), or a
+ * background image.
+ */
+export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
+  const { visible, toRgba, hex } = (window as unknown as CapWindow).__cap;
+  const dpr = devicePixelRatio;
+  const vw = innerWidth;
+  const vh = innerHeight;
+  const offY = fullPage ? scrollY : 0;
+  const limitH = fullPage ? Math.min(document.documentElement.scrollHeight, maxFullPagePx) : vh;
+  const behind = (el: Element): string => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const c = toRgba(getComputedStyle(p).backgroundColor);
+      if (c && c.a > 0) return hex(c);
+    }
+    return '#ffffff';
+  };
+  const drawsSurface = (el: Element): boolean => {
+    const cs = getComputedStyle(el);
+    const sides: [string, string][] = [
+      [cs.borderTopWidth, cs.borderTopColor],
+      [cs.borderRightWidth, cs.borderRightColor],
+      [cs.borderBottomWidth, cs.borderBottomColor],
+      [cs.borderLeftWidth, cs.borderLeftColor],
+    ];
+    // A border whose style is none or hidden is computed 0 px wide.
+    if (sides.every(([width, color]) => parseFloat(width) >= 1 && (toRgba(color)?.a ?? 0) > 0)) return true;
+    if (cs.boxShadow !== 'none' || cs.backgroundImage !== 'none') return true;
+    const bg = toRgba(cs.backgroundColor);
+    return bg !== null && bg.a > 0.5 && hex(bg) !== behind(el);
+  };
+  const out: PageBlock[] = [];
+  for (const el of document.body.querySelectorAll('*')) {
+    const r = el.getBoundingClientRect();
+    if (r.width < vw * 0.4 || r.width > vw * 0.98 || r.height < 48 || r.height > vh * 1.2) continue;
+    const x = r.left;
+    const y = r.top + offY;
+    const ix = Math.max(0, Math.min(vw, x + r.width) - Math.max(0, x));
+    const iy = Math.max(0, Math.min(limitH, y + r.height) - Math.max(0, y));
+    if ((ix * iy) / (r.width * r.height) < 0.6 || !visible(el) || !drawsSurface(el)) continue;
+    out.push({ x: Math.round(Math.max(0, x) * dpr), y: Math.round(Math.max(0, y) * dpr), w: Math.round(ix * dpr), h: Math.round(iy * dpr) });
   }
   return out;
 }

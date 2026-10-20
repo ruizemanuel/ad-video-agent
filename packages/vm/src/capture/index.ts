@@ -12,8 +12,8 @@ import { download, firstFamily, resolveFont } from './fonts';
 import { addNote, launchBrowser, openPage, sleep, UnreachableError, VIEWPORTS } from './page';
 import { makeDirectorJpegs, pngSize, shoot } from './shots';
 
-/** What `capture` writes to `site.json`: the site, plus the sections of the extra pages and the log of the capture. */
-export type CapturedSite = SiteData & Required<Pick<SiteData, 'extraSections' | 'log'>>;
+/** What `capture` writes to `site.json`: the site with its blocks, plus the sections of the extra pages and the log of the capture. */
+export type CapturedSite = SiteData & Required<Pick<SiteData, 'blocks' | 'extraSections' | 'log'>>;
 
 /** The most demo links the capture will follow. */
 const MAX_FOLLOWED_LINKS = 2;
@@ -277,6 +277,7 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
       brand: { colors: [], fonts: [] },
       shots: [],
       boxes: [],
+      blocks: [],
       recordings: [],
       extraSections: [],
       log,
@@ -295,13 +296,14 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
         addNote(log, `${extras.length - i} extra pages skipped: the capture ran out of time`);
         break;
       }
-      const before = { shots: site.shots.length, boxes: site.boxes.length, extraSections: site.extraSections.length };
+      const before = { shots: site.shots.length, boxes: site.boxes.length, blocks: site.blocks.length, extraSections: site.extraSections.length };
       try {
         await capturePage(ctx, url, `x${i + 1}-`);
       } catch (error) {
         // Whatever the page added is taken back: a page that is half there would leave shots without sections.
         site.shots.length = before.shots;
         site.boxes.length = before.boxes;
+        site.blocks.length = before.blocks;
         site.extraSections.length = before.extraSections;
         addNote(log, `extra page ${url} left out: ${error instanceof Error ? error.message.split('\n')[0] : 'unknown error'}`);
       }
