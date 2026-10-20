@@ -10,6 +10,7 @@
 import {
   checkStills,
   layoutScenes,
+  MAIN_FORMAT,
   PIECES,
   timedScenePath,
   type Check,
@@ -23,9 +24,8 @@ import {
 import { z } from 'zod';
 import { ModelOutputInvalid, type LlmPort, type OrderStore, type ReviewFrame, type VisualReview } from '../ports';
 
-/** The key frames are of the main hook, in the format the platforms show first. */
+/** The key frames are of the main hook, in the main video's format (the one the platforms show first). */
 const HOOK = 0;
-const FORMAT = '9x16';
 
 /** The most key frames a file may hold. A video has under ten scenes and a scene a handful of frames: more is not ours. */
 const MAX_STILLS = 60;
@@ -166,7 +166,7 @@ export async function runReview({
 
   // Level one.
   const noFrame = scenes.filter((scene) => !stills.some((s) => s.index === scene.index)).map((scene) => visual(timedScenePath(edl, HOOK, scene), 'no keyframe'));
-  const blocking = [...failedChecks(checkStills(stills, edl, site, FORMAT, HOOK)), ...noFrame];
+  const blocking = [...failedChecks(checkStills(stills, edl, site, MAIN_FORMAT, HOOK)), ...noFrame];
   if (stills.length === 0) return { blocking, warnings: [] };
 
   // Level two: every key frame in playing order, labeled with its number and its scene so that the verdicts find their way back.

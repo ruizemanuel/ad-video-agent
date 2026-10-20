@@ -13,6 +13,7 @@ import {
   EdlSchema,
   FPS,
   layoutScenes,
+  MAIN_FORMAT,
   musicMarkdown,
   retimeForBpm,
   trackCoversVideo,
@@ -513,11 +514,11 @@ function taskInput(task: TaskRequest): unknown {
     case 'capture':
       return task.input;
     case 'keyframes':
-      return { edl: task.edl, hook: 0, format: '9x16', round: task.round } satisfies KeyframesInput;
+      return { edl: task.edl, hook: 0, format: MAIN_FORMAT, round: task.round } satisfies KeyframesInput;
     case 'render': {
       const { edl, track } = task;
       const music = track === null ? null : { firstBeat: track.firstBeat, seconds: track.seconds, path: track.path };
-      return { edl: track === null ? edl : EdlSchema.parse(retimeForBpm(edl, track.measuredBpm)), hook: 0, format: '9x16', music } satisfies RenderInput;
+      return { edl: track === null ? edl : EdlSchema.parse(retimeForBpm(edl, track.measuredBpm)), hook: 0, format: MAIN_FORMAT, music } satisfies RenderInput;
     }
     case 'shutdown':
       return {};

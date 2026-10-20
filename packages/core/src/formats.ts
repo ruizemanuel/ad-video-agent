@@ -19,8 +19,9 @@ export const TYPE: Record<Format, { headline: number; caption: number; min: numb
 };
 
 /**
- * The format of the main video: the one the key frame review sees, so the one in which the camera of a UI scene must
- * frame its target cleanly (see framesCleanly) for the director to be offered that target.
+ * The format of the main video: the one it is rendered in and the key frame review sees, so the one in which the camera
+ * of a UI scene must frame its target cleanly (see framesCleanly) for the director to be offered that target. The VM's
+ * protocol spells it as a literal of its own (KeyframesInput, RenderInput): a value on the wire.
  */
 export const MAIN_FORMAT = '9x16' satisfies Format;
 
