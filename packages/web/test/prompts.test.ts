@@ -124,6 +124,19 @@ describe('PATCH_SYSTEM', () => {
     expect(PATCH_SYSTEM).toMatch(/any scenes/);
   });
 
+  describe('the way out of a product problem', () => {
+    // What the corrector is told for one rule, as a sentence (the prompt wraps its lines).
+    const fixFor = (rule: Problem['rule']): string => (PATCH_SYSTEM.match(new RegExp(`- ${rule}:[\\s\\S]*?(?=\\n- |\\n\\n)`))?.[0] ?? '').replace(/\s+/g, ' ');
+
+    it('drops atBeat from the lines when a UiFocus or a UiScroll becomes another piece, since only those two take it', () => {
+      expect(fixFor('structure')).toContain('If you turn a `UiFocus` or `UiScroll` into another piece, drop `atBeat` from its lines: only those two take it.');
+    });
+
+    it('says a new boxIndex for a visual problem must be a box with product: true', () => {
+      expect(fixFor('visual')).toContain('a new `boxIndex` must be a box with `product: true`');
+    });
+  });
+
   it('asks only for the scenes it changes and the claims it corrects', () => {
     for (const field of ['`patches`', '`claimFixes`']) expect(PATCH_SYSTEM).toContain(field);
   });
