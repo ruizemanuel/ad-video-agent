@@ -297,22 +297,71 @@ export function inPageBrand(): RawBrand {
   };
 }
 
-/** Finds the logo in the header and tags it `data-caplogo`, with its SVG if it is an inline one. */
+/**
+ * Finds the logo at the top of the page and tags it `data-caplogo`, with its SVG if it is an inline one or one a CSS
+ * background paints. The candidates, in document order: the links home (Framer writes them "./"), what says it is a logo,
+ * and the links of the header. One is the logo if it holds a picture (an image, an SVG, a CSS background or mask with an
+ * address), or if its text is the site's name: a menu label is never the logo, and no logo is better than a wrong one.
+ */
 export function inPageFindLogo(): FoundLogo | null {
   const { visible } = (window as unknown as CapWindow).__cap;
-  const origin = location.origin;
-  const cands = [
-    ...document.querySelectorAll<HTMLElement>(
-      `a[href="/"], a[href="${origin}"], a[href="${origin}/"], [class*="logo" i], [id*="logo" i], img[alt*="logo" i], header a`,
-    ),
-  ];
+  const norm = (s: string | null | undefined): string => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  // The site's name: og:site_name, else the first part of the title.
+  const name = norm(document.querySelector('meta[property="og:site_name"]')?.getAttribute('content') || document.title.split(/[—|·:-]/)[0]);
+  const home = `${location.origin}/`;
+  const SAYS_LOGO = '[class*="logo" i], [id*="logo" i], img[alt*="logo" i], header a';
+  const cands = [...document.querySelectorAll<HTMLElement>(`a[href], ${SAYS_LOGO}`)].filter(
+    (el) => (el instanceof HTMLAnchorElement && el.href === home) || el.matches(SAYS_LOGO),
+  );
+  /** The address of the first url(...) of a computed CSS value, or null. */
+  const cssUrl = (value: string): string | null => {
+    const m = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^)\s]*))\s*\)/.exec(value);
+    const url = m?.[1] ?? m?.[2] ?? m?.[3];
+    return url ? url.replace(/\\(.)/g, '$1') : null;
+  };
+  /** The SVG of a data: address, at the given size, keeping its viewBox (made from its own size if it has none). */
+  const svgOfDataUrl = (url: string, w: number, h: number): string | null => {
+    const m = /^data:image\/svg\+xml([^,]*),(.*)$/is.exec(url);
+    if (!m) return null;
+    const [, params = '', payload = ''] = m;
+    let source: string;
+    try {
+      source = /;base64/i.test(params)
+        ? new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)))
+        : payload.replace(/(%[0-9a-f]{2})+/gi, (s) => {
+            try {
+              return decodeURIComponent(s);
+            } catch {
+              return s;
+            }
+          });
+    } catch {
+      return null;
+    }
+    const doc = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const svg = doc.documentElement;
+    if (svg.localName !== 'svg' || doc.querySelector('parsererror')) return null;
+    const [ownW, ownH] = [svg.getAttribute('width'), svg.getAttribute('height')].map((v) => Number(v));
+    if (!svg.hasAttribute('viewBox') && ownW && ownH) svg.setAttribute('viewBox', `0 0 ${ownW} ${ownH}`);
+    svg.setAttribute('width', String(Math.round(w)));
+    svg.setAttribute('height', String(Math.round(h)));
+    return new XMLSerializer().serializeToString(svg);
+  };
   for (const el of cands) {
     if (!visible(el)) continue;
     const r = el.getBoundingClientRect();
     if (r.top > 160 || r.width < 16 || r.width > 420 || r.height < 12 || r.height > 140) continue;
-    const hasGraphic = el.matches('img, svg') || el.querySelector('img, svg');
+    const inline = el.matches('img, svg') || el.querySelector('img, svg') !== null;
+    // What CSS paints with a picture, on the element or in it. A mask is a shape painted in the element's color.
+    const painted = [el, ...el.querySelectorAll('*')].flatMap((e) => {
+      if (!visible(e)) return [];
+      const cs = getComputedStyle(e);
+      const mask = cssUrl(cs.maskImage);
+      const background = cssUrl(cs.backgroundImage);
+      return mask || background ? [{ e, background: mask ? null : background }] : [];
+    });
     const hasText = (el.innerText || '').trim().length > 0;
-    if (!hasGraphic && !hasText) continue;
+    if (!inline && painted.length === 0 && !(hasText && name && norm(el.innerText) === name)) continue;
     el.setAttribute('data-caplogo', '1');
     const svgs = el.matches('svg') ? [el as unknown as SVGSVGElement] : [...el.querySelectorAll('svg')];
     let svg: string | null = null;
@@ -334,12 +383,16 @@ export function inPageFindLogo(): FoundLogo | null {
       clone.setAttribute('height', String(Math.round(sr.height)));
       svg = clone.outerHTML;
     }
+    // The one picture is an SVG a background paints (Framer's wordmark): kept at the size it is drawn.
+    const [only] = painted;
+    if (!inline && painted.length === 1 && only?.background) {
+      const box = only.e.getBoundingClientRect();
+      svg = svgOfDataUrl(only.background, box.width, box.height);
+    }
     const img = el.matches('img') ? (el as HTMLImageElement) : el.querySelector('img');
     return { hasText, svg, imgSrc: img?.currentSrc || img?.src || null, rect: { w: r.width, h: r.height } };
   }
   // Text-only wordmark without a home link: the smallest top element whose text is the site name.
-  const norm = (s: string | null | undefined): string => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  const name = norm(document.querySelector('meta[property="og:site_name"]')?.getAttribute('content') || document.title.split(/[—|·:-]/)[0]);
   if (!name) return null;
   const words = [...document.querySelectorAll<HTMLElement>('body *')].filter((el) => {
     if (!visible(el) || norm(el.innerText) !== name) return false;

@@ -8,8 +8,11 @@ import { join } from 'node:path';
 import type { CaptureInput, CaptureResult } from '@app/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
+import { inPageFindLogo, inPageSetup } from '../../src/capture/extract';
+import { launchBrowser } from '../../src/capture/page';
 import { pngSize } from '../../src/capture/shots';
 import { serveFixtureSite } from './support/fixture-site';
+import { pngHasInk } from './support/png';
 
 let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
 let fixtureUrl: string;
@@ -122,6 +125,16 @@ describe('a Framer site: content in wrappers with no box, figures split over hea
       }
     }
   });
+
+  it('takes the wordmark a CSS background paints in the link home as the logo, as an SVG at its size, and not the menu label', () => {
+    const { site, dir } = run;
+    expect(site.brand.logo).toMatchObject({ file: 'media/logo.svg', kind: 'svg', png: 'media/logo.png', width: 444, height: 100 });
+    const svg = readFileSync(join(dir, 'media', 'logo.svg'), 'utf8');
+    expect(svg).toMatch(/^<svg [^>]*viewBox="0 0 110 25"/);
+    expect(svg).toMatch(/^<svg [^>]* width="111"/);
+    expect(svg).toMatch(/^<svg [^>]* height="25"/);
+    expect(svg).toContain('d="M40 0H65V25H40Z"');
+  });
 });
 
 describe('a site that repeats a heading, at the desktop and on the phone, with a menu label alone in its header', () => {
@@ -142,6 +155,44 @@ describe('a site that repeats a heading, at the desktop and on the phone, with a
     }
     // The third "Fees" is only on the phone: it has no desktop twin, and no shot.
     expect(site.log.notes).toContain(`${fixtureUrl}repeated.html mobile: 1 sections not present on desktop (skipped for shots)`);
+  });
+
+  it('finds no logo rather than take the menu label for one, and says so', () => {
+    expect(run.site.brand.logo).toBeUndefined();
+    expect(existsSync(join(run.dir, 'media', 'logo.png'))).toBe(false);
+    expect(run.site.log.notes).toContain('no logo found in the header');
+  });
+});
+
+describe('a logo cut by a CSS mask out of the color of the link home', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}mask-logo.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('keeps it as a PNG of the link, with the shape in it, and no SVG', () => {
+    const { site, dir } = run;
+    // The link is 120 x 30 px, shot at DPR 4.
+    expect(site.brand.logo).toEqual({ file: 'media/logo.png', kind: 'png', width: 480, height: 120 });
+    expect(existsSync(join(dir, 'media', 'logo.svg'))).toBe(false);
+    expect(pngHasInk(readFileSync(join(dir, 'media', 'logo.png')))).toBe(true);
+  });
+});
+
+describe('the logo finder, in a page of its own', () => {
+  it('reads an SVG painted from base64 in an element that says it is the logo, at its size, with a viewBox for it to scale', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="10"><rect width="40" height="10" fill="#c81e6b"/></svg>';
+    const browser = await launchBrowser();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<div class="site-logo" style="width: 120px; height: 30px; background: url(data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}) 0 0 / 100% 100%"></div>`);
+      await page.evaluate(inPageSetup);
+      const logo = await page.evaluate(inPageFindLogo);
+      expect(logo).toMatchObject({ hasText: false, rect: { w: 120, h: 30 } });
+      expect(logo?.svg).toMatch(/^<svg [^>]*viewBox="0 0 40 10"/);
+      expect(logo?.svg).toMatch(/^<svg [^>]* width="120"/);
+      expect(logo?.svg).toMatch(/^<svg [^>]* height="30"/);
+      expect(logo?.svg).toContain('<rect width="40" height="10" fill="#c81e6b"/>');
+    } finally {
+      await browser.close();
+    }
   });
 });
 

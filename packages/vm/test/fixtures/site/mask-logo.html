@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maskd | Payments</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #ffffff; color: #111111; }
+    header { display: flex; align-items: center; gap: 32px; padding: 20px 32px; }
+    header a { color: #111111; }
+    /* The logo is a shape cut by an SVG mask out of the link's own background color: a shape, not a picture. */
+    .home {
+      display: block;
+      width: 120px;
+      height: 30px;
+      background-color: #1d4ed8;
+      mask-image: url("data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 30%22><circle cx=%2215%22 cy=%2215%22 r=%2215%22/><rect x=%2240%22 y=%225%22 width=%2280%22 height=%2220%22/></svg>");
+      mask-size: 100% 100%;
+      mask-repeat: no-repeat;
+    }
+    section { min-height: 900px; padding: 80px 32px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 640px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="home" href="/" aria-label="Home"></a>
+    <a href="./pricing.html">Pricing</a>
+  </header>
+  <section>
+    <h1>Payments for small shops</h1>
+    <p>Take cards and transfers in one place, with no setup fee.</p>
+  </section>
+</body>
+</html>

@@ -84,9 +84,12 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
     }
     // Always keep a high-DPR raster of the whole logo (icon and wordmark), on a transparent background.
     await page.setViewport({ ...VIEWPORTS.desktop, deviceScaleFactor: 4 });
-    // omitBackground only helps if nothing behind the logo paints: clear the backgrounds of its ancestors.
+    // omitBackground only helps if nothing behind the logo paints: clear the backgrounds of its ancestors. The logo's own
+    // stays when CSS draws the logo with it: a picture as its background, or its color cut by a mask.
     await page.evaluate(() => {
       for (let p = document.querySelector<HTMLElement>('[data-caplogo]'); p; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (p.hasAttribute('data-caplogo') && (cs.backgroundImage.includes('url(') || cs.maskImage.includes('url('))) continue;
         p.dataset.capbg = p.style.background;
         p.style.background = 'transparent';
       }
