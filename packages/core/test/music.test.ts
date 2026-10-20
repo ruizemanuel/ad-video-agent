@@ -440,6 +440,20 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
   describe('on a pulse that jumps once and stays there', () => {
     // The groove from 0.3 s: a hit of 0.25 s on every beat of 0.55 s, and silence for the rest of the beat.
     const groove = () => addClicks(silence(), beats(0.3));
+    // A note mixed into `mono` from `from` s to `to` s (the end of the track if left out), whose level falls by a factor of
+    // e every `decay` s (held if left out): a ring-out or a held note, well above AUDIBLE_DBFS. At 200 Hz a frame of the
+    // tracker holds two whole periods, so its spectrum does not move from one frame to the next: the tracker hears the note
+    // start, and no onset after that.
+    const addNote = (mono: Float32Array, from: number, { to = Infinity, decay = Infinity } = {}): Float32Array => {
+      for (let i = Math.round(from * SAMPLE_RATE); i < Math.min(mono.length, to * SAMPLE_RATE); i++) {
+        const time = i / SAMPLE_RATE - from;
+        mono[i] = (mono[i] ?? 0) + 0.5 * Math.exp(-time / decay) * Math.sin(2 * Math.PI * 200 * time);
+      }
+      return mono;
+    };
+    // The groove up to 15 s, in a track of `seconds`, and a final hit on the next beat (15.03 s) that rings out over `decay` s.
+    const ringingOut = (decay: number, seconds = SECONDS) =>
+      addNote(addClicks(new Float32Array(seconds * SAMPLE_RATE), beats(0.3).filter((time) => time < 15)), 0.3 + 27 * BEAT, { decay });
 
     it('rejects a groove that skips 40 ms early at 11 s', () => {
       const track = measure(spliced(groove(), 11, -40));
@@ -491,9 +505,34 @@ describe('measureTrack and chooseTrack on the openings Lyria writes', () => {
       expect(chooseTrack([measureTrack(mono, SAMPLE_RATE, 112, 28)], 112, 28).rejected).toEqual([{ index: 0, reason: 'jump' }]);
     });
 
-    it('reads no skip in the silence after the music stops inside the video', () => {
-      // The groove stops at 15 s, inside the video (0.3 s to 19.6 s): past its last sound there is nothing to line up.
+    it('reads no skip in the digital silence after the music stops inside the video', () => {
+      // The groove stops dead at 15 s, inside the video (0.3 s to 19.6 s), into digital zeros: the grid ends with the sound.
       expect(measure(addClicks(silence(), beats(0.3).filter((time) => time < 15))).maxJumpMs).toBeLessThan(10);
+    });
+
+    it.each([0.3, 1])('passes a groove that ends inside the video on a final hit that rings out over %d s', (decay) => {
+      // Past the hit the video plays a note that is still sounding (above AUDIBLE_DBFS) but holds no onset to line up.
+      expect(verdict(measure(ringingOut(decay)))).toEqual({ chosen: 0, rejected: [] });
+    });
+
+    it('gives the reason of its own to a track that runs out after its ring-out: too short, not a jump', () => {
+      // The same hit ringing out over 1 s, in a track of 18 s: it ends before the video (19.3 s from 0.3 s) does.
+      expect(verdict(measure(ringingOut(1, 18))).rejected).toEqual([{ index: 0, reason: 'too-short' }]);
+    });
+
+    it('passes a groove that holds a note for two bars in the middle', () => {
+      // No hits for the 8 beats from 8.48 s, and a note held over them.
+      const from = 0.3 + 15 * BEAT;
+      const mono = addClicks(silence(), beats(0.3).filter((time) => time < from - 0.01 || time > from + 8 * BEAT - 0.01));
+      expect(verdict(measure(addNote(mono, from, { to: from + 8 * BEAT })))).toEqual({ chosen: 0, rejected: [] });
+    });
+
+    it('still rejects a skip of 40 ms in a sparse groove, with two hits every 4 beats', () => {
+      // A hit on every other beat, and 40 ms cut out at 11 s, between two of them.
+      const track = measure(spliced(addClicks(silence(), beats(0.3).filter((_, beat) => beat % 2 === 0)), 11, -40));
+      expect(verdict(track).rejected).toEqual([{ index: 0, reason: 'jump' }]);
+      expect(track.maxJumpMs).toBeGreaterThanOrEqual(36);
+      expect(track.maxJumpMs).toBeLessThanOrEqual(44);
     });
 
     it('passes a step that falls before the start of the video', () => {

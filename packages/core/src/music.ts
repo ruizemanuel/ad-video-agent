@@ -113,6 +113,11 @@ const JUMP_MIN_SIDE_BEATS = 2;
 const JUMP_SEARCH = 1 / 6;
 // The resolution of the onset pattern of a beat, and so of a skip, in seconds.
 const PATTERN_BIN_SECONDS = 0.001;
+// How many of the tracker's onsets each window of a split must hold for the split to count, per beat of the window and
+// rounded up (2 for 4 beats, 1 for 2). A window without onsets says nothing: a ring-out, a reverb tail or a held note is
+// above AUDIBLE_DBFS, but its pattern is flat, and a flat pattern lines up as well at any shift within JUMP_SEARCH, so it
+// would read as a skip of any size up to that.
+const JUMP_MIN_ONSETS_PER_BEAT = 1 / 2;
 // A sample above this level is sound; below it is the digital silence Lyria puts before some tracks.
 const AUDIBLE_DBFS = -60;
 // How near a beat of the grid the tracker must have heard an onset for that beat to be a hit, in seconds.
@@ -237,18 +242,29 @@ const shiftBetween = (before: Float64Array, after: Float64Array, reach: number):
 // seconds: a track that skips once (Lyria cuts or repeats a few ms of it) and plays on from there, so that on one side of
 // the skip the cuts of the video fall off the beat. The tracker's beats cannot tell it: they come in steps of a frame, and
 // the residual spreads one skip over the whole fit (a 40 ms skip reads as about 20 ms).
-// So it reads the onsets themselves (the tracker's envelope, `flux`). At every split between two beats, with up to
+// So it reads the onsets themselves (the tracker's envelope, `spectralFlux`). At every split between two beats, with up to
 // JUMP_WINDOW_BEATS beats on each side (at least JUMP_MIN_SIDE_BEATS), the onsets of the beats before it are folded over
 // one beat into a pattern, and so are those of the beats after it; the skip at the split is how far the pattern after sits
-// from the one before (shiftBetween), looked for within JUMP_SEARCH of a beat. A track drifts a little against the grid
+// from the one before (shiftBetween), looked for within JUMP_SEARCH of a beat. A split counts only when the tracker heard
+// onsets (its `events`) in both windows, at least JUMP_MIN_ONSETS_PER_BEAT per beat. A track drifts a little against the grid
 // between its skips (a skip tilts the fitted tempo against itself), so the drift per beat, the median of the skips per beat
 // over the splits with full windows, is taken out of each split for the beats between the middles of its two windows.
-const largestJump = (flux: number[], frameSeconds: number, beats: number[], beatSeconds: number): number => {
+const largestJump = (
+  { spectralFlux: flux, events }: Pick<MusicTempo, 'spectralFlux' | 'events'>,
+  frameSeconds: number,
+  beats: number[],
+  beatSeconds: number,
+): number => {
   const bins = Math.round(beatSeconds / PATTERN_BIN_SECONDS);
   // The onsets of each beat, from half a beat before it to half a beat after.
   const around = beats.map((beat) =>
     Float64Array.from({ length: bins }, (_, i) => onsetsAt(flux, frameSeconds, beat - beatSeconds / 2 + i * PATTERN_BIN_SECONDS)),
   );
+  // How many of the tracker's onsets it heard in the same span of each beat.
+  const heard = beats.map((beat) => events.filter((time) => time >= beat - beatSeconds / 2 && time < beat + beatSeconds / 2).length);
+  // Whether the beats from `from` to `to` (not included) hold enough onsets to tell where their pattern sits.
+  const heardEnough = (from: number, to: number) =>
+    heard.slice(from, to).reduce((sum, count) => sum + count, 0) >= Math.ceil((to - from) * JUMP_MIN_ONSETS_PER_BEAT);
   // The beats from `from` to `to` (not included) folded over one beat, mean removed.
   const pattern = (from: number, to: number): Float64Array => {
     const sum = new Float64Array(bins);
@@ -260,6 +276,7 @@ const largestJump = (flux: number[], frameSeconds: number, beats: number[], beat
   const splits: { skip: number; side: number }[] = [];
   for (let split = JUMP_MIN_SIDE_BEATS; split + JUMP_MIN_SIDE_BEATS <= beats.length; split++) {
     const side = Math.min(JUMP_WINDOW_BEATS, split, beats.length - split);
+    if (!heardEnough(split - side, split) || !heardEnough(split, split + side)) continue;
     splits.push({ skip: shiftBetween(pattern(split - side, split), pattern(split, split + side), reach), side });
   }
   const full = splits.filter(({ side }) => side === JUMP_WINDOW_BEATS);
@@ -267,8 +284,9 @@ const largestJump = (flux: number[], frameSeconds: number, beats: number[], beat
   return splits.reduce((largest, { skip, side }) => Math.max(largest, Math.abs(skip - side * drift)), 0);
 };
 
-// Measures a mono track. `videoSeconds` is the length of the video the track will play under, for the energy and the
-// skips (the whole track from its first beat if left out, or if the track is shorter).
+// Measures a mono track. `videoSeconds` is the length of the video the track will play under: the energy is measured over
+// it from the first beat (the whole track if left out, or if the track is shorter), and the skips over it too, up to the
+// end of the sound if that comes first.
 // Throws when there is no tempo to find: silence, noise, or less than a few seconds of music.
 export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBpm: number, videoSeconds: number = Infinity): TrackMeasure => {
   const hopSize = Math.round(sampleRate * FRAME_SECONDS);
@@ -296,7 +314,8 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
   const audible = 10 ** (AUDIBLE_DBFS / 20);
   const firstSound = mono.findIndex((x) => Math.abs(x) > audible);
   const audioStart = firstSound < 0 ? 0 : firstSound / sampleRate;
-  // Where the sound ends: past it there is nothing to hear, and no onset to measure a skip by.
+  // Where the sound ends: past it there is only digital silence. (A ring-out before it has no onsets either; see
+  // JUMP_MIN_ONSETS_PER_BEAT.)
   const audioEnd = (mono.findLastIndex((x) => Math.abs(x) > audible) + 1) / sampleRate;
   // Level (dBFS) of the quarter of a second from `time`: is there a hit there.
   const levelAt = (time: number) => rmsDb(mono, sampleRate, time, time + START_WINDOW_SECONDS);
@@ -347,7 +366,7 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
     energyDb: round(rmsDb(mono, sampleRate, start, start + videoSeconds), 1),
     audioStart: round(audioStart, 3),
     droppedBeats: dropped,
-    maxJumpMs: Math.round(largestJump(tracker.spectralFlux, hopSize / sampleRate, played, beatSeconds) * 1000),
+    maxJumpMs: Math.round(largestJump(tracker, hopSize / sampleRate, played, beatSeconds) * 1000),
   };
 };
 
