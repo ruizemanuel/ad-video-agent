@@ -103,9 +103,10 @@ export function inPageDismissCookies(acceptSource: string, contextSource: string
  * out: a page that a framework owns takes its elements out itself, and does not stand finding one gone. Left alone:
  * - what lets clicks through or sits behind the page (decoration);
  * - an element that holds most of the page's text (an app that scrolls inside a fixed box);
- * - a stage that holds a section of the page: one that holds the heading of a section (the capture tags those
- *   `data-capsec` when it reads them), or, before they are read, a sticky one with a heading of its own. A story told
- *   by scrolling pins its stage over the screen, and it is the site, not something on top of it;
+ * - a stage that holds a section of the page: one that holds the heading of a section or a piece of a figure (the
+ *   capture tags those `data-capsec` and `data-capfig` when it reads them), or, before they are read, a sticky one with
+ *   a heading of its own. A story told by scrolling pins its stage over the screen, and it is the site, not something
+ *   on top of it;
  * - a dialog that is shut and waits outside the screen.
  * Returns the ones it hid, by name. Runs in the page.
  */
@@ -126,7 +127,7 @@ export function inPageRemoveOverlays(minShare: number): string[] {
     const dialog = cs.position === 'fixed' && el.matches('[role=dialog], [role=alertdialog], [aria-modal=true]');
     if (!dialog && (w * h) / viewport <= minShare) continue;
     if (pageText > 0 && (el.innerText || '').length > pageText * 0.6) continue;
-    if (el.querySelector('[data-capsec]') !== null) continue;
+    if (el.querySelector('[data-capsec], [data-capfig]') !== null) continue;
     if (cs.position === 'sticky' && [...el.querySelectorAll('h1, h2, h3')].some((heading) => (heading.textContent || '').trim() !== '')) continue;
     el.style.setProperty('display', 'none', 'important');
     const className = el.classList[0];

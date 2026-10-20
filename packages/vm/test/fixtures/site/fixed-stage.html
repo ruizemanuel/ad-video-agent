@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Numbers | Paybox</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fbf7f4; color: #1a1614; }
+    section { min-height: 700px; padding: 80px 32px; }
+    h1 { font-size: 52px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 8px; }
+    h3 { font-size: 28px; margin: 0 0 8px; }
+    p { font-size: 20px; max-width: 600px; margin: 0; }
+
+    /* Scrollytelling: a stage pinned over the screen (position: fixed, set by the script below) while its runway goes
+       by, with the steps of the story scrolling over it. The stage holds only figures, no title. */
+    .runway { position: relative; height: 2600px; }
+    .stage { position: absolute; top: 0; left: 0; right: 0; height: 100vh; padding: 80px 32px; background: #eef2ff; display: flex; gap: 48px; align-items: flex-end; }
+    .stage.pinned { position: fixed; }
+    .steps { position: relative; z-index: 1; padding: 110vh 32px 0; }
+    .step { max-width: 420px; margin-bottom: 60vh; padding: 24px; background: #ffffff; border-radius: 12px; }
+
+    /* A cookie banner that comes up once the page has been read, with a title of its own. */
+    #late-cookies { display: none; position: fixed; left: 0; right: 0; bottom: 0; height: 50vh; z-index: 100; padding: 32px; background: #111111; color: #ffffff; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>Numbers that move</h1>
+    <p>Scroll down: the figures stay on the screen while the story goes by.</p>
+  </section>
+
+  <div class="runway">
+    <div class="stage">
+      <div><h2>453K</h2><p>daily users</p></div>
+      <div><h2>$6.2B</h2><p>monthly volume</p></div>
+    </div>
+    <div class="steps">
+      <div class="step"><h3>People pay from their phones</h3><p>A link or a QR code is all it takes.</p></div>
+      <div class="step"><h3>Shops get paid the same day</h3><p>The money lands in their account by the evening.</p></div>
+    </div>
+  </div>
+
+  <section>
+    <h2>After the numbers</h2>
+    <p>Everything you saw works from the first day.</p>
+  </section>
+
+  <div id="late-cookies">
+    <h2>We use cookies</h2>
+    <p>They help us understand how the site is used.</p>
+  </div>
+
+  <script>
+    const runway = document.querySelector('.runway');
+    const stage = document.querySelector('.stage');
+    const pin = () => {
+      const r = runway.getBoundingClientRect();
+      stage.classList.toggle('pinned', r.top <= 0 && r.bottom >= innerHeight);
+    };
+    addEventListener('scroll', pin, { passive: true });
+    pin();
+    // The banner waits until the capture has read the page (it tags the headings of the sections it reads).
+    const wait = setInterval(() => {
+      if (!document.querySelector('[data-capsec]')) return;
+      clearInterval(wait);
+      document.getElementById('late-cookies').style.display = 'block';
+    }, 50);
+  </script>
+</body>
+</html>

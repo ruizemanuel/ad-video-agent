@@ -220,6 +220,25 @@ describe('a stats band right before a one-word title, and a title shaped like a 
   });
 });
 
+describe('a scroll stage pinned over the screen that holds only figures, and a cookie banner that comes up late', () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}fixed-stage.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('keeps the stage on the screen when it films the steps that scroll over it, at both sizes', () => {
+    const { site } = run;
+    expect(site.log.notes.join(' | ')).not.toMatch(/hid [^|]*stage/);
+    const step = site.sections.find((s) => s.heading === 'People pay from their phones')!;
+    for (const v of ['d', 'm']) {
+      const figures = site.boxes.filter((b) => b.shotId === `${v}-${step.id}` && b.kind === 'heading').map((b) => b.text);
+      expect(figures, v).toEqual(expect.arrayContaining(['453K', '$6.2B']));
+    }
+  });
+
+  it('still hides the banner, whose title is a heading too', () => {
+    expect(run.site.log.notes.join(' | ')).toMatch(/hid div#late-cookies/);
+    expect(run.site.boxes.some((b) => b.text === 'We use cookies')).toBe(false);
+  });
+});
+
 describe('a site with a demo page, followed once as a link and once as an extra', () => {
   const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: [`${fixtureUrl}demo.html#again`], followDemoLinks: 2 }));
 

@@ -112,8 +112,8 @@ export function inPageAnchors(): { href: string; text: string }[] {
  * or more, and it is no figure (a number with at most one word: "453K", "1 second", "$0.0004"). Framer splits a figure
  * over several headings ("$" + "6.2" + "Billion"), so headings with no text between them, no more than a line apart on
  * the page, are read together for this. A figure's text joins the section it is in, as one line, which keeps it with
- * its label, above it or under it. A line repeated in a section (a carousel repeats its cards) is kept once, where it
- * first comes.
+ * its label, above it or under it; its headings are tagged `data-capfig`, so that what holds them is still seen to hold
+ * the page's text. A line repeated in a section (a carousel repeats its cards) is kept once, where it first comes.
  */
 export function inPageExtractText(): PageText {
   const { clean, visible, isButtonLike } = (window as unknown as CapWindow).__cap;
@@ -180,6 +180,7 @@ export function inPageExtractText(): PageText {
           if (!joined && cur.lastBlock) cur.parts.push('\n');
           cur.parts.push(heading);
           cur.lastBlock = el;
+          el.setAttribute('data-capfig', '');
           figure = together;
           figureEl = el;
         } else if (heading) {
