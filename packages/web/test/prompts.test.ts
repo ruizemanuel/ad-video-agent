@@ -70,8 +70,15 @@ describe('DIRECTOR_SYSTEM', () => {
       expect(flat(DIRECTOR_SYSTEM)).toContain('a `UiFocus` or `UiScroll` on a box with `product: false` is rejected');
     });
 
-    it('tells what product means for a box: an image or a price in its section or card', () =>
-      expect(flat(DIRECTOR_SYSTEM)).toContain('an image or a price in its section or card'));
+    it('tells what product means for a box: an image or a price in its section or card, not a percentage or a button over text', () => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain('an image or a price in its section or card');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('a percentage or a button over text does not count');
+    });
+
+    it('does not just prefer product UI for UiFocus and UiScroll: they must aim at a box with product: true', () => {
+      expect(flat(DIRECTOR_SYSTEM)).not.toContain('Prefer product UI');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('`UiFocus`/`UiScroll` must aim at a box with `product: true`');
+    });
 
     it('holds the corrector to the same rules', () => {
       for (const rule of ['`boxIndex` (required)', 'an image or a price in its section or card', 'is rejected']) expect(flat(PATCH_SYSTEM)).toContain(rule);
