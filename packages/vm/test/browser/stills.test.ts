@@ -46,8 +46,9 @@ function makeFixtureEdl(site: SiteData): Edl {
         {
           piece: 'UiFocus',
           beats: 6,
-          lines: [{ text: 'Sell on WhatsApp with no fees', kind: 'claim', claimId: 'c1', accent: 'no fees' }],
-          ...pick('heading', 'Sell on WhatsApp with no fees'),
+          lines: [{ text: 'Everything in one plan', kind: 'claim', claimId: 'c3', accent: 'one plan' }],
+          // A UI scene films product UI (see isProductTarget): the fixture site has no image, and its only price is in the pricing section.
+          ...pick('price', '$4.990 / mes'),
         },
       ],
     ],
@@ -81,7 +82,6 @@ function makeFixtureEdl(site: SiteData): Edl {
     ],
     cta: { piece: 'EndCard', beats: 5, lines: [{ text: 'Start free', kind: 'framing' }], transitionIn: 'wipe' },
     claims: [
-      { id: 'c1', text: 'Tiendita sells on WhatsApp with no fees.', sectionId: sectionId('Sell on WhatsApp with no fees'), quote: 'Sell on WhatsApp with no fees' },
       { id: 'c2', text: 'No commission on sales.', sectionId: sectionId('Why Tiendita'), quote: '0% commission on every sale' },
       { id: 'c3', text: 'The Pro plan costs $4.990 a month and has everything.', sectionId: sectionId('Simple pricing'), quote: 'The Pro plan is $4.990 / mes and has everything.' },
       { id: 'c4', text: 'It takes cards, transfers and cash.', sectionId: sectionId('Every payment method'), quote: 'Cards, transfers and cash on delivery' },
@@ -123,10 +123,11 @@ function makeNewPiecesEdl(site: SiteData): Edl {
         piece: 'UiFocus',
         beats: 8,
         lines: [
-          { text: 'Sell on WhatsApp with no fees', kind: 'claim', claimId: 'c1', accent: 'no fees' },
-          { text: 'Customers pay you directly', kind: 'claim', claimId: 'c5', atBeat: 4 },
+          { text: 'One plan, everything in it', kind: 'claim', claimId: 'c3', accent: 'everything in it' },
+          { text: 'Priced at $4.990 / mes', kind: 'claim', claimId: 'c3', atBeat: 4 },
         ],
-        ...pickBox(site, 'heading', 'Sell on WhatsApp with no fees'),
+        // The fixture site has no image, and its only price is in the pricing section: a UI scene films product UI.
+        ...pickBox(site, 'price', '$4.990 / mes'),
       },
       {
         piece: 'KineticHeadline',
@@ -148,9 +149,8 @@ function makeNewPiecesEdl(site: SiteData): Edl {
       transitionIn: 'wipe',
     },
     claims: [
-      { id: 'c1', text: 'Tiendita sells on WhatsApp with no fees.', sectionId: hero, quote: 'Sell on WhatsApp with no fees' },
+      { id: 'c3', text: 'The Pro plan costs $4.990 a month and has everything.', sectionId: sectionIdOf(site, 'Simple pricing'), quote: 'The Pro plan is $4.990 / mes and has everything.' },
       { id: 'c4', text: 'It takes cards, transfers and cash.', sectionId: sectionIdOf(site, 'Every payment method'), quote: 'Cards, transfers and cash on delivery' },
-      { id: 'c5', text: 'Customers pay the shop directly.', sectionId: hero, quote: 'Your customers pay you directly.' },
       { id: 'c6', text: 'The shop is one link.', sectionId: hero, quote: 'Your shop in one link.' },
     ],
     musicPrompt: 'Upbeat electronic pop, bright synths, steady four-on-the-floor drums.',
@@ -270,9 +270,9 @@ describe('the new pieces and the rhythm', () => {
     // One still per text a scene shows: three words, two captions.
     expect(stills.map((s) => s.path)).toEqual(['hooks[0][0]', 'body[0]', 'body[0]', 'body[0]', 'body[1]', 'body[1]', 'body[2]', 'cta']);
     expect(textsOf(stills, 'body[0]')).toEqual(['Get paid with', 'cards', 'Get paid with', 'transfers', 'Get paid with', 'cash']);
-    expect(stills.filter((s) => s.path === 'body[1]').map((s) => s.text.map((t) => t.text).join(' / '))).toEqual([
-      'Sell on WhatsApp / with no fees',
-      'Customers pay / you directly',
+    expect(stills.filter((s) => s.path === 'body[1]').map((s) => s.text.map((t) => t.text).join(' '))).toEqual([
+      'One plan, everything in it',
+      'Priced at $4.990 / mes',
     ]);
     expect(textsOf(stills, 'body[2]')).toEqual(['Your shop', 'in one link.', 'Today.']);
   });

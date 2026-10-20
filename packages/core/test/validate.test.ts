@@ -10,6 +10,8 @@ import {
   siteHost,
   timedScenePath,
   validateEdl,
+  type Block,
+  type Box,
   type Claim,
   type Edl,
   type Line,
@@ -202,7 +204,8 @@ describe('validateEdl: structure', () => {
 
   describe('UiFocus and UiScroll', () => {
     it('requires UiFocus to have a boxIndex', () => structure(inBody(uiFocus({ boxIndex: undefined }))));
-    it('accepts UiScroll without a boxIndex', () => clean(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', lines: [framing('Mirá')] })));
+    it('requires UiScroll to have a boxIndex', () => structure(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', lines: [framing('Mirá')] })));
+    it('accepts a UiScroll aimed at product UI', () => clean(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', boxIndex: 2, lines: [framing('Mirá')] })));
     it('requires a shotId that exists', () => {
       structure(inBody(uiFocus({ shotId: 's9-desktop' })));
       structure(inBody(uiFocus({ shotId: undefined })));
@@ -212,6 +215,78 @@ describe('validateEdl: structure', () => {
       structure(inBody(uiFocus({ boxIndex: -1 })));
       structure(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', boxIndex: 3, lines: [framing('Mirá')] }));
       clean(inBody(uiFocus({ boxIndex: 2 })));
+    });
+  });
+
+  describe('UiFocus and UiScroll film product UI', () => {
+    const SHOT = 'm-s7';
+    const heading: Box = { shotId: SHOT, sectionId: 's3', kind: 'heading', text: 'Cobrás como querés', x: 80, y: 300, w: 600, h: 100 };
+    const picture: Box = { shotId: SHOT, sectionId: 's2', kind: 'image', x: 80, y: 700, w: 600, h: 400 };
+    // The shop, plus a phone shot of a section with these boxes and these blocks.
+    const withShot = (boxes: Box[], blocks?: Block[]): SiteData => ({
+      ...siteShop,
+      shots: [...siteShop.shots, { id: SHOT, file: 'media/m-s7.png', viewport: 'mobile', dpr: 2, sectionId: 's3', width: 780, height: 1688 }],
+      boxes: [...siteShop.boxes, ...boxes],
+      ...(blocks ? { blocks } : {}),
+    });
+    const focus = (site: SiteData, boxIndex = 0): Case => inBody(uiFocus({ shotId: SHOT, boxIndex }), site);
+    const scroll = (site: SiteData, boxIndex = 0): Case =>
+      inBody({ piece: 'UiScroll', beats: 4, shotId: SHOT, boxIndex, lines: [framing('Mirá')] }, site);
+    const detail = (c: Case): string[] => problemsOf(c).map((p) => p.detail);
+    const marketing =
+      'UiFocus must film product UI: box 0 ("Cobrás como querés") of m-s7 has no image or price in its section or card; state this claim in a type scene or aim at product UI';
+
+    it('reports a heading whose section has only text, with what the corrector can do about it', () => {
+      structure(focus(withShot([heading])));
+      expect(detail(focus(withShot([heading])))).toEqual([marketing]);
+      expect(problemsOf(focus(withShot([heading])))).toEqual([{ where: 'body[0]', rule: 'structure', detail: marketing }]);
+    });
+
+    it('accepts the same heading when its section has a price', () =>
+      clean(focus(withShot([heading, { shotId: SHOT, sectionId: 's3', kind: 'price', text: '$4.990', x: 80, y: 500, w: 300, h: 80 }]))));
+
+    it('accepts the same heading when its section has an image', () => clean(focus(withShot([heading, { ...picture, sectionId: 's3' }]))));
+
+    it('accepts a heading inside a block that also holds an image, whatever the sections', () =>
+      clean(focus(withShot([heading, picture], [{ shotId: SHOT, x: 40, y: 250, w: 700, h: 1000 }]))));
+
+    it('reports a heading whose block holds no image, the image being in a block of its own', () =>
+      structure(focus(withShot([heading, picture], [{ shotId: SHOT, x: 40, y: 250, w: 700, h: 200 }, { shotId: SHOT, x: 40, y: 650, w: 700, h: 500 }]))));
+
+    it('reports a heading whose section has only a cta: a button over text is marketing', () =>
+      structure(focus(withShot([heading, { shotId: SHOT, sectionId: 's3', kind: 'cta', text: 'Crear mi tienda', x: 80, y: 500, w: 300, h: 100 }]))));
+
+    it('lets the section alone decide when the capture has no blocks', () => {
+      structure(focus(withShot([heading, picture])));
+      clean(focus(withShot([heading, { ...picture, sectionId: 's3' }])));
+    });
+
+    it('reports a UiScroll that lands on a text card, naming the piece', () => {
+      structure(scroll(withShot([heading])));
+      expect(detail(scroll(withShot([heading])))).toEqual([marketing.replace('UiFocus', 'UiScroll')]);
+    });
+
+    it('accepts a UiScroll that lands on product UI', () => clean(scroll(withShot([heading, picture]), 1)));
+
+    it('names the kind of a box that has no text', () => {
+      const cta: Box = { shotId: SHOT, sectionId: 's3', kind: 'cta', x: 80, y: 500, w: 300, h: 100 };
+      expect(detail(focus(withShot([cta])))).toEqual([expect.stringContaining('box 0 (cta) of m-s7')]);
+    });
+
+    it('reports a box out of range once, not also as marketing', () => {
+      expect(detail(focus(withShot([heading]), 5))).toEqual(['boxIndex 5 out of range for m-s7']);
+      expect(detail(scroll(withShot([heading]), 5))).toEqual(['boxIndex 5 out of range for m-s7']);
+    });
+
+    it('reports an unknown shot and a missing boxIndex without looking for product UI', () => {
+      expect(detail(inBody(uiFocus({ shotId: 's9-mobile', boxIndex: 0 })))).toEqual(['UiFocus with unknown shotId s9-mobile']);
+      expect(detail(inBody(uiFocus({ boxIndex: undefined })))).toEqual(['UiFocus needs a boxIndex']);
+      expect(detail(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', lines: [framing('Mirá')] }))).toEqual(['UiScroll needs a boxIndex']);
+    });
+
+    it('keeps the order of the checks: the shot, the range of the box, the boxIndex, the product', () => {
+      const unknown = inBody({ piece: 'UiScroll', beats: 4, shotId: 's9-mobile', lines: [framing('Mirá')] });
+      expect(detail(unknown)).toEqual(['UiScroll with unknown shotId s9-mobile', 'UiScroll needs a boxIndex']);
     });
   });
 
@@ -304,7 +379,7 @@ describe('validateEdl: structure', () => {
     });
 
     it('allows atBeat on the second line of a UiScroll', () =>
-      clean(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', lines: [framing('Mirá'), framing('Y seguí', { atBeat: 2 })] })));
+      clean(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', boxIndex: 0, lines: [framing('Mirá'), framing('Y seguí', { atBeat: 2 })] })));
 
     it('rejects atBeat on any line but the second', () => {
       structure(inBody(uiFocus({ lines: [claimLine('Tu tienda, lista en minutos.', 'c2', { atBeat: 2 })] })));
