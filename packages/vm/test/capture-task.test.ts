@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureResult, TaskEnvelope } from '@app/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { capture, captureTask, checkExtraPage, ExtraPageLeftOut, pairPhoneSections, parseCaptureInput, pickExtraPages } from '../src/capture';
+import { capture, captureTask, checkExtraPage, countWords, ExtraPageLeftOut, pairPhoneSections, parseCaptureInput, pickExtraPages, thinCaptureMessage } from '../src/capture';
 
 const OK: CaptureResult = { ok: true, metadataBlocked: true, sections: 2, shots: 3 };
 const TARGET = 'https://store.example/orders/o1/capture.json?signature=SECRET';
@@ -114,6 +114,35 @@ describe('pairPhoneSections', () => {
 
   it('gives no id to a phone section that has no k-th twin on the desktop', () => {
     expect(pairPhoneSections(desktop, [{ heading: 'Fees' }, { heading: 'Fees' }, { heading: 'Fees' }, { heading: 'Pricing' }])).toEqual(['s2', 's4', null, null]);
+  });
+});
+
+describe('countWords', () => {
+  it('counts what stands between spaces and holds a letter or a digit', () => {
+    expect(countWords('  Pay gas in USD₮ — 1 sec. blocks\n$0.0004 · $ 6.2 ')).toBe(9);
+    expect(countWords('')).toBe(0);
+    expect(countWords(' — · $ ')).toBe(0);
+  });
+});
+
+describe('thinCaptureMessage', () => {
+  const thin = (read: number, shown: number): string => `The capture read ${read} words of the ${shown} the page shows: too little to write from.`;
+
+  it('fails a capture of fewer than 60 words that is also less than a quarter of the page, with both numbers', () => {
+    expect(thinCaptureMessage(27, 2617)).toBe(thin(27, 2617));
+    expect(thinCaptureMessage(59, 237)).toBe(thin(59, 237));
+    expect(thinCaptureMessage(24, 100)).toBe(thin(24, 100));
+  });
+
+  it('passes 60 words or more, however large the page', () => {
+    expect(thinCaptureMessage(60, 100_000)).toBeNull();
+    expect(thinCaptureMessage(500, 20_000)).toBeNull();
+  });
+
+  it('passes a quarter of the page or more, however few the words', () => {
+    expect(thinCaptureMessage(50, 50)).toBeNull();
+    expect(thinCaptureMessage(59, 236)).toBeNull();
+    expect(thinCaptureMessage(25, 100)).toBeNull();
   });
 });
 

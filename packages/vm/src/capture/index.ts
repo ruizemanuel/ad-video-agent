@@ -127,7 +127,23 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
   lap('logo-og');
 }
 
-type PageOutcome = { blocked: true } | { blocked: false; anchors: Anchor[] };
+/** `anchors` and `pageWords` (the words the page shows) are read on the site's own page; an extra page has none. */
+type PageOutcome = { blocked: true } | { blocked: false; anchors: Anchor[]; pageWords: number };
+
+/** The words of a text: what stands between spaces and holds a letter or a digit. */
+export const countWords = (text: string): number => text.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+
+/** Under both, the sections of a capture hold too little of the page's text to write a video from. */
+const THIN_CAPTURE = { words: 60, share: 0.25 };
+
+/**
+ * Why a capture fails when its sections hold fewer than 60 words and also less than a quarter of the words the page
+ * shows (the capture lost the page's text: a video written from it would say nothing), or null when it holds enough.
+ */
+export function thinCaptureMessage(capturedWords: number, pageWords: number): string | null {
+  if (capturedWords >= THIN_CAPTURE.words || capturedWords >= pageWords * THIN_CAPTURE.share) return null;
+  return `The capture read ${capturedWords} words of the ${pageWords} the page shows: too little to write from.`;
+}
 
 /**
  * The desktop id of each phone section: the k-th phone section with a heading is the k-th desktop section with it. Null
@@ -176,6 +192,7 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   const { browser, site, log, lap, runDir } = ctx;
   const own = prefix === '';
   let anchors: Anchor[] = [];
+  let pageWords = 0;
 
   const desktop = await openPage(browser, url, 'desktop', log);
   let text: PageText;
@@ -184,6 +201,7 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
     if (own) {
       const seen = await desktop.page.evaluate(inPageSeen);
       if (detectBlocked({ ...seen, status: desktop.status })) return { blocked: true };
+      pageWords = countWords(seen.text);
       anchors = await desktop.page.evaluate(inPageAnchors);
     } else {
       await checkExtraPage(desktop.page, desktop.status);
@@ -227,7 +245,7 @@ async function capturePage(ctx: Context, url: string, prefix: string): Promise<P
   } finally {
     await mobile.page.close().catch(() => {});
   }
-  return { blocked: false, anchors };
+  return { blocked: false, anchors, pageWords };
 }
 
 /** The address as a full http or https address, or null: a file, a script, ftp or text that is no address is not a page to film. */
@@ -269,9 +287,11 @@ export function pickExtraPages(mainUrl: string, demoLinks: readonly string[], ex
 
 /**
  * Captures the site into `runDir`. A challenge page instead of the site is `blocked`, an address that cannot be
- * reached is `unreachable`. The extra pages (demo links the site shows, `extraUrls`) are best effort: one that fails, is
- * a wall for automated visitors or answers with an error (see checkExtraPage) is left out and noted. `metadataBlocked`
- * says whether this VM is shut away from the cloud's metadata server.
+ * reached is `unreachable`, and a capture whose sections lost the text the page shows is an `error` (see
+ * thinCaptureMessage): it is given back before any model is paid to read it. The extra pages (demo links the site
+ * shows, `extraUrls`) are best effort: one that fails, is a wall for automated visitors or answers with an error (see
+ * checkExtraPage) is left out and noted. `metadataBlocked` says whether this VM is shut away from the cloud's metadata
+ * server.
  */
 export async function capture(input: CaptureInput, runDir: string): Promise<CaptureResult> {
   // The browser would open a file: address as readily as a web one.
@@ -305,6 +325,11 @@ export async function capture(input: CaptureInput, runDir: string): Promise<Capt
     const own = await capturePage(ctx, input.url, '');
     if (own.blocked) return { ok: false, code: 'blocked', message: BLOCKED_MESSAGE };
     if (site.sections.length === 0) return { ok: false, code: 'error', message: 'The page has no text to read.' };
+    const thin = thinCaptureMessage(
+      site.sections.reduce((words, s) => words + countWords(s.heading) + countWords(s.text), 0),
+      own.pageWords,
+    );
+    if (thin !== null) return { ok: false, code: 'error', message: thin };
 
     const demo = input.followDemoLinks > 0 ? findDemoLinks(own.anchors, input.url, Math.min(input.followDemoLinks, MAX_FOLLOWED_LINKS)) : [];
     const { pages: extras, ignored } = pickExtraPages(input.url, demo, input.extraUrls);

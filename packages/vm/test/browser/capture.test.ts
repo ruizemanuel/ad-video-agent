@@ -73,6 +73,12 @@ describe('capture', () => {
     const r = await capture({ url: `${fixtureUrl}empty.html`, extraUrls: [], followDemoLinks: 0 }, runDir());
     expect(r).toMatchObject({ ok: false, code: 'error', message: expect.stringContaining('no text') });
   });
+
+  it('fails a capture whose sections lost the text the page shows, saying how much it read of how much', async () => {
+    // The page shows 100 words, 91 of them in a menu the capture does not read: its one section holds 9.
+    const r = await capture({ url: `${fixtureUrl}thin.html`, extraUrls: [], followDemoLinks: 0 }, runDir());
+    expect(r).toEqual({ ok: false, code: 'error', message: 'The capture read 9 words of the 100 the page shows: too little to write from.' });
+  });
 });
 
 describe('a Framer site: content in wrappers with no box, figures split over headings, a carousel, cards that fade in, a CSS wordmark', () => {
