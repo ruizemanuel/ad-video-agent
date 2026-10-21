@@ -1,8 +1,9 @@
 // The pieces animate their text with the timing core checks the edit list against (see textWindows): these tests pin
 // what a piece really draws to the constant core reads, so that the render and the reading check cannot drift apart.
-import { CAPTION_SWAP, FPS, REVEAL_FRAMES } from '@app/core';
+import { beatsToFrames, CAPTION_SWAP, FPS, REVEAL_FRAMES, textWindows, type TimedScene } from '@app/core';
 import { describe, expect, it } from 'vitest';
 import { captionFade, revealDrop } from '../src/video/pieces/common';
+import { typedChars } from '../src/video/rhythm';
 
 describe('a line revealed through its mask', () => {
   it('is in place REVEAL_FRAMES frames after it starts to rise, and not before', () => {
@@ -28,4 +29,19 @@ describe('a caption replaced on its beat', () => {
   });
 
   it('shows the first caption alone when nothing replaces it', () => expect(captionFade(200, undefined)).toEqual({ out: 0, come: 0 }));
+});
+
+describe('a typed text', () => {
+  it('is whole in the field on the frame textWindows says it is fully in, and not a frame before', () => {
+    const text = 'tiendita.example';
+    for (const bpm of [90, 104, 112, 113.19, 128])
+      for (const beats of [2, 3, 4, 5, 6, 8]) {
+        const duration = beatsToFrames(beats, bpm);
+        const timed: TimedScene = { scene: { piece: 'TypeIn', beats, variant: 'url', lines: [{ text, kind: 'framing' }] }, role: 'hook', index: 0, from: 0, duration, startBeat: 0 };
+        const [typed] = textWindows(timed, bpm, false);
+        const at = `${beats} beats at ${bpm} bpm`;
+        expect(typedChars(text, typed?.fullyIn ?? 0, duration), at).toBe(text.length);
+        expect(typedChars(text, (typed?.fullyIn ?? 0) - 1, duration), at).toBeLessThan(text.length);
+      }
+  });
 });

@@ -1,7 +1,7 @@
 import { useMemo, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, contrast, MIN_CONTRAST, mix, TYPE, type Format } from '@app/core';
-import { pressState, typedChars, TYPED_BY, typeInPressFrame } from '../rhythm';
+import { alpha, contrast, MIN_CONTRAST, mix, TYPE, TYPED_BY, type Format } from '@app/core';
+import { pressState, typedChars, typeInPressFrame } from '../rhythm';
 import { fitAddress, layoutLines, lineText, toWords } from '../type';
 import { centeredSafeBox, fontStyle, measureWith, progress, useAd, type PieceProps } from './common';
 

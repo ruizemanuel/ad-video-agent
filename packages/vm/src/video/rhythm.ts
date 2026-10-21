@@ -2,14 +2,12 @@
 // frame a piece reads with useCurrentFrame). Every change of text lands on a beat of the whole video's grid, so a
 // scene keeps the pulse wherever it falls; the key frames read the same changes (render/keyframes.ts). When each text
 // comes in and goes is core's (timing.ts), which the edit list's checks read too.
-import { beatFrame, captionSwapFrame, settledFrame, wordEnterFrame, type Line, type TimedScene } from '@app/core';
+import { beatFrame, captionSwapFrame, settledFrame, TYPED_BY, wordEnterFrame, type Line, type TimedScene } from '@app/core';
 
 // ---------- TypeIn ----------
 
-// Typing starts once the bar has come in.
+// Typing starts once the bar has come in; it is done at TYPED_BY of the scene.
 const TYPE_START = 6;
-/** The share of the scene by which the typing is done. */
-export const TYPED_BY = 0.6;
 
 /** How many characters (not UTF-16 units) of `text` are typed at `frame`: none until the bar is in, all at 60% of the scene. */
 export const typedChars = (text: string, frame: number, duration: number): number => {

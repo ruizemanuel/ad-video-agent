@@ -7,6 +7,7 @@ import {
   READING_TOLERANCE_FRAMES,
   REVEAL_FRAMES,
   TAGLINE_AT,
+  TYPED_BY,
   WIPE_FRAMES,
   WORD_ROLL,
   beatsToFrames,
@@ -94,8 +95,16 @@ describe('textWindows', () => {
       { line: 1, text: 'Your shop in one link.', fullyIn: TAGLINE_AT + REVEAL_FRAMES, leaves: 90 },
     ]));
 
-  it('leaves out what a TypeIn types: it is read as it is typed', () =>
-    expect(windows({ piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [f('Where do my customers pay me?')] })).toEqual([]));
+  it('has what a TypeIn types in once the typing is done, at TYPED_BY of the scene, and to the end', () => {
+    // 4 beats: 60 frames, typed by frame 36.
+    expect(windows({ piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [f('Where do my customers pay me?')] })).toEqual([
+      { line: 0, text: 'Where do my customers pay me?', fullyIn: 60 * TYPED_BY, leaves: 60 },
+    ]);
+    // 5 beats at 112 bpm from beat 4: 81 frames, typed by frame 48.6, so whole on frame 49; a wipe after it takes the last 6.
+    expect(windows({ piece: 'TypeIn', beats: 5, variant: 'url', lines: [f('tiendita.example')] }, { bpm: 112, wipeOut: true })).toEqual([
+      { line: 0, text: 'tiendita.example', fullyIn: 49, leaves: 75 },
+    ]);
+  });
 });
 
 describe('the reading rule', () => {
@@ -177,6 +186,33 @@ describe('validateEdl: every text stays on screen long enough to read', () => {
       { where: 'body[1].lines[0]', rule: 'structure', detail: 'caption 1 "Productos digitales y sesiones 1:1." (35 characters) is readable 1.13 s of the 2.06 s it needs: drop the second caption' },
       { where: 'body[1].lines[1]', rule: 'structure', detail: 'caption 2 "Un solo link para tu bio." (25 characters) is readable 1.53 s of the 1.80 s it needs: drop the second caption' },
     ]);
+  });
+
+  describe('a TypeIn, whose text is read once it is typed', () => {
+    const typed = (variant: 'url' | 'prompt', text: string, beats: number, url = site.url): string[] => {
+      const edl: Edl = { ...run4(), hooks: [[{ piece: 'TypeIn', beats, variant, lines: [f(text)] }]] };
+      return validateEdl(edl, { ...site, url }).map((p) => `${p.where}: ${p.detail}`);
+    };
+
+    it('refuses the address of a url hook too short to read it once typed, and names the beats: an address cannot be cut', () => {
+      expect(typed('url', 'tiendita.example', 4)).toEqual([
+        'hooks[0][0].lines[0]: the typed text "tiendita.example" (16 characters) is readable 0.67 s of the 0.94 s it needs: give the scene 6 beats',
+        'body[1].lines[0]: caption 1 "Productos, precios y pago en un link." (37 characters) is readable 1.57 s of the 2.18 s it needs: drop the second caption, or cut it to 27 characters and 5 words',
+      ]);
+      expect(typed('url', 'tiendita.example', 6).filter((problem) => problem.startsWith('hooks'))).toEqual([]);
+    });
+
+    it('names the beats or the length for a typed question', () =>
+      expect(typed('prompt', '¿Cuánto cobrás por venta?', 5)[0]).toBe(
+        'hooks[0][0].lines[0]: the typed text "¿Cuánto cobrás por venta?" (25 characters) is readable 0.87 s of the 1.47 s it needs: give the scene 8 beats, or cut it to 15 characters and 3 words',
+      ));
+
+    it('says to use another piece when no scene a scene may have reads the address once typed', () => {
+      const host = 'distribuidoradelnorte-mayorista.com.ar';
+      expect(typed('url', host, 8, `https://www.${host}/`)[0]).toBe(
+        `hooks[0][0].lines[0]: the typed text "${host}" (38 characters) is readable 1.53 s of the 2.24 s it needs: use another piece: an address this long cannot be read once typed in a scene of 8 beats or fewer`,
+      );
+    });
   });
 
   it("refuses paid run 4's hook caption and its UiScroll's first caption, and nothing else", () => {

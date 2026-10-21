@@ -65,8 +65,9 @@ const uiFocus = (extra: Partial<Scene> = {}): Scene => ({
 // In body[1], which a cut follows: the wipe after body[0] would take the end of its last word (see the reading tests).
 const wordCycle = (words: string[], prefix: Line = framing('Pagá con'), beats = 6): Case =>
   shop(withBody(1, { piece: 'WordCycle', beats, lines: [prefix, ...words.map((w) => claimLine(w, 'c5'))] }));
+// 8 beats: what it types, up to 26 characters, is then read before the wipe into body[1] (see the reading tests).
 const typeIn = (lines: Line[], variant?: 'url' | 'prompt', site: SiteData = siteShop): Case =>
-  inBody({ piece: 'TypeIn', beats: 4, variant, lines }, site);
+  inBody({ piece: 'TypeIn', beats: 8, variant, lines }, site);
 const atBeat = (value: number, beats: number): Case =>
   inBody(uiFocus({ beats, lines: [claimLine('Tu tienda, lista en minutos.', 'c2'), claimLine('Sin comisiones.', 'c1', { atBeat: value })] }));
 // The problems that are not about how long a text stays on screen.
@@ -205,10 +206,12 @@ describe('validateEdl: structure', () => {
   it.each([89, 129, 0, Number.NaN])('rejects %s bpm', (bpm) => structure(shop({ ...edlShop, bpm })));
   it.each([90, 100.5, 128])('accepts %s bpm', (bpm) => clean(shop({ ...edlShop, bpm })));
 
-  // A TypeIn, whose text is read as it is typed: in 2 beats, the text of any other piece is not on screen long enough.
-  const typedAddress = (beats: number): Scene => ({ piece: 'TypeIn', beats, variant: 'url', lines: [framing('tiendita.example')] });
-  it.each([1, 9])('rejects a scene of %s beats', (beats) => structure(shop(withBody(0, typedAddress(beats)))));
-  it.each([2, 8])('accepts a scene of %s beats', (beats) => clean(shop(withBody(0, typedAddress(beats)))));
+  // The range of a scene's length. Whether its text is read in that length is the reading rule's (no text is, in 2 beats at
+  // 112 bpm: see the reading tests).
+  const outOfRange = (beats: number) =>
+    problemsOf(shop(withBody(0, { ...get(edlShop.body, 0), beats }))).filter((p) => p.detail === `${beats} beats (expected 2-8)`);
+  it.each([1, 9])('rejects a scene of %s beats', (beats) => expect(outOfRange(beats)).toEqual([{ where: 'body[0]', rule: 'structure', detail: `${beats} beats (expected 2-8)` }]));
+  it.each([2, 8])('accepts a scene of %s beats', (beats) => expect(outOfRange(beats)).toEqual([]));
 
   describe('UiFocus and UiScroll', () => {
     it('requires UiFocus to have a boxIndex', () => structure(inBody(uiFocus({ boxIndex: undefined }))));
@@ -488,7 +491,8 @@ describe('validateEdl: structure', () => {
 
       it('still checks a prompt line for numbers and banned phrases', () => {
         expect(rules(typeIn([framing('¿Cobrás 3 % por venta?')], 'prompt'))).toEqual(['framing-has-data']);
-        expect(rules(typeIn([framing('¿Querés llevar tu tienda al siguiente nivel?')], 'prompt'))).toEqual(['banned-phrase']);
+        // 44 characters are not read once typed in 8 beats either: the reading rule says so on its own.
+        expect(notReading(typeIn([framing('¿Querés llevar tu tienda al siguiente nivel?')], 'prompt')).map((p) => p.rule)).toEqual(['banned-phrase']);
       });
 
       it('still checks the framing lines of every other piece', () => {

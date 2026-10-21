@@ -105,6 +105,7 @@ describe('@app/core public surface', () => {
         'SceneSchema',
         'TAGLINE_AT',
         'TYPE',
+        'TYPED_BY',
         'WIPE_FRAMES',
         'WORD_ROLL',
         'applyPatches',

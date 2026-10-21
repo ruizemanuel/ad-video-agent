@@ -104,7 +104,8 @@ function makeNewPiecesEdl(site: SiteData): Edl {
     bpm: 112,
     style: { energy: 'bold', density: 'airy' },
     hooks: [
-      [{ piece: 'TypeIn', beats: 4, variant: 'url', lines: [{ text: host, kind: 'framing' }] }],
+      // 6 beats: the address is typed by 60 % of the scene and then read before the wipe into the body.
+      [{ piece: 'TypeIn', beats: 6, variant: 'url', lines: [{ text: host, kind: 'framing' }] }],
       [{ piece: 'TypeIn', beats: 4, variant: 'prompt', lines: [{ text: 'Where do my customers pay me?', kind: 'framing' }] }],
       [{ piece: 'KineticHeadline', beats: 4, lines: [{ text: 'Sell on WhatsApp', kind: 'framing' }, { text: 'with no fees.', kind: 'framing', accent: 'no fees' }] }],
     ],
@@ -322,7 +323,9 @@ describe('the new pieces and the rhythm', () => {
   it.each(['distribuidoradelnorte.com.ar', 'distribuidoradelnorte-mayorista.com.ar'])('keeps the long address %s whole and inside the safe zone, typed and under the button of the close', async (host) => {
     const long: SiteData = { ...site, url: `https://www.${host}/` };
     const edl = makeNewPiecesEdl(long);
-    expect(validateEdl(edl, long)).toEqual([]);
+    // An address this long is not read once typed in a scene of 8 beats or fewer, before the wipe into the body: validateEdl
+    // refuses the url hook for it, and nothing else. The render still has to keep it whole.
+    expect(validateEdl(edl, long).map((p) => p.where)).toEqual(['hooks[0][0].lines[0]']);
     const stills = await renderKeyframes({ edl, site: long, runDir: dir, format: '9x16', hook: 0 });
     expect(checkStills(stills, edl, long, '9x16').filter((c) => !c.pass)).toEqual([]);
     expect(textsOf(stills, 'hooks[0][0]')).toEqual([host]);

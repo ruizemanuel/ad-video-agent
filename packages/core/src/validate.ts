@@ -235,7 +235,7 @@ const textName = (scene: Scene, w: TextWindow, captions: number): string => {
     case 'EndCard':
       return w.line === 0 ? 'the button' : 'the tagline';
     case 'TypeIn':
-      return 'the text';
+      return 'the typed text';
   }
 };
 
@@ -291,9 +291,12 @@ const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placeme
   const windows = textWindows(timed, bpm, at.wipeOut);
   const unread = windows.filter((w) => !isReadable(w));
   if (!unread.length) return;
+  // A TypeIn url types the site's address, which cannot be cut: when no length a scene may have reads it, another piece will.
+  const address = scene.piece === 'TypeIn' && scene.variant === 'url';
   const fixes = readingFixes(scene, at, bpm);
+  if (address && !fixes.length) fixes.push(`use another piece: an address this long cannot be read once typed in a scene of ${SCENE_BEATS.max} beats or fewer`);
   // Cutting the text helps nothing when two captions share a scene too short for them (see checkAtBeat).
-  const cuts = !swapsCaption(scene) || scene.beats >= MIN_SWAP_BEATS;
+  const cuts = !address && (!swapsCaption(scene) || scene.beats >= MIN_SWAP_BEATS);
   for (const w of unread) {
     const cut = cuts ? cutToRead(w, 'it') : undefined;
     const options = cut ? [...fixes, cut] : fixes;

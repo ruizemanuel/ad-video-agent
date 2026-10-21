@@ -90,6 +90,8 @@ export const MARK_AT = 3;
 export const TAGLINE_AT = MARK_AT + 6;
 /** The frames the button of the close takes to come in: it is in, and still, before it is pressed. */
 export const BUTTON_IN = 14;
+/** The share of a TypeIn scene by which its line is typed whole. */
+export const TYPED_BY = 0.6;
 
 /** The frame of the scene on which its beat `beat` (a half beat too) falls, on the beat grid of the whole video. */
 export const beatFrame = (timed: TimedScene, beat: number, bpm: number): number => beatsToFrames(timed.startBeat + beat, bpm) - timed.from;
@@ -187,9 +189,9 @@ export const readableIn = (frames: number): { chars: number; words: number } | u
 
 /**
  * Every text the scene shows, with the frames of the scene it is whole on screen between: from when every word of it is in
- * and its entrance has settled, to when it starts to leave (the caption that replaces it, the next word, the wipe into the
- * next scene, or the cut). `wipeOut`: a wipe brings the next scene in, and covers this one from WIPE_FRAMES / 2 before the
- * cut. A TypeIn is left out: what it types is read as it is typed.
+ * and its entrance has settled (a TypeIn's line once it is typed whole), to when it starts to leave (the caption that
+ * replaces it, the next word, the wipe into the next scene, or the cut). `wipeOut`: a wipe brings the next scene in, and
+ * covers this one from WIPE_FRAMES / 2 before the cut.
  */
 export const textWindows = (timed: TimedScene, bpm: number, wipeOut: boolean): TextWindow[] => {
   const { scene } = timed;
@@ -226,7 +228,8 @@ export const textWindows = (timed: TimedScene, bpm: number, wipeOut: boolean): T
       ];
     }
     case 'TypeIn':
-      return [];
+      // Typed whole on the first frame at or after TYPED_BY of the scene (see the VM's typedChars).
+      return lines[0] ? [window(0, lines[0].text, Math.ceil(timed.duration * TYPED_BY), end)] : [];
   }
 };
 
