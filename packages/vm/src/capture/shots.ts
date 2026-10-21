@@ -3,10 +3,11 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CaptureLog, Shot, SiteData } from '@app/core';
-import type { Page } from 'puppeteer-core';
+import type { Page, ScreenshotOptions } from 'puppeteer-core';
 import { buildDirectorJpegArgs, runFfmpeg } from '../render/ffmpeg';
-import { inPageBlocks, inPageBoxes, MAX_FULL_PAGE_CSS_PX, type PageBlock, type RawSection } from './extract';
+import { inPageBlocks, inPageBoxes, inPageFadeMedia, MAX_FULL_PAGE_CSS_PX, type PageBlock, type PageBox, type RawSection } from './extract';
 import { addNote, DPR, removeOverlays, sleep, VIEWPORTS, type ViewportName } from './page';
+import { unchangedRegions } from './pixels';
 
 /** The size of a PNG, from its header (the IHDR chunk comes first), or null when the bytes are not a PNG. */
 export const pngSize = (bytes: Buffer): { width: number; height: number } | null => {
@@ -26,10 +27,33 @@ export const addBlocks = (site: Pick<SiteData, 'blocks'>, shotId: string, found:
 };
 
 /**
+ * The boxes of a shot without the media (images, videos, canvases, SVGs) that paint nothing in it: a video never loaded
+ * and with no poster, one that plays frames with nothing in them, an image not loaded yet. The shot is taken again, the
+ * same way (`options`), with the media inPageBoxes measured faded out (see inPageFadeMedia). A medium whose region is
+ * the same picture in both shots paints nothing there, and its box would aim the camera at what the shot does not show.
+ * If the media cannot all be faded, nothing can be told and every box is kept. The log says how many were left out.
+ */
+async function withoutBlankMedia(page: Page, shot: Uint8Array, boxes: PageBox[], options: ScreenshotOptions, log: CaptureLog, shotId: string): Promise<PageBox[]> {
+  const media = boxes.filter((b) => b.kind === 'image');
+  if (media.length === 0) return boxes;
+  let without: Uint8Array | null = null;
+  try {
+    if (await page.evaluate(inPageFadeMedia, true)) without = await page.screenshot(options);
+  } finally {
+    await page.evaluate(inPageFadeMedia, false);
+  }
+  if (!without) return boxes;
+  const unchanged = await unchangedRegions(shot, without, media);
+  const blank = new Set(media.filter((_, k) => unchanged[k]));
+  if (blank.size > 0) addNote(log, `${shotId}: ${blank.size} media boxes left out: they paint nothing in the shot`);
+  return boxes.filter((b) => !blank.has(b));
+}
+
+/**
  * Shoots each of `sections` (the page scrolled so its heading is near the top) and then the whole page, up to
- * 8000 CSS pixels, and adds the shots, their boxes and their blocks to `site`. Two sections that frame the page the same
- * way give one shot. The ids are `<prefix><d|m>-<section>` and `<prefix><d|m>-full`; `prefix` is empty for the site and
- * `x<n>-` for its extra pages.
+ * 8000 CSS pixels, and adds the shots, their boxes (none on a medium that paints nothing) and their blocks to `site`.
+ * Two sections that frame the page the same way give one shot. The ids are `<prefix><d|m>-<section>` and
+ * `<prefix><d|m>-full`; `prefix` is empty for the site and `x<n>-` for its extra pages.
  */
 export async function shoot(
   page: Page,
@@ -59,10 +83,9 @@ export async function shoot(
     if ((await removeOverlays(page, log, `${prefix}${v}-${s.id}`)) > 0) await sleep(300);
     const id = `${prefix}${v}-${s.id}`;
     const file = `media/${id}.png`;
-    await page.screenshot({ path: join(runDir, file) });
+    const shot = await page.screenshot({ path: join(runDir, file) });
     site.shots.push({ id, file, viewport, dpr: DPR, sectionId: s.id, width: vp.width * DPR, height: vp.height * DPR });
-    for (const b of await page.evaluate(inPageBoxes, false, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
-    addBlocks(site, id, await page.evaluate(inPageBlocks, false, MAX_FULL_PAGE_CSS_PX), log);
+    await measure(page, id, shot, {}, false, site, log);
   }
   await page.evaluate(() => scrollTo(0, 0));
   await sleep(500);
@@ -70,10 +93,21 @@ export async function shoot(
   if (pageHeight > MAX_FULL_PAGE_CSS_PX) addNote(log, `${viewport} full page clipped from ${pageHeight} to ${h} css px`);
   const id = `${prefix}${v}-full`;
   const file = `media/${id}.png`;
-  await page.screenshot({ path: join(runDir, file), clip: { x: 0, y: 0, width: vp.width, height: h }, captureBeyondViewport: true });
+  const options: ScreenshotOptions = { clip: { x: 0, y: 0, width: vp.width, height: h }, captureBeyondViewport: true };
+  const shot = await page.screenshot({ path: join(runDir, file), ...options });
   site.shots.push({ id, file, viewport, dpr: DPR, width: vp.width * DPR, height: h * DPR });
-  for (const b of await page.evaluate(inPageBoxes, true, MAX_FULL_PAGE_CSS_PX)) site.boxes.push({ shotId: id, ...b });
-  addBlocks(site, id, await page.evaluate(inPageBlocks, true, MAX_FULL_PAGE_CSS_PX), log);
+  await measure(page, id, shot, options, true, site, log);
+}
+
+/**
+ * Adds the boxes and the blocks of the shot just taken (`shot`, taken with `options`) to `site`. The blocks are measured
+ * before the media are faded out to see which paint nothing (see withoutBlankMedia).
+ */
+async function measure(page: Page, id: string, shot: Uint8Array, options: ScreenshotOptions, fullPage: boolean, site: Pick<SiteData, 'boxes' | 'blocks'>, log: CaptureLog): Promise<void> {
+  const boxes = await page.evaluate(inPageBoxes, fullPage, MAX_FULL_PAGE_CSS_PX);
+  const blocks = await page.evaluate(inPageBlocks, fullPage, MAX_FULL_PAGE_CSS_PX);
+  for (const b of await withoutBlankMedia(page, shot, boxes, options, log, id)) site.boxes.push({ shotId: id, ...b });
+  addBlocks(site, id, blocks, log);
 }
 
 /** The most pictures the director is shown: each is a part of a billed model call, and a site can have many sections. */

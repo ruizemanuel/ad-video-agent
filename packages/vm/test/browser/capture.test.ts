@@ -13,6 +13,7 @@ import { inPageFaceKind, inPageFindLogo, inPageSetup } from '../../src/capture/e
 import { resolveFont } from '../../src/capture/fonts';
 import { launchBrowser } from '../../src/capture/page';
 import { pngSize } from '../../src/capture/shots';
+import { runFfmpeg } from '../../src/render/ffmpeg';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngHasInk } from './support/png';
 
@@ -361,6 +362,37 @@ describe("a page whose card appears in view and goes again out of it (Framer's a
         expect(site.blocks.filter((b) => b.shotId === shotId).map((b) => b.h), shotId).toEqual([400]);
       }
     }
+  });
+});
+
+describe('a band that appears in view, with media that paint nothing (a video never loaded, one whose frames are clear) and media that show something', () => {
+  let served: Awaited<ReturnType<typeof serveFixtureSite>>;
+  beforeAll(async () => {
+    const dir = runDir();
+    const video = (name: string, source: string, pixels: string): Promise<void> =>
+      runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', source, '-c:v', 'libvpx-vp9', '-pix_fmt', pixels, '-auto-alt-ref', '0', '-b:v', '50k', join(dir, name)], `make ${name}`);
+    await video('clear.webm', 'color=c=black@0.0:s=320x240:r=10:d=2,format=yuva420p', 'yuva420p');
+    await video('solid.webm', 'color=c=0x1f6feb:s=320x240:r=10:d=2', 'yuv420p');
+    served = await serveFixtureSite({ 'media/clear.webm': join(dir, 'clear.webm'), 'media/solid.webm': join(dir, 'solid.webm') });
+  });
+  afterAll(async () => {
+    await served.close();
+  });
+  const run = sharedCapture(() => ({ url: `${served.url}media.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('measures the media that show something, and not those that paint nothing, in the full-page shots and the shot of their section', () => {
+    const { site } = run;
+    const band = site.sections.find((s) => s.heading === 'The network in pictures')!;
+    for (const shotId of ['d-full', 'm-full', `d-${band.id}`]) {
+      // At DPR 2: the blue video (260 x 140 CSS px) and the picture (240 x 130). Not the video never loaded (300 x 160),
+      // nor the one whose frames are clear (280 x 150).
+      const media = site.boxes.filter((b) => b.shotId === shotId && b.kind === 'image').map((b) => [b.w, b.h]);
+      expect(media, shotId).toEqual([
+        [520, 280],
+        [480, 260],
+      ]);
+    }
+    expect(site.log.notes).toContain('d-full: 2 media boxes left out: they paint nothing in the shot');
   });
 });
 

@@ -505,10 +505,12 @@ export function inPageFindLogo(): FoundLogo | null {
 /**
  * The boxes (headings, buttons, images, prices) that are on the screen or, for a full-page shot, on the page, and shown
  * (not see-through: see makeShown). In pixels of the shot; one that begins above the shot is kept from y 0 and marked
- * `clippedTop`.
+ * `clippedTop`. The media it measures (images, videos, canvases, SVGs) are tagged `data-capmedia`, and only they: the
+ * shot is taken again without them, to see which paint nothing (see inPageFadeMedia).
  */
 export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[] {
   const { clean, makeShown, isButtonLike, PRICE_RE } = (window as unknown as CapWindow).__cap;
+  for (const el of document.querySelectorAll('[data-capmedia]')) el.removeAttribute('data-capmedia');
   const shown = makeShown();
   const dpr = devicePixelRatio;
   const vw = innerWidth;
@@ -525,15 +527,16 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
     return id;
   };
   const out: PageBox[] = [];
-  const push = (el: Element, kind: PageBox['kind'], text?: string): void => {
-    if (!shown(el)) return;
+  /** Measures the box of `el` if it is shown and mostly in the shot; says whether it did. */
+  const push = (el: Element, kind: PageBox['kind'], text?: string): boolean => {
+    if (!shown(el)) return false;
     const r = el.getBoundingClientRect();
     const x = r.left;
     const y = r.top + offY;
-    if (r.width < 8 || r.height < 8) return;
+    if (r.width < 8 || r.height < 8) return false;
     const ix = Math.max(0, Math.min(vw, x + r.width) - Math.max(0, x));
     const iy = Math.max(0, Math.min(limitH, y + r.height) - Math.max(0, y));
-    if ((ix * iy) / (r.width * r.height) < 0.6) return;
+    if ((ix * iy) / (r.width * r.height) < 0.6) return false;
     const sectionId = sectionOf(el);
     out.push({
       ...(sectionId ? { sectionId } : {}),
@@ -546,12 +549,13 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
       // It begins above the shot: the top of the shot cuts it.
       ...(Math.round(y * dpr) < 0 ? { clippedTop: true as const } : {}),
     });
+    return true;
   };
   for (const el of document.querySelectorAll<HTMLElement>('h1, h2, h3')) push(el, 'heading', clean(el.innerText));
   for (const el of document.querySelectorAll<HTMLElement>('a, button, [role=button]')) if (isButtonLike(el)) push(el, 'cta', clean(el.innerText));
   for (const el of document.querySelectorAll('img, picture, video, canvas, svg')) {
     const r = el.getBoundingClientRect();
-    if (r.width >= 120 && r.height >= 80 && !el.closest('picture:not(:scope)')) push(el, 'image');
+    if (r.width >= 120 && r.height >= 80 && !el.closest('picture:not(:scope)') && push(el, 'image')) el.setAttribute('data-capmedia', '');
   }
   for (const el of document.querySelectorAll<HTMLElement>('body *')) {
     if (el.children.length > 2) continue;
@@ -559,6 +563,37 @@ export function inPageBoxes(fullPage: boolean, maxFullPagePx: number): PageBox[]
     if (t && t.length <= 40 && PRICE_RE.test(t) && ![...el.children].some((c) => clean((c as HTMLElement).innerText) === t)) push(el, 'price', t);
   }
   return out;
+}
+
+/**
+ * Fades out the media inPageBoxes last measured (tagged `data-capmedia`), or brings them back as they were, then waits
+ * for a frame. The fade is an inline style marked important, which neither the page's styles nor its content security
+ * policy can undo, with no transition; it is taken off before the transition is given back, so the media do not fade
+ * in. Says whether every one of them is now as asked (opacity 0 when fading). Runs in the page.
+ */
+export async function inPageFadeMedia(fade: boolean): Promise<boolean> {
+  const media = [...document.querySelectorAll<HTMLElement | SVGElement>('[data-capmedia]')];
+  for (const el of media) {
+    if (fade) {
+      const own = ['opacity', 'transition'].map((p) => [p, el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]);
+      el.setAttribute('data-capfaded', JSON.stringify(own));
+      el.style.setProperty('transition', 'none', 'important');
+      el.style.setProperty('opacity', '0', 'important');
+    } else if (el.hasAttribute('data-capfaded')) {
+      const own = JSON.parse(el.getAttribute('data-capfaded') ?? '[]') as [string, string, string][];
+      el.removeAttribute('data-capfaded');
+      for (const [property, value, priority] of own) {
+        if (value) el.style.setProperty(property, value, priority);
+        else el.style.removeProperty(property);
+        void getComputedStyle(el).opacity; // the opacity is back before the transition is
+      }
+    }
+  }
+  await Promise.race([
+    new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    new Promise((done) => setTimeout(done, 200)),
+  ]);
+  return !fade || media.every((el) => getComputedStyle(el).opacity === '0');
 }
 
 /**

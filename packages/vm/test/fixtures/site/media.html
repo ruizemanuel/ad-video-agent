@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ledgerline | Payments onchain</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fcff52; color: #111111; }
+    section { min-height: 1100px; padding: 80px 32px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 640px; margin: 0 0 8px; }
+    /* A band that appears in view and goes again out of it (Framer's appear effect), with its media at half opacity. */
+    .appear { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 32px; opacity: 0; transition: opacity 0.2s; }
+    .appear.shown { opacity: 1; }
+    .appear video, .appear img { display: block; opacity: 0.5; }
+    /* Each one a size of its own (CSS px), to tell their boxes apart. */
+    #unloaded { width: 300px; height: 160px; }
+    #clear { width: 280px; height: 150px; }
+    #solid { width: 260px; height: 140px; }
+    #picture { width: 240px; height: 130px; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>Payments that settle in a second</h1>
+    <p>Send stablecoins to anyone, anywhere, for a fraction of a cent, and see them arrive before the page reloads.</p>
+  </section>
+  <section>
+    <h2>The network in pictures</h2>
+    <p>What the network does for the people who pay with it, every day of the week.</p>
+    <div class="appear">
+      <!-- Never loaded, and no poster: it paints nothing. -->
+      <video id="unloaded" preload="none" muted src="media/clear.webm"></video>
+      <!-- Plays, but every frame is fully transparent: it paints nothing either. -->
+      <video id="clear" autoplay muted loop playsinline src="media/clear.webm"></video>
+      <!-- Plays frames of a solid blue: it shows something. -->
+      <video id="solid" autoplay muted loop playsinline src="media/solid.webm"></video>
+      <img id="picture" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 130'%3E%3Crect x='20' y='20' width='200' height='90' fill='%23c81e6b'/%3E%3C/svg%3E">
+    </div>
+  </section>
+  <section>
+    <h2>Get started</h2>
+    <p>Open a wallet in a minute and make your first payment on the house.</p>
+  </section>
+  <script>
+    // The effect replays: the band is shown while it is in view, and hidden again once it leaves.
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) entry.target.classList.toggle('shown', entry.isIntersecting);
+    }, { threshold: 0.1 });
+    for (const band of document.querySelectorAll('.appear')) observer.observe(band);
+  </script>
+</body>
+</html>

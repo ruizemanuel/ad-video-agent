@@ -5,11 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { extname, join } from 'node:path';
 
 const SITE = join(import.meta.dirname, '..', '..', 'fixtures', 'site');
-const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.woff2': 'font/woff2' };
+const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.woff2': 'font/woff2', '.webm': 'video/webm' };
 
 /**
  * Serves the fixture site; `url` ends in a slash. `files` serves more at the paths given (no leading slash), from where
- * they are on disk: a font a test got from Google Fonts, under a name of the site's own.
+ * they are on disk: a font a test got from Google Fonts under a name of the site's own, a video a test made.
  */
 export async function serveFixtureSite(files: Record<string, string> = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
