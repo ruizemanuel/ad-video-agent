@@ -216,21 +216,15 @@ describe('retimeForBpm', () => {
   });
 
   describe('keeps every text on screen long enough to be read, at every tempo the music comes at', () => {
-    /**
-     * The texts that are not on screen long enough to be read, where validateEdl checks them: each hook in its own video,
-     * the body and the cta in the main one (hook 0), the video the order renders.
-     */
-    const unread = (edl: Edl): string[] =>
-      edl.hooks.flatMap((_, hook) => {
-        const { scenes } = layoutScenes(edl, hook);
-        return scenes.flatMap((timed, k) =>
-          hook > 0 && timed.role !== 'hook'
-            ? []
-            : textWindows(timed, edl.bpm, scenes[k + 1]?.scene.transitionIn === 'wipe')
-                .filter((w) => !isReadable(w))
-                .map((w) => `${timedScenePath(edl, hook, timed)}.lines[${w.line}] "${w.text}"`),
-        );
-      });
+    /** The texts of the main video (hook 0), the one the order renders and validateEdl checks, not on screen long enough to be read. */
+    const unread = (edl: Edl): string[] => {
+      const { scenes } = layoutScenes(edl, 0);
+      return scenes.flatMap((timed, k) =>
+        textWindows(timed, edl.bpm, scenes[k + 1]?.scene.transitionIn === 'wipe')
+          .filter((w) => !isReadable(w))
+          .map((w) => `${timedScenePath(edl, 0, timed)}.lines[${w.line}] "${w.text}"`),
+      );
+    };
     // Run 7 as the investigation fixed it (34 beats), and the shop, planned at a tempo the director may pick.
     const fixed7 = (bpm: number): Edl => {
       const edl = run7();

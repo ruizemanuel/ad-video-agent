@@ -206,20 +206,17 @@ const checkAtBeat = (path: string, scene: Scene, report: Report): void => {
 // ---------- reading ----------
 
 /**
- * Where each scene plays, for the reading check: the scenes of hook i as the video of hook i lays them out, the body and
- * the cta as the main video (hook 0) does. Nothing at a tempo outside the range (checkEdl reports it): how long a text
- * stays on screen depends on the tempo the edit list will be given.
+ * Where each scene of the main video (hook 0, the body and the cta) plays, for the reading check: the order renders that
+ * video only, so a text of another hook, never on screen, costs no round. Nothing at a tempo outside the range (checkEdl
+ * reports it): how long a text stays on screen depends on the tempo the edit list will be given.
  */
 const placements = (edl: Edl): Map<string, { timed: TimedScene; at: Placement }> => {
   const placed = new Map<string, { timed: TimedScene; at: Placement }>();
-  if (!(edl.bpm >= BPM.min && edl.bpm <= BPM.max)) return placed;
-  edl.hooks.forEach((_, hook) => {
-    const { scenes } = layoutScenes(edl, hook);
-    scenes.forEach((timed, k) => {
-      const path = timedScenePath(edl, hook, timed);
-      const wipeOut = scenes[k + 1]?.scene.transitionIn === 'wipe';
-      if (!placed.has(path)) placed.set(path, { timed, at: { role: timed.role, index: timed.index, startBeat: timed.startBeat, wipeOut } });
-    });
+  if (!edl.hooks[0] || !(edl.bpm >= BPM.min && edl.bpm <= BPM.max)) return placed;
+  const { scenes } = layoutScenes(edl, 0);
+  scenes.forEach((timed, k) => {
+    const wipeOut = scenes[k + 1]?.scene.transitionIn === 'wipe';
+    placed.set(timedScenePath(edl, 0, timed), { timed, at: { role: timed.role, index: timed.index, startBeat: timed.startBeat, wipeOut } });
   });
   return placed;
 };

@@ -158,6 +158,14 @@ describe('validateEdl: every text stays on screen long enough to read', () => {
   const site = paidRunsSite();
   const problems = (edl: Edl) => validateEdl(edl, site);
 
+  it('checks only the video the order renders: the main hook, the body and the cta', () => {
+    // Run 4's hook, too short to be read, as a second and a third hook: the order never renders those.
+    const edl = run4();
+    const shortCaption = [{ ...edl.hooks[0]![0]!, lines: [claim('Sesiones 1:1.', 'c3')] }];
+    const others = { ...edl, hooks: [shortCaption, edl.hooks[0]!, edl.hooks[0]!] };
+    expect(problems(others).map((p) => p.where)).toEqual(['body[1].lines[0]']);
+  });
+
   it('refuses the four captions of paid run 7 that went by too fast, and the two caption swaps of its short scenes', () => {
     const swap = (beats: number) => `a second caption (atBeat) needs a scene of 7 beats or more, got ${beats}: drop the second caption, or give the scene 7 beats or more`;
     const hookFix = 'drop the second caption and either give the scene 5 beats or cut the first caption to 26 characters and 5 words';
