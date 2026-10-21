@@ -9,7 +9,7 @@ import type { CaptureInput, CaptureResult } from '@app/core';
 import type { Page } from 'puppeteer-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
-import { inPageFaceKind, inPageFindLogo, inPageSetup } from '../../src/capture/extract';
+import { inPageBlocks, inPageFaceKind, inPageFindLogo, inPageSetup, MAX_FULL_PAGE_CSS_PX } from '../../src/capture/extract';
 import { download, resolveFont } from '../../src/capture/fonts';
 import { CHROME_UA, launchBrowser } from '../../src/capture/page';
 import { pngSize } from '../../src/capture/shots';
@@ -246,6 +246,56 @@ describe('the logo finder, in a page of its own', () => {
     const inPercent = await findPainted('<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><rect width="40" height="10" fill="#c81e6b"/></svg>');
     expect(inPercent?.svg).toMatch(/^<svg [^>]* width="120"/);
     expect(inPercent?.svg).not.toContain('viewBox');
+  });
+});
+
+describe("the cards a page draws, in a page of its own: Framer's outlines drawn by a pseudo-element", () => {
+  let browser: Awaited<ReturnType<typeof launchBrowser>>;
+  // Cards 600 x 200 px, 40 px apart, the color of the page, with no surface of their own: each outline, if any, is drawn
+  // by a pseudo-element, as Framer draws celo.org's stat cards (`::after { content: ""; position: absolute; inset: 0;
+  // border: 1px solid }`).
+  const CARDS: Record<string, string> = {
+    framer: '.c-framer::after { content: ""; position: absolute; inset: 0; border: 1px solid #000; border-radius: inherit; pointer-events: none; }',
+    before: '.c-before::before { content: ""; position: absolute; inset: 0; border: 1px solid rgb(0 0 0 / 0.2); }',
+    // Sized rather than inset, content-box: the border lies outside its 100% and runs 2 px past the card.
+    sized: '.c-sized::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 2px solid #333; }',
+    half: '.c-half::after { content: ""; position: absolute; inset: 0 0 50% 0; border: 1px solid #000; }',
+    unbordered: '.c-unbordered::after { content: ""; position: absolute; inset: 0; background: transparent; }',
+    'two-sided': '.c-two-sided::after { content: ""; position: absolute; inset: 0; border-top: 1px solid #000; border-bottom: 1px solid #000; }',
+    clear: '.c-clear::after { content: ""; position: absolute; inset: 0; border: 1px solid transparent; }',
+    'not-generated': '.c-not-generated::after { position: absolute; inset: 0; border: 1px solid #000; }',
+    'over-the-page': '.c-over-the-page { position: static; } .c-over-the-page::after { content: ""; position: absolute; inset: 0; border: 1px solid #000; }',
+  };
+  const names = Object.keys(CARDS);
+  let tops: string[] = [];
+  beforeAll(async () => {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({ width: 800, height: 900, deviceScaleFactor: 1 });
+      await page.setContent(`<style>
+        body { margin: 0; padding: 40px 100px; background: #fcff52; }
+        .card { position: relative; width: 600px; height: 200px; margin-bottom: 40px; border-radius: 12px; }
+        ${Object.values(CARDS).join('\n')}
+      </style>${names.map((name) => `<div class="card c-${name}"></div>`).join('')}`);
+      await page.evaluate(inPageSetup);
+      const blocks = await page.evaluate(inPageBlocks, true, MAX_FULL_PAGE_CSS_PX);
+      // Each block by the card at its top: the cards are 240 px apart from 40 px down.
+      tops = blocks.map((b) => names[(b.y - 40) / 240] ?? `a block at y ${b.y}, ${b.w} x ${b.h}`);
+    } finally {
+      await page.close();
+    }
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  it('takes a card for a block when a pseudo-element over the whole of it draws a border on all four sides', () => {
+    expect(tops).toEqual(expect.arrayContaining(['framer', 'before', 'sized']));
+  });
+
+  it('does not when the pseudo-element covers part of it, draws no border or not all round, is not drawn, or is not over it', () => {
+    expect(tops.filter((name) => !['framer', 'before', 'sized'].includes(name))).toEqual([]);
   });
 });
 

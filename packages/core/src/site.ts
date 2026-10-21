@@ -17,8 +17,9 @@ export type Box = {
 };
 
 /**
- * A card of the page: an element that draws a surface of its own (a border all round, a shadow, a background unlike what
- * is behind it, or a background image), narrower than the screen and at most 1.2 screens tall. The camera frames a whole
+ * A card of the page: an element that draws a surface of its own (a border all round, its own or one a pseudo-element draws
+ * over it, a shadow, a background unlike what is behind it, or a background image), narrower than the screen and at most
+ * 1.2 screens tall. The camera frames a whole
  * card and keeps the edges of the view from slicing one. `clippedTop` as for a box.
  */
 export type Block = { shotId: string; x: number; y: number; w: number; h: number; clippedTop?: true };

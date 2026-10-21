@@ -609,8 +609,9 @@ export async function inPageFadeMedia(fade: boolean): Promise<boolean> {
  * The blocks (cards) that are on the screen or, for a full-page shot, on the page, nested ones included, in document
  * order, shown like the boxes. In pixels of the shot, measured (and marked `clippedTop`) like the boxes. A block is
  * 40 to 98% of the screen's width (a band as wide as the page is page, not a card), 48 px to 1.2 screens tall, and draws
- * a surface: a border on all four sides, a shadow that is not transparent, a background color unlike the one behind it
- * (the nearest ancestor's that is not transparent, else white), or a background image. What is fixed or sticky, and what
+ * a surface: a border on all four sides (its own, or one a pseudo-element draws over the whole of it, as Framer outlines
+ * its cards), a shadow that is not transparent, a background color unlike the one behind it (the nearest ancestor's
+ * that is not transparent, else white), or a background image. What is fixed or sticky, and what
  * is in it, floats over the page: it is no card of it.
  */
 export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBlock[] {
@@ -644,16 +645,36 @@ export function inPageBlocks(fullPage: boolean, maxFullPagePx: number): PageBloc
     }
     return '#ffffff';
   };
-  const drawsSurface = (el: Element): boolean => {
-    const cs = getComputedStyle(el);
+  // A border of 1 px or more on all four sides, in a color that shows. A border whose style is none or hidden is computed
+  // 0 px wide.
+  const bordered = (cs: CSSStyleDeclaration): boolean => {
     const sides: [string, string][] = [
       [cs.borderTopWidth, cs.borderTopColor],
       [cs.borderRightWidth, cs.borderRightColor],
       [cs.borderBottomWidth, cs.borderBottomColor],
       [cs.borderLeftWidth, cs.borderLeftColor],
     ];
-    // A border whose style is none or hidden is computed 0 px wide.
-    if (sides.every(([width, color]) => parseFloat(width) >= 1 && (toRgba(color)?.a ?? 0) > 0)) return true;
+    return sides.every(([width, color]) => parseFloat(width) >= 1 && (toRgba(color)?.a ?? 0) > 0);
+  };
+  const px = (...values: string[]): number => values.reduce((sum, value) => sum + parseFloat(value), 0);
+  // The outline Framer draws over a card rather than on it: a pseudo-element that is generated (it has content), placed
+  // absolutely against the card (which is positioned, so its padding box is the pseudo-element's frame of reference),
+  // covering the whole of it within a pixel, with a border all round.
+  const outlinedBy = (el: Element, pseudo: '::before' | '::after'): boolean => {
+    const cs = getComputedStyle(el, pseudo);
+    if (cs.content === 'none' || cs.content === 'normal' || cs.display === 'none' || cs.position !== 'absolute' || !bordered(cs)) return false;
+    if (getComputedStyle(el).position === 'static') return false;
+    // Its size with its border: a content-box one draws its padding and border outside its width and height.
+    const contentBox = cs.boxSizing !== 'border-box';
+    const width = px(cs.width) + (contentBox ? px(cs.paddingLeft, cs.paddingRight, cs.borderLeftWidth, cs.borderRightWidth) : 0);
+    const height = px(cs.height) + (contentBox ? px(cs.paddingTop, cs.paddingBottom, cs.borderTopWidth, cs.borderBottomWidth) : 0);
+    const left = px(cs.left);
+    const top = px(cs.top);
+    return left <= 1 && top <= 1 && left + width >= el.clientWidth - 1 && top + height >= el.clientHeight - 1;
+  };
+  const drawsSurface = (el: Element): boolean => {
+    const cs = getComputedStyle(el);
+    if (bordered(cs) || outlinedBy(el, '::after') || outlinedBy(el, '::before')) return true;
     if (drawsShadow(cs.boxShadow) || cs.backgroundImage !== 'none') return true;
     const bg = toRgba(cs.backgroundColor);
     return bg !== null && bg.a > 0.5 && hex(bg) !== behind(el);
