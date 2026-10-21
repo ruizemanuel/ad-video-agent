@@ -599,14 +599,30 @@ describe('chooseTrack', () => {
     expect(r.rejected.map((x) => x.index)).toEqual([0, 1, 2, 3]);
   });
 
-  it('rejects a track that ends before the video does', () => {
-    // 20 s of video, but only 19.9 s of track after the first beat.
-    expect(reasons([{ ...ok(-16), seconds: 20, firstBeat: 0.1 }])).toEqual(['too-short']);
+  it('rejects a track that ends more than MAX_TRACK_SHORT_FALL_SECONDS before the video does, as the render would', () => {
+    // 20 s of video, but only 19.4 s of track after the first beat.
+    expect(reasons([{ ...ok(-16), seconds: 19.5, firstBeat: 0.1 }])).toEqual(['too-short']);
+  });
+
+  it('takes a track that ends up to MAX_TRACK_SHORT_FALL_SECONDS before the video, as the render does: a silent end beats no music', () => {
+    expect(MAX_TRACK_SHORT_FALL_SECONDS).toBe(0.5);
+    expect(reasons([{ ...ok(-16), seconds: 19.6, firstBeat: 0.1 }])).toEqual([]);
+    expect(reasons([{ ...ok(-16), seconds: 20, firstBeat: 0.1 }])).toEqual([]);
+  });
+
+  it('never chooses a track the render would refuse', () => {
+    // Tracks from 1 s short to 1 s long, against videos of 15 to 30 s.
+    for (let video = 15; video <= 30; video += 0.7)
+      for (let lasts = video - 1; lasts <= video + 1; lasts += 0.05) {
+        const track = { ...ok(-16), seconds: lasts + 0.1, firstBeat: 0.1 };
+        const { chosen } = chooseTrack([track], 112, () => video);
+        expect(chosen === 0, `${lasts.toFixed(2)} s of track for ${video.toFixed(1)} s of video`).toBe(trackCoversVideo(track, video));
+      }
   });
 
   it('measures the video at the tempo of each track when given its length by tempo, as the retime will make it', () => {
     // 20 s planned, 20.6 s once moved to a track measured at 103 bpm: a track of 20.05 s from its first beat lasts the one
-    // and not the other.
+    // and falls 0.55 s short of the other.
     const slower = { ...ok(-16), measuredBpm: 103, seconds: 20.15, firstBeat: 0.1 };
     const lengthAt = (measuredBpm: number) => (measuredBpm === 103 ? 20.6 : 20);
     expect(chooseTrack([slower], 112, 20).chosen).toBe(0);

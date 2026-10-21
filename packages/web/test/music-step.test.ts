@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FatalError } from 'workflow';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { FPS, layoutScenes, MUSIC_MODELS, musicPrompt } from '@app/core';
+import { FPS, layoutScenes, MUSIC_MODELS, musicPrompt, retimedVideoSeconds, trackCoversVideo } from '@app/core';
 import { clickWav, encodeWav } from '@app/core/testing';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FakeMusic } from '../src/adapters/fake/music';
@@ -517,17 +517,32 @@ describe('pickTrack', () => {
     expect(music.calls).toBe(2);
   });
 
-  it('never chooses a track the video outlasts once moved to its tempo, and asks for another', async () => {
-    music.queue = [track(113, -6), track(113, -10)];
-    const [first] = await made(1);
-    if (first?.measure == null) throw new Error('the first candidate was not measured');
-    // At 102.7 bpm the retime makes the shop's video 0.57 s longer than planned: a track that lasts the planned video and
-    // 0.05 s more would leave its end without music, and was chosen before.
-    const measure = { ...first.measure, measuredBpm: 102.7, seconds: first.measure.firstBeat + VIDEO_SECONDS + 0.05 };
-    const picked = await pickTrack({ ...base(), candidates: [{ ...first, measure }] }, deps);
-    expect(picked.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'too-short' }]);
-    expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
-    expect(music.calls).toBe(2);
+  describe('measures each track against the video moved to its tempo', () => {
+    // At 102.7 bpm the retime makes the shop's 19.30 s video 0.57 s longer.
+    const RETIMED = retimedVideoSeconds(edl, 102.7);
+    const measuredAt1027 = async (lasts: number) => {
+      const [first] = await made(1);
+      if (first?.measure == null) throw new Error('the first candidate was not measured');
+      return { ...first, measure: { ...first.measure, measuredBpm: 102.7, seconds: first.measure.firstBeat + lasts } };
+    };
+
+    it('never chooses a track the render would refuse, and asks for another', async () => {
+      music.queue = [track(113, -6), track(113, -10)];
+      // The planned video and 0.05 s more: 0.52 s short of the retimed one, more than the render lets through.
+      const picked = await pickTrack({ ...base(), candidates: [await measuredAt1027(VIDEO_SECONDS + 0.05)] }, deps);
+      expect(picked.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'too-short' }]);
+      expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
+      expect(music.calls).toBe(2);
+    });
+
+    it('chooses a track up to half a second short of it, which the render takes: a silent end beats no music', async () => {
+      music.queue = [track(113, -6)];
+      const picked = await pickTrack({ ...base(), candidates: [await measuredAt1027(RETIMED - 0.3)] }, deps);
+      expect(picked.rejected).toEqual([]);
+      expect(picked.track?.path).toBe(`orders/${id}/music/cand-1.wav`);
+      expect(trackCoversVideo(picked.track!, RETIMED)).toBe(true);
+      expect(music.calls).toBe(1);
+    });
   });
 
   it('gives the tempo, the first beat and the length of the track it chose', async () => {

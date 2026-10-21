@@ -4,7 +4,7 @@
 /// <reference path="./music-tempo.d.ts" />
 import MusicTempo from 'music-tempo';
 import type { Edl } from './edl';
-import { FPS, layoutScenes } from './timing';
+import { FPS, layoutScenes, retimedVideoSeconds } from './timing';
 
 export type Wav = { sampleRate: number; channels: number; mono: Float32Array };
 
@@ -373,7 +373,8 @@ export const measureTrack = (mono: Float32Array, sampleRate: number, requestedBp
 export type RejectReason = 'bpm' | 'unsteady' | 'jump' | 'late-start' | 'weak-start' | 'too-short';
 export type TrackChoice = { chosen: number | null; rejected: { index: number; reason: RejectReason }[] };
 
-const MAX_BPM_DEVIATION = 0.15; // of the requested tempo: further than this and the cuts would have to move too much
+/** How far from the tempo asked for a track may come, as a share of it: further than this and the cuts would have to move too much. */
+export const MAX_BPM_DEVIATION = 0.15;
 const MAX_RESIDUAL_MS = 30;
 // The largest skip (TrackMeasure.maxJumpMs) a track may have inside the part the video plays. Set by ear: of the skips
 // measured on real Lyria tracks, the user heard the one of 38 ms (in a delivered video) and two of 80 to 100 ms as the
@@ -384,6 +385,21 @@ const MIN_START_RMS_DB = -30;
 
 /** The length of the video a track plays under: a number, or the length at the track's tempo (see retimedVideoSeconds). */
 export type VideoLength = number | ((measuredBpm: number) => number);
+
+/**
+ * How far short of the video a track may fall, in seconds. The render fades a track out where it ends and fills the rest
+ * of the video with silence, so a track that runs out early leaves the end of the video silent: half a second of the
+ * close, which is a fade anyway, is let through. A silent end is better than an ad with no music.
+ */
+export const MAX_TRACK_SHORT_FALL_SECONDS = 0.5;
+
+/**
+ * Whether a track lasts a video of `videoSeconds` from its first beat, where the render starts it (a first beat before the
+ * start of the file counts as the start), allowing MAX_TRACK_SHORT_FALL_SECONDS. The choice of the track applies it (see
+ * chooseTrack), the service again before it asks for a render with music, and the VM before it renders.
+ */
+export const trackCoversVideo = (track: { seconds: number; firstBeat: number }, videoSeconds: number): boolean =>
+  track.seconds - Math.max(0, track.firstBeat) >= videoSeconds - MAX_TRACK_SHORT_FALL_SECONDS;
 
 // The first check a track fails, if any.
 const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: VideoLength): RejectReason | undefined => {
@@ -396,14 +412,14 @@ const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: Vide
   // counts from the first sound, because the silence before it is never heard.
   if (track.firstBeat - (track.audioStart ?? 0) > ((MAX_LEAD_IN_BEATS + LEAD_IN_EDGE_BEATS) * 60) / track.measuredBpm) return 'late-start';
   if (track.startRmsDb < MIN_START_RMS_DB) return 'weak-start';
-  if (track.seconds - track.firstBeat < (typeof videoSeconds === 'number' ? videoSeconds : videoSeconds(track.measuredBpm))) return 'too-short';
+  if (!trackCoversVideo(track, typeof videoSeconds === 'number' ? videoSeconds : videoSeconds(track.measuredBpm))) return 'too-short';
   return undefined;
 };
 
 // Picks the index of the track to use: among those that pass every check, the most energetic; on a tie, the
 // one whose tempo is closest to the request; on a tie of that too, the first. `chosen` is null when none pass. A track
-// has to last the video from its first beat: given by tempo, the video is the one the render makes under that track
-// (the edit list moved to its tempo), so a track chosen is never one that video outlasts.
+// has to last the video from its first beat by the render's own rule (trackCoversVideo): given by tempo, the video is the
+// one the render makes under that track (the edit list moved to its tempo), so the render never refuses a track chosen.
 export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSeconds: VideoLength): TrackChoice => {
   const rejected: TrackChoice['rejected'] = [];
   let chosen: number | null = null;
@@ -420,20 +436,19 @@ export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSe
   return { chosen, rejected };
 };
 
-/**
- * How far short of the video a track may fall, in seconds. The render fades a track out where it ends and fills the rest
- * of the video with silence, so a track that runs out early leaves the end of the video silent: half a second of the
- * close, which is a fade anyway, is let through.
- */
-export const MAX_TRACK_SHORT_FALL_SECONDS = 0.5;
+// The tempos a chosen track can come at are sampled this far apart, to find how long the video can last once retimed.
+const RETIMED_RANGE_STEP_BPM = 0.1;
 
 /**
- * Whether a track lasts a video of `videoSeconds` from its first beat, where the render starts it (a first beat before the
- * start of the file counts as the start), allowing MAX_TRACK_SHORT_FALL_SECONDS. The service checks it before it asks
- * for a render with music, and the VM again before it renders.
+ * The shortest and the longest the main video can last once moved to the tempo of its music (see retimedVideoSeconds),
+ * over the tempos a chosen track can come at: within MAX_BPM_DEVIATION of the one asked for, every 0.1 bpm.
  */
-export const trackCoversVideo = (track: { seconds: number; firstBeat: number }, videoSeconds: number): boolean =>
-  track.seconds - Math.max(0, track.firstBeat) >= videoSeconds - MAX_TRACK_SHORT_FALL_SECONDS;
+export const retimedVideoRange = (edl: Edl): { shortest: number; longest: number } => {
+  const lowest = edl.bpm * (1 - MAX_BPM_DEVIATION);
+  const steps = Math.round((2 * edl.bpm * MAX_BPM_DEVIATION) / RETIMED_RANGE_STEP_BPM);
+  const lengths = Array.from({ length: steps + 1 }, (_, i) => retimedVideoSeconds(edl, lowest + i * RETIMED_RANGE_STEP_BPM));
+  return { shortest: Math.min(...lengths), longest: Math.max(...lengths) };
+};
 
 // m:ss of a whole number of seconds.
 const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
