@@ -6,7 +6,7 @@ A service that turns a website into a short ad video. An agent (or any x402 clie
 
 Stage 2a is live: the x402 service and the whole chain run end to end. An order is paid in USDT or USDC on Celo (x402). The service then rents a machine through buy to capture the site and render the video, a director model writes the script, a review model checks the key frames, Lyria makes the music, and the result is delivered as signed links. If any step fails, the order is refunded automatically, in the token it was paid in.
 
-[Deployment](#deployment) and [Environment variables](#environment-variables) say how to run your own instance.
+[Deployment](#deployment) and [Environment variables](#environment-variables) describe how the service is deployed and configured.
 
 ## Packages
 
@@ -34,7 +34,7 @@ Tests that spend money (paid VMs, models, music) are opt-in and never run in CI.
 
 ## Deployment
 
-The service runs on Vercel. This is what it depends on, for someone who forks the repository and runs their own instance.
+The service runs on Vercel. This is what it depends on.
 
 ### The Vercel project
 
