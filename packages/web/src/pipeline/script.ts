@@ -13,9 +13,10 @@ import {
   type FramingItem,
   type JudgeItem,
   type Problem,
+  type ScenePatch,
   type SiteData,
 } from '@app/core';
-import { ModelOutputInvalid, type ClaimVerdict, type FramingVerdict, type LlmPort, type OrderStore } from '../ports';
+import { ModelCallFailed, ModelOutputInvalid, type ClaimVerdict, type FramingVerdict, type LlmPort, type OrderStore } from '../ports';
 import { canAfford, EST } from './budget';
 
 /** How many times the corrector is asked, at most. */
@@ -29,6 +30,15 @@ export type ScriptDeps = {
 };
 
 export type ScriptResult = { ok: true; edl: Edl } | { ok: false; reason: 'validation' | 'budget' };
+
+/**
+ * Why the corrector's fix cannot be used: its answer does not fit (`patch-invalid`), it patches a scene that is not there
+ * (`patch-path`), the edit list it makes fails the code checks (`checks`) or the judge fails an item of it (`judge`).
+ * `problems` are what failed, and `patched` the scenes the fix put in, for the last two.
+ */
+export type Unusable = { ok: false; reason: 'patch-invalid' | 'patch-path' | 'checks' | 'judge'; problems: Problem[]; patched: ScenePatch[] };
+
+export type Corrected = { ok: true; edl: Edl } | Unusable;
 
 // A judge item is named `${scenePath}:${claimId}` or `${scenePath}:framing:${k}` (judgeItems).
 const sceneOf = (itemId: string): { path: string; rest: string } => {
@@ -117,33 +127,38 @@ async function paid<T extends { usd: number }>({ orderId, store }: Calls, item: 
 
 /**
  * The code checks; the judge only when they find nothing, since the edit list changes anyway, and only about the items
- * it has not read: the rest keep what it said about them.
+ * it has not read: the rest keep what it said about them. Says which of the two found the problems.
  */
-async function problemsOf(calls: Calls, edl: Edl, site: SiteData, verdicts: Verdicts): Promise<Problem[]> {
+async function problemsOf(calls: Calls, edl: Edl, site: SiteData, verdicts: Verdicts): Promise<{ by: 'checks' | 'judge'; problems: Problem[] }> {
   const found = validateEdl(edl, site);
-  if (found.length > 0) return found;
+  if (found.length > 0) return { by: 'checks', problems: found };
   const items = judgeItems(edl);
   const unread = verdicts.unread(items);
   if (unread.claims.length + unread.framing.length > 0) verdicts.keep(unread, await paid(calls, 'llm:judge', () => calls.llm.judge(unread)));
-  return verdicts.problems(items);
+  return { by: 'judge', problems: verdicts.problems(items) };
 }
 
 /**
- * The edit list with the corrector's fix, or undefined when the fix cannot be used: an answer that does not fit, or a
- * patch for a scene that is not there.
+ * The edit list with the corrector's fix and the scenes it put in, or why the fix cannot be used: an answer that does not
+ * fit, or a patch for a scene that is not there.
  */
-async function patched(calls: Calls, edl: Edl, problems: Problem[], site: SiteData): Promise<Edl | undefined> {
+async function patched(
+  calls: Calls,
+  edl: Edl,
+  problems: Problem[],
+  site: SiteData,
+): Promise<{ ok: true; edl: Edl; patches: ScenePatch[] } | { ok: false; reason: 'patch-invalid' | 'patch-path' }> {
   let fix: Awaited<ReturnType<LlmPort['patchEdl']>>;
   try {
     fix = await paid(calls, 'llm:patch', () => calls.llm.patchEdl({ edl, problems, site }));
   } catch (error) {
-    if (error instanceof ModelOutputInvalid) return undefined;
+    if (error instanceof ModelOutputInvalid) return { ok: false, reason: 'patch-invalid' };
     throw error;
   }
   try {
-    return applyPatches(edl, fix.patches, fix.claimFixes);
+    return { ok: true, edl: applyPatches(edl, fix.patches, fix.claimFixes), patches: fix.patches };
   } catch (error) {
-    if (error instanceof RangeError) return undefined;
+    if (error instanceof RangeError) return { ok: false, reason: 'patch-path' };
     throw error;
   }
 }
@@ -165,7 +180,7 @@ export async function runScript({
   const verdicts = new Verdicts();
 
   let { edl } = await paid(calls, 'llm:director', () => llm.writeEdl({ site, images: capture.directorImages, brief }));
-  let problems = await problemsOf(calls, edl, site, verdicts);
+  let { problems } = await problemsOf(calls, edl, site, verdicts);
   for (let round = 0; problems.length > 0; round += 1) {
     if (round === PATCH_ROUNDS) return { ok: false, reason: 'validation' };
     // A patch is only worth it if the judge that checks it fits too.
@@ -173,9 +188,9 @@ export async function runScript({
     const next = await patched(calls, edl, problems, site);
     // A round whose fix cannot be used is spent, and what was found stands. A fix that leaves a failing item as it was
     // does not help either: the judge is not asked about it again, and it fails the same way.
-    if (next === undefined) continue;
-    edl = next;
-    problems = await problemsOf(calls, edl, site, verdicts);
+    if (!next.ok) continue;
+    edl = next.edl;
+    ({ problems } = await problemsOf(calls, edl, site, verdicts));
   }
   return { ok: true, edl };
 }
@@ -183,9 +198,9 @@ export async function runScript({
 /**
  * One correction outside the script's own rounds, for the problems the visual review found in the key frames: the
  * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on every
- * item, since nothing it said before is at hand). Undefined when the fix cannot be used: an answer that does not fit, a
- * patch for a scene that is not there, or a fixed edit list that fails a check. Every call is recorded on the order, and
- * any other failure of a model goes up.
+ * item, since nothing it said before is at hand). When the fix cannot be used, says why (see Unusable). Every call is
+ * recorded on the order, and any other failure of a model goes up: a call that failed, or a judge's answer that does
+ * not fit (the corrector's own is `patch-invalid`).
  */
 export async function correctEdl({
   orderId,
@@ -199,9 +214,36 @@ export async function correctEdl({
   problems: Problem[];
   site: SiteData;
   deps: Omit<Calls, 'orderId'>;
-}): Promise<Edl | undefined> {
+}): Promise<Corrected> {
   const calls: Calls = { orderId, ...deps };
-  const fixed = await patched(calls, edl, problems, site);
-  if (fixed === undefined) return undefined;
-  return (await problemsOf(calls, fixed, site, new Verdicts())).length === 0 ? fixed : undefined;
+  const fix = await patched(calls, edl, problems, site);
+  if (!fix.ok) return { ok: false, reason: fix.reason, problems: [], patched: [] };
+  const found = await problemsOf(calls, fix.edl, site, new Verdicts());
+  if (found.problems.length > 0) return { ok: false, reason: found.by, problems: found.problems, patched: fix.patches };
+  return { ok: true, edl: fix.edl };
 }
+
+/**
+ * Why a correction cannot be used, in one line for the order's log: the reason, what failed as `where:rule`, and the
+ * scenes the fix put in as `path:piece shotId#boxIndex`. Only what the code wrote or checked goes in: never a problem's
+ * detail, which quotes the site and the model, nor the text of a scene, and a shot the site does not have is `?`.
+ */
+export function unusableSummary({ reason, problems, patched }: Unusable, site: SiteData): string {
+  const failed = [...new Set(problems.map((p) => `${p.where}:${p.rule}`))].join(',');
+  const shotOf = (shotId: string): string => (site.shots.some((s) => s.id === shotId) ? shotId : '?');
+  const scenes = patched
+    .map(({ path, scene }) => {
+      const shot = scene.shotId === undefined ? '' : ` ${shotOf(scene.shotId)}${scene.boxIndex === undefined ? '' : `#${scene.boxIndex}`}`;
+      return `${path}:${scene.piece}${shot}`;
+    })
+    .join(',');
+  return [reason, failed, scenes && `| patched ${scenes}`].filter(Boolean).join(' ');
+}
+
+/**
+ * Why a correction cannot be used when a model call of it failed for good (see correctEdl), in one line for the order's
+ * log: `model call:ErrorName[:status]`, nothing the call sent or got back. The corrector's answer that does not fit is
+ * `patch-invalid`, so one that comes up here is the judge's.
+ */
+export const failedCallSummary = (error: ModelCallFailed | ModelOutputInvalid): string =>
+  error instanceof ModelCallFailed ? `model ${error.call}:${error.name}${error.status === undefined ? '' : `:${error.status}`}` : `model judge:${error.name}`;

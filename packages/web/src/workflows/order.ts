@@ -33,7 +33,7 @@ import { payForVm, resolveVmPayment, vmPaymentKey, type PayResult } from '../pay
 import { canAfford, EST } from '../pipeline/budget';
 import { failedCandidate, generateCandidate, musicRequest, pickTrack, type Candidate, type ChosenTrack } from '../pipeline/music';
 import { runReview, type ReviewResult } from '../pipeline/review';
-import { correctEdl, runScript, type ScriptResult } from '../pipeline/script';
+import { correctEdl, failedCallSummary, runScript, unusableSummary, type ScriptResult } from '../pipeline/script';
 import {
   ModelCallFailed,
   ModelOutputInvalid,
@@ -672,7 +672,9 @@ type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable' } | { sta
 
 /**
  * The corrector's fix for what the review blocked on, checked as the script is (code checks and the judge), or why there
- * is none: the round would pass the order's cap, or the fix cannot be used.
+ * is none: the round would pass the order's cap, or the fix cannot be used. Why it cannot be used is logged, one line
+ * with ids and rules only (see unusableSummary and failedCallSummary), and the step's output says no more than
+ * `unusable`.
  */
 async function correctForReview(orderId: string, edl: Edl, problems: Problem[]): Promise<Correction> {
   'use step';
@@ -681,14 +683,18 @@ async function correctForReview(orderId: string, edl: Edl, problems: Problem[]):
     console.warn('[review_over_budget]', orderId);
     return { status: 'over-budget' };
   }
+  const unusable = (why: string): Correction => {
+    console.warn('[correction_unusable]', orderId, why);
+    return { status: 'unusable' };
+  };
   const capture = await readCapture(blob, orderId);
-  if (capture === undefined) return { status: 'unusable' };
+  if (capture === undefined) return unusable('capture-unreadable');
   try {
-    const fixed = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
-    return fixed === undefined ? { status: 'unusable' } : { status: 'fixed', edl: fixed };
+    const corrected = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
+    return corrected.ok ? { status: 'fixed', edl: corrected.edl } : unusable(unusableSummary(corrected, capture.site));
   } catch (error) {
     retryLaterIfBusy(error);
-    if (isModelFailure(error)) return { status: 'unusable' };
+    if (isModelFailure(error)) return unusable(failedCallSummary(error));
     throw error;
   }
 }

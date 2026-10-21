@@ -2,11 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { applyPatches, isProductTarget, judgeItems, scenePaths, type Edl, type Problem, type Scene, type SiteData } from '@app/core';
+import { applyPatches, isProductTarget, judgeItems, scenePaths, validateEdl, type Edl, type Problem, type Scene, type SiteData } from '@app/core';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { canAfford, EST } from '../src/pipeline/budget';
-import { correctEdl, runScript } from '../src/pipeline/script';
+import { correctEdl, failedCallSummary, runScript, unusableSummary } from '../src/pipeline/script';
 import { productFlags, siteForModel } from '../src/pipeline/site-for-model';
 import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
 import { captureShop, edlShop as shopEdl, siteShop } from './support/shop';
@@ -311,7 +311,7 @@ describe('correctEdl', () => {
 
   it('gives back the fixed edit list once the code checks and the judge pass it, judging every item of it', async () => {
     patchTo(reworded, 'body[1]');
-    expect(await correctEdl(input)).toEqual(reworded);
+    expect(await correctEdl(input)).toEqual({ ok: true, edl: reworded });
     expect(llm.lastJudgeInput).toEqual(judgeItems(reworded));
   });
 
@@ -321,29 +321,44 @@ describe('correctEdl', () => {
     expect(await store.orderCost(id)).toBeCloseTo(0.05 + llm.usd.judge, 6);
   });
 
-  it('gives back nothing when the fix fails a code check, without asking the judge', async () => {
-    patchTo(withBadNumber(edlShop, 'body[1]'), 'body[1]');
-    expect(await correctEdl(input)).toBeUndefined();
+  it('says the fix fails the code checks, with what failed and the scenes it put in, without asking the judge', async () => {
+    const bad = withBadNumber(edlShop, 'body[1]');
+    patchTo(bad, 'body[1]');
+    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'checks', problems: validateEdl(bad, siteShop()), patched: [{ path: 'body[1]', scene: bad.body[1] }] });
+    expect(validateEdl(bad, siteShop()).map((p) => `${p.where}:${p.rule}`)).toEqual(['body[1].lines[0]:number-mismatch']);
     expect(llm.calls.judge).toBe(0);
   });
 
-  it('gives back nothing when the judge fails the fixed edit list', async () => {
+  it('says the judge fails the fixed edit list, with the item it failed and the scenes the fix put in', async () => {
     patchTo(reworded, 'body[1]');
     llm.claimVerdicts = { 'body[1]:c3': false };
-    expect(await correctEdl(input)).toBeUndefined();
+    expect(await correctEdl(input)).toEqual({
+      ok: false,
+      reason: 'judge',
+      problems: [{ where: 'body[1]', rule: 'not-equivalent', detail: expect.stringContaining('claim c3') }],
+      patched: [{ path: 'body[1]', scene: reworded.body[1] }],
+    });
   });
 
-  it('gives back nothing for a patch of a scene that does not exist', async () => {
+  it('says the fix patches a scene that does not exist', async () => {
     llm.patchEdl = async () => ({ patches: [{ path: 'body[9]', scene: edlShop.cta }], claimFixes: [], usd: 0.05 });
-    expect(await correctEdl(input)).toBeUndefined();
+    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-path', problems: [], patched: [] });
   });
 
-  it('gives back nothing for an answer that does not fit, and records what it cost', async () => {
+  it('says the answer does not fit, and records what it cost', async () => {
     llm.patchEdl = async () => {
       throw new ModelOutputInvalid('The corrector did not answer with valid patches.', 0.04);
     };
-    expect(await correctEdl(input)).toBeUndefined();
+    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-invalid', problems: [], patched: [] });
     expect(await store.orderCost(id)).toBe(0.04);
+  });
+
+  it("lets a judge's answer that does not fit through: the flow says which call it was", async () => {
+    patchTo(reworded, 'body[1]');
+    llm.judge = async () => {
+      throw new ModelOutputInvalid('The judge model did not answer with a valid judge.', 0.01);
+    };
+    await expect(correctEdl(input)).rejects.toThrow(ModelOutputInvalid);
   });
 
   it('lets any other failure of a model through', async () => {
@@ -351,6 +366,48 @@ describe('correctEdl', () => {
       throw new ModelCallFailed('corrector', 'AI_APICallError', 503);
     };
     await expect(correctEdl(input)).rejects.toThrow(ModelCallFailed);
+  });
+});
+
+describe('unusableSummary', () => {
+  const site = siteShop();
+  // A UiScroll whose caption quotes the site, and the problems found in it, whose details quote the site and the model.
+  const scroll: Scene = { piece: 'UiScroll', beats: 4, shotId: 's4-mobile', boxIndex: 1, lines: [{ text: 'Precio secreto de la tienda', kind: 'framing' }] };
+  const failed: Problem[] = [
+    { where: 'body[2].lines[0]', rule: 'structure', detail: 'a TypeIn url must type the site host "tiendita.example", got "Precio secreto"' },
+    { where: 'body[2].lines[0]', rule: 'structure', detail: 'another detail about "Precio secreto"' },
+    { where: 'edl', rule: 'quote-missing', detail: 'claim c9: quote not found verbatim in s2: "Cobramos 0%"' },
+  ];
+
+  it('says the reason, what failed as where:rule once each, and the scenes the fix put in as path:piece shotId#boxIndex', () => {
+    const line = unusableSummary({ ok: false, reason: 'checks', problems: failed, patched: [{ path: 'body[2]', scene: scroll }, { path: 'cta', scene: edlShop.cta }] }, site);
+    expect(line).toBe('checks body[2].lines[0]:structure,edl:quote-missing | patched body[2]:UiScroll s4-mobile#1,cta:EndCard');
+  });
+
+  it('never says what a detail or a scene quotes', () => {
+    const line = unusableSummary({ ok: false, reason: 'judge', problems: failed, patched: [{ path: 'body[2]', scene: scroll }] }, site);
+    for (const quoted of ['Precio secreto', 'tiendita.example', 'Cobramos', 'c9', '"']) expect(line).not.toContain(quoted);
+  });
+
+  it('says ? for a shot the site does not have: the corrector may have written anything there', () => {
+    const made = { ...scroll, shotId: 'Precio secreto https://tiendita.example' };
+    expect(unusableSummary({ ok: false, reason: 'checks', problems: [], patched: [{ path: 'body[2]', scene: made }] }, site)).toBe('checks | patched body[2]:UiScroll ?#1');
+  });
+
+  it('says the reason alone when the fix could not be read', () => {
+    expect(unusableSummary({ ok: false, reason: 'patch-invalid', problems: [], patched: [] }, site)).toBe('patch-invalid');
+    expect(unusableSummary({ ok: false, reason: 'patch-path', problems: [], patched: [] }, site)).toBe('patch-path');
+  });
+});
+
+describe('failedCallSummary', () => {
+  it('says which call failed, the kind of error and its status, and nothing the call sent or got back', () => {
+    expect(failedCallSummary(new ModelCallFailed('patch', 'AI_APICallError', 400))).toBe('model patch:ModelCallFailed:400');
+    expect(failedCallSummary(new ModelCallFailed('judge', 'AI_RetryError'))).toBe('model judge:ModelCallFailed');
+  });
+
+  it("says an answer that does not fit is the judge's: the corrector's own is patch-invalid", () => {
+    expect(failedCallSummary(new ModelOutputInvalid('The judge model did not answer with a valid judge.', 0.01))).toBe('model judge:ModelOutputInvalid');
   });
 });
 

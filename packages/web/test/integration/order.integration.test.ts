@@ -1,5 +1,5 @@
 // The order workflow from the paid order to the delivery or the refund, on the fake adapters, with the test as the VM.
-import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, type Edl, type MusicModel, type RenderInput } from '@app/core';
+import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, validateEdl, type Edl, type MusicModel, type RenderInput } from '@app/core';
 import { clickWav } from '@app/core/testing';
 import { waitForHook, waitForSleep } from '@workflow/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -483,6 +483,32 @@ describe('an order that is refunded', () => {
     expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
     expect(await kinds(id)).toEqual(['capture:0', 'keyframes:0', 'keyframes:1', 'keyframes:2', 'shutdown:0']);
     expect((await fakes.store.getOrder(id))?.steps.review).toBe('failed');
+  });
+
+  it('logs why each correction could not be used, in ids and rules only, and keeps the step output to the status', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    scenario({ review: 'always-cut' });
+    // The corrector rewrites every scene the review blocked on, and puts a number its quote does not have in body[1].
+    const bad: Edl = {
+      ...edlShop,
+      body: edlShop.body.map((scene, k) => (k === 1 ? { ...scene, lines: scene.lines.map((line, n) => (n === 0 ? { ...line, text: `${line.text} 99` } : line)) } : scene)),
+    };
+    fakes.llm.fixed = bad;
+    const run = await captureAndPreview(id);
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
+    expect(fakes.llm.calls).toMatchObject({ patchEdl: 2, judge: 1 });
+
+    const lines = warn.mock.calls.filter(([tag]) => tag === '[correction_unusable]');
+    expect(lines).toHaveLength(2);
+    for (const [, orderId, why] of lines) {
+      expect(orderId).toBe(id);
+      expect(why).toMatch(/^checks body\[1\]\.lines\[0\]:number-mismatch \| patched hooks\[0\]\[0\]:KineticHeadline,.*body\[0\]:UiFocus s4-mobile#1,.*cta:EndCard$/);
+      // Nothing the site, the model or the review wrote: no detail, no caption.
+      const said = [...validateEdl(bad, siteShop).map((p) => p.detail), ...(fakes.llm.lastPatchInput?.problems ?? []).map((p) => p.detail), bad.body[1]!.lines[0]!.text];
+      for (const text of said) expect(why).not.toContain(text);
+      expect(why).not.toContain('"');
+    }
+    expect(await stepOutput(run.runId, 'correctForReview')).toEqual({ status: 'unusable' });
   });
 
   it('does not try a correction the order cannot afford, and refunds', async () => {
