@@ -402,8 +402,10 @@ describe('unusableSummary', () => {
 
 describe('failedCallSummary', () => {
   it('says which call failed, the kind of error and its status, and nothing the call sent or got back', () => {
-    expect(failedCallSummary(new ModelCallFailed('patch', 'AI_APICallError', 400))).toBe('model patch:ModelCallFailed:400');
-    expect(failedCallSummary(new ModelCallFailed('judge', 'AI_RetryError'))).toBe('model judge:ModelCallFailed');
+    expect(failedCallSummary(new ModelCallFailed('patch', 'AI_APICallError', 400))).toBe('model patch:AI_APICallError:400');
+    expect(failedCallSummary(new ModelCallFailed('judge', 'AI_RetryError'))).toBe('model judge:AI_RetryError');
+    // The kind of a failure that was no Error at all, kept to one word of the line.
+    expect(failedCallSummary(new ModelCallFailed('judge', 'unknown error', 529))).toBe('model judge:unknown-error:529');
   });
 
   it("says an answer that does not fit is the judge's: the corrector's own is patch-invalid", () => {

@@ -511,6 +511,22 @@ describe('an order that is refunded', () => {
     expect(await stepOutput(run.runId, 'correctForReview')).toEqual({ status: 'unusable' });
   });
 
+  it('logs a correction whose step failed for good, by the name of the error alone', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    scenario({ review: 'always-cut' });
+    fakes.llm.patchEdl = async () => {
+      throw new Error('The corrector is down: "Precio secreto"');
+    };
+    const run = await captureAndPreview(id);
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
+    // Each correction's step is tried twice, and says why on its last try; the review loop takes it as unusable.
+    expect(fakes.llm.calls.patchEdl).toBe(4);
+    expect(warn.mock.calls.filter(([tag]) => tag === '[correction_unusable]')).toEqual([
+      ['[correction_unusable]', id, 'step-failed:Error'],
+      ['[correction_unusable]', id, 'step-failed:Error'],
+    ]);
+  });
+
   it('does not try a correction the order cannot afford, and refunds', async () => {
     const silent = await paidOrder(fakes.store, { audio: 'none' });
     // With the VM, the director, the judge and the first review, a round of corrections no longer fits under the cap.

@@ -228,10 +228,10 @@ export async function correctEdl({
  * scenes the fix put in as `path:piece shotId#boxIndex`. Only what the code wrote or checked goes in: never a problem's
  * detail, which quotes the site and the model, nor the text of a scene, and a shot the site does not have is `?`.
  */
-export function unusableSummary({ reason, problems, patched }: Unusable, site: SiteData): string {
+export function unusableSummary({ reason, problems, patched: fixes }: Unusable, site: SiteData): string {
   const failed = [...new Set(problems.map((p) => `${p.where}:${p.rule}`))].join(',');
   const shotOf = (shotId: string): string => (site.shots.some((s) => s.id === shotId) ? shotId : '?');
-  const scenes = patched
+  const scenes = fixes
     .map(({ path, scene }) => {
       const shot = scene.shotId === undefined ? '' : ` ${shotOf(scene.shotId)}${scene.boxIndex === undefined ? '' : `#${scene.boxIndex}`}`;
       return `${path}:${scene.piece}${shot}`;
@@ -241,9 +241,12 @@ export function unusableSummary({ reason, problems, patched }: Unusable, site: S
 }
 
 /**
- * Why a correction cannot be used when a model call of it failed for good (see correctEdl), in one line for the order's
- * log: `model call:ErrorName[:status]`, nothing the call sent or got back. The corrector's answer that does not fit is
- * `patch-invalid`, so one that comes up here is the judge's.
+ * Why a correction cannot be used when a model call of it failed (see correctEdl), in one line for the order's log:
+ * `model call:ErrorName[:status]`, with the kind of error of a call that failed (the SDK's name, as `AI_APICallError`) and
+ * the name of an answer that did not fit, never anything the call sent or got back. The corrector's answer that does not
+ * fit is `patch-invalid`, so one that comes up here is the judge's.
  */
 export const failedCallSummary = (error: ModelCallFailed | ModelOutputInvalid): string =>
-  error instanceof ModelCallFailed ? `model ${error.call}:${error.name}${error.status === undefined ? '' : `:${error.status}`}` : `model judge:${error.name}`;
+  error instanceof ModelCallFailed
+    ? `model ${error.call}:${error.kind.replace(/[^\w$]+/g, '-')}${error.status === undefined ? '' : `:${error.status}`}`
+    : `model judge:${error.name}`;

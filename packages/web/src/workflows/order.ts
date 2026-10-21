@@ -25,7 +25,7 @@ import {
   type SiteData,
   type VmTaskKind,
 } from '@app/core';
-import { createHook, getStepMetadata, getWorkflowMetadata, RetryableError, sleep } from 'workflow';
+import { createHook, FatalError, getStepMetadata, getWorkflowMetadata, RetryableError, sleep } from 'workflow';
 import { getAdapters } from '../adapters';
 import { env } from '../env';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
@@ -41,6 +41,7 @@ import {
   SETTLEMENT_GRACE_SECONDS,
   type BlobPort,
   type Deliverable,
+  type LlmPort,
   type OrderRequest,
   type OrderStore,
   type SettlementVerdict,
@@ -671,15 +672,17 @@ reviewKeyframes.maxRetries = 1;
 type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable' } | { status: 'over-budget' };
 
 /**
- * The corrector's fix for what the review blocked on, checked as the script is (code checks and the judge), or why there
- * is none: the round would pass the order's cap, or the fix cannot be used. Why it cannot be used is logged, one line
- * with ids and rules only (see unusableSummary and failedCallSummary), and the step's output says no more than
- * `unusable`.
+ * The work of the correction step (see correctForReview), with what it needs: the corrector's fix for what the review
+ * blocked on, checked as the script is (code checks and the judge), or why there is none: the round would pass the
+ * order's cap, or the fix cannot be used. Why it cannot be used is logged, one line with ids and rules only (see
+ * unusableSummary and failedCallSummary). A model that may answer later (429, 5xx, no status) is asked again on the step's
+ * next try; on its last (`lastTry`), the correction cannot be used either, and says so. Anything else goes up.
  */
-async function correctForReview(orderId: string, edl: Edl, problems: Problem[]): Promise<Correction> {
-  'use step';
-  const { store, blob, llm } = await getAdapters();
-  if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge + EST.review, env().SPEND_CAP_PER_ORDER_USD)) {
+export async function correctOnce(
+  { orderId, edl, problems, lastTry }: { orderId: string; edl: Edl; problems: Problem[]; lastTry: boolean },
+  { store, blob, llm, spendCap }: { store: Pick<OrderStore, 'addCost' | 'orderCost'>; blob: Pick<BlobPort, 'get'>; llm: Pick<LlmPort, 'patchEdl' | 'judge'>; spendCap: number },
+): Promise<Correction> {
+  if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge + EST.review, spendCap)) {
     console.warn('[review_over_budget]', orderId);
     return { status: 'over-budget' };
   }
@@ -693,8 +696,31 @@ async function correctForReview(orderId: string, edl: Edl, problems: Problem[]):
     const corrected = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
     return corrected.ok ? { status: 'fixed', edl: corrected.edl } : unusable(unusableSummary(corrected, capture.site));
   } catch (error) {
-    retryLaterIfBusy(error);
+    if (!lastTry) retryLaterIfBusy(error);
     if (isModelFailure(error)) return unusable(failedCallSummary(error));
+    throw error;
+  }
+}
+
+/** The name of what was thrown, when it is a plain identifier (`TypeError`, `AI_APICallError`): never its message. */
+const errorName = (error: unknown): string => {
+  const name = (error as { name?: unknown } | null | undefined)?.name;
+  return typeof name === 'string' && /^[A-Za-z_$][\w$]*$/.test(name) ? name : 'unknown';
+};
+
+/**
+ * The corrector's fix for what the review blocked on, or why there is none (see correctOnce); the step's output says no
+ * more than `unusable`. A step that fails for good (on its last try, or with an error not to be tried again) leaves the
+ * correction unusable too, as the review loop takes it: it says so first, by the error's name alone.
+ */
+async function correctForReview(orderId: string, edl: Edl, problems: Problem[]): Promise<Correction> {
+  'use step';
+  const lastTry = getStepMetadata().attempt > correctForReview.maxRetries;
+  try {
+    const { store, blob, llm } = await getAdapters();
+    return await correctOnce({ orderId, edl, problems, lastTry }, { store, blob, llm, spendCap: env().SPEND_CAP_PER_ORDER_USD });
+  } catch (error) {
+    if (lastTry || FatalError.is(error)) console.warn('[correction_unusable]', orderId, `step-failed:${errorName(error)}`);
     throw error;
   }
 }
