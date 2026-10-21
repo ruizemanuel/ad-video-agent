@@ -55,7 +55,8 @@ function makeFixtureEdl(site: SiteData): Edl {
     body: [
       {
         piece: 'ClaimStack',
-        beats: 6,
+        // Its second line, 25 characters, needs 4 beats to be read: it comes in on beat 3 of 7.
+        beats: 7,
         lines: [
           { text: '0% commission', kind: 'claim', claimId: 'c2', accent: '0%' },
           { text: 'Cards, transfers and cash', kind: 'claim', claimId: 'c4' },
