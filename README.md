@@ -4,7 +4,9 @@ A service that turns a website into a short ad video. An agent (or any x402 clie
 
 ## Status
 
-Stage 2a: the x402 service and the whole chain end to end. Work in progress; nothing is deployed yet.
+Stage 2a is live: the x402 service and the whole chain run end to end. An order is paid in USDT or USDC on Celo (x402). The service then rents a machine through buy to capture the site and render the video, a director model writes the script, a review model checks the key frames, Lyria makes the music, and the result is delivered as signed links. If any step fails, the order is refunded automatically, in the token it was paid in.
+
+[Deployment](#deployment) and [Environment variables](#environment-variables) say how to run your own instance.
 
 ## Packages
 
@@ -29,6 +31,94 @@ pnpm --filter @app/vm test:browser   # opt-in: a real Chrome (downloaded on the 
 ```
 
 Tests that spend money (paid VMs, models, music) are opt-in and never run in CI.
+
+## Deployment
+
+The service runs on Vercel. This is what it depends on, for someone who forks the repository and runs their own instance.
+
+### The Vercel project
+
+- **Root directory:** `packages/web`.
+- **System environment variables:** turn on "Enable access to System Environment Variables" in the project's settings. Workflow reads variables that Vercel sets (`VERCEL_DEPLOYMENT_ID`, `VERCEL_PROJECT_ID`, `VERCEL_ENV`) and fails without them, and the service itself needs `VERCEL_ENV` and `VERCEL_GIT_COMMIT_SHA`.
+- **Git connection:** connect the GitHub repository. Each push to `main` deploys Production, and the crons in `packages/web/vercel.ts` (the reconciliation and the clean-up, once a day each) come with it.
+- **The code the rented machine runs:** the machine has no copy of the repository. Its start-up script downloads it from `codeload.github.com` at the commit of the deployment (`VERCEL_GIT_COMMIT_SHA`), or at `VM_CODE_REF` when the deployment has none. The download sends no credentials, so `GITHUB_REPO` (`owner/name`) must be a public repository that has that commit. In production the service refuses to run with neither a commit nor `VM_CODE_REF`.
+- **No Deployment Protection on Production.** The rented machine calls the service's task API (`/api/vm/tasks/...`) with only its order's permit, which lasts 75 minutes, and paying clients and their delivery links work without a Vercel login. A protection page in front of the service would stop all of them. The routes guard themselves: with the payment, the order's permit, a signed link, the cron secret or the order's id.
+- **The models need no key.** The calls to Claude go through the Vercel AI Gateway, which signs in with the deployment's own token and bills your Vercel account. Only the music (Lyria, through the Gemini API) has a key: `GEMINI_API_KEY`.
+
+### Database
+
+Neon Postgres, added from the Vercel Marketplace (`vercel integration add neon`), which sets `DATABASE_URL`. It has to be Neon: the service talks to it over HTTP. Create the tables from the repository's root, with the database's URL in the environment (`DATABASE_URL_UNPOOLED` is used first when it is set):
+
+```sh
+pnpm install
+pnpm --filter @app/web db:migrate
+```
+
+Run it again whenever a change adds a file to `packages/web/drizzle`.
+
+### Storage
+
+A private Vercel Blob store, connected to the project (it sets `BLOB_READ_WRITE_TOKEN`). Every file is written private and read through short-lived signed links. The rented machine uploads through signed links that each write one path once, so it never holds the store's token.
+
+### Wallets
+
+Three addresses on Celo, each with one job:
+
+| Setting | What it does | What it needs to hold |
+| --- | --- | --- |
+| `PAYTO_ADDRESS` | Receives the payments. The tokens go from the client straight to it. Only the address is configured: keep it cold, the service never has its key. | Nothing. |
+| `SPEND_WALLET_PRIVATE_KEY` | The spend wallet. It pays buy for each order's rented machine, in USDT. | USDT. A machine is paid at most 0.07 USDT (a limit in the code), and `BUY_DAILY_CAP_USD` limits what it spends in a UTC day. |
+| `REFUND_WALLET_PRIVATE_KEY` | The refund wallet. It sends each refund back to the payer in the token that was paid. | USDT and USDC, as much as a day's refunds may need (`REFUND_DAILY_CAP_USD`). It pays its gas in that same token, up to 0.05 per refund, so it needs no CELO. |
+
+The two keys are Sensitive environment variables in Vercel and live nowhere else in the project. Keep both wallets small: they are working balances. A refund the wallet cannot pay (no balance, gas too high or the daily cap) leaves the order `refund_failed`; see Operations.
+
+### Firewall
+
+Add a rate-limit rule to the project's Firewall in the Vercel dashboard: `POST /v1/videos`, 30 requests per minute per IP, fixed window, answering 429. The route runs a free site check with a model before any payment, so anyone can cause that cost (`PRECHECK_DAILY_CAP_USD` stops it for the day). The rule is set by hand because Vercel's API cannot create a project's first firewall configuration.
+
+### The clock
+
+The 10-minute reconciliation runs on a Cloudflare Worker, deployed apart from Vercel: see [Reconcile clock](#reconcile-clock).
+
+## Environment variables
+
+Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks them the first time the service needs them and refuses to run on a missing or malformed one; the error names the variable, never its value. A secret is a value that must never be committed or printed: set it as a Sensitive variable where Vercel lets you.
+
+| Name | Needed | Secret | What it is for |
+| --- | --- | --- | --- |
+| `PAYTO_ADDRESS` | Yes | No | The address that receives the payments. |
+| `PRICE_ATOMIC` | No, default `5000000` | No | The price of an order in the smallest unit of USDT and USDC, which have 6 decimals: `5000000` is 5. |
+| `X402_API_KEY` | Yes | Yes | The key for Celo's x402 facilitator, which checks and settles the payments. A person makes it at x402.celo.org. |
+| `SPEND_WALLET_PRIVATE_KEY` | Yes | Yes | The spend wallet's key (`0x` and 64 hex characters). |
+| `REFUND_WALLET_PRIVATE_KEY` | Yes | Yes | The refund wallet's key (`0x` and 64 hex characters). |
+| `CELO_RPC_URL` | No, default `https://forno.celo.org` | If it carries a key | The Celo node the service reads and sends transactions through. |
+| `ERC8021_CODE` | No | No | The builder-code tag a hackathon assigns (1 to 32 lowercase letters, digits or underscores). When set, it goes in the payment offer and at the end of every refund; without it, nothing is tagged. |
+| `DATABASE_URL` | Yes | Yes | The Neon connection URL. |
+| `DATABASE_URL_UNPOOLED` | No | Yes | Used only by `db:migrate`, in place of `DATABASE_URL`. |
+| `BLOB_READ_WRITE_TOKEN` | Yes | Yes | The token of the private Blob store. |
+| `GEMINI_API_KEY` | Yes | Yes | The Gemini API key, for the music. |
+| `LINK_SIGNING_SECRET` | Yes | Yes | Signs the delivery links, at least 32 characters. Changing it ends every link already given. |
+| `CRON_SECRET` | Yes | Yes | At least 32 characters. The cron routes accept only a request that carries it as a bearer token: Vercel's cron and the Cloudflare clock send it. |
+| `PUBLIC_BASE_URL` | Yes | No | Where the service lives, with no trailing slash. It builds the status and delivery links and is the address the rented machine calls (the machine's script takes `https` only). The clock's `RECONCILE_URL` must match it. |
+| `GITHUB_REPO` | Yes | No | `owner/name` of the public repository the rented machine downloads its code from. |
+| `VM_CODE_REF` | Only without `VERCEL_GIT_COMMIT_SHA` | No | A commit or tag for the machine to download when the deployment has no commit of its own. |
+| `SPEND_CAP_PER_ORDER_USD` | No, default `2.5` | No | The most an order may spend on model and music calls. A call that only improves the video (a correction, the review, a third music track) is not made if it would pass the cap. |
+| `BUY_DAILY_CAP_USD` | No, default `2` | No | The most the service may pay buy for machines in a UTC day, every order together. |
+| `REFUND_DAILY_CAP_USD` | No, default `10` | No | The most it may refund in a UTC day, every order together. |
+| `PRECHECK_DAILY_CAP_USD` | No, default `2` | No | The most the free site check's model calls may cost in a UTC day, every quote together. Past it, a site that was not checked in the last 24 hours gets a 503 until the next UTC day. |
+| `VERCEL_ENV` | Set by Vercel | No | `production` turns on the checks that keep a test setup out of production: no fake adapters, no in-memory or local database, and a commit for the machine. |
+| `VERCEL_GIT_COMMIT_SHA` | Set by Vercel | No | The deployed commit, which the machine downloads. Needs the system variables turned on. |
+
+Limits that live in the code and have no variable: a machine is paid at most 0.07 USDT (`VM_MAX_ATOMIC` in `packages/web/src/payments/vm-payment.ts`), and a refund spends at most 0.05 on gas (`MAX_REFUND_FEE_ATOMIC` in `packages/web/src/adapters/real/refunds.ts`).
+
+Only for tests and for the refund run, never for a normal deployment:
+
+| Name | What it is for |
+| --- | --- |
+| `AD_AGENT_ADAPTERS` | `real` (the default) or `fake`, the doubles the tests use. Production refuses `fake`. |
+| `FAKE_DIR`, `FAKE_SCENARIO` | The folder the fake adapters keep their files in, and the scenario they play. |
+| `DEV_MODE` | `1` is for a paid run of the refund path: it needs a cheap `PRICE_ATOMIC` (below `1000000`) and refuses a real price. |
+| `FORCE_FAIL_AT` | `before-vm`, with `DEV_MODE=1`: the order is refunded before it rents a machine. Take both out once the run is done. |
 
 ## Operations
 
