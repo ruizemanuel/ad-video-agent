@@ -56,7 +56,7 @@ const schema = z
         .transform((url) => url.replace(/\/+$/, ''))
         .optional(),
     ),
-    /** `owner/name`. The VM downloads the code from codeload.github.com at VERCEL_GIT_COMMIT_SHA (or VM_CODE_REF). */
+    /** `owner/name`. The VM downloads the code from codeload.github.com at VERCEL_GIT_COMMIT_SHA, or at VM_CODE_REF when the deployment has no commit. */
     GITHUB_REPO: blank(
       z
         .string()
@@ -98,7 +98,7 @@ const schema = z
     // Set by Vercel on its deployments.
     VERCEL_ENV: blank(z.string().optional()),
     VERCEL_GIT_COMMIT_SHA: blank(z.string().optional()),
-    /** The commit the VM downloads, when it is not the deployment's. */
+    /** The commit or tag the VM downloads when the deployment has no commit of its own: a fallback, VERCEL_GIT_COMMIT_SHA wins when both are set. */
     VM_CODE_REF: blank(z.string().optional()),
   })
   .superRefine((settings, ctx) => {
