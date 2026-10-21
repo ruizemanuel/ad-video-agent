@@ -339,18 +339,27 @@ export type FaceKind = 'serif' | 'sans-serif';
  * - a sans face ends its stems as they are: the foot is the stem, up to 1.3 times it (a flared stem) or 0.01 em wider
  *   (a pixel, on a hairline stem).
  * Three of the four letters have to agree. The capital I is not one of them: many sans faces give it serifs to tell it
- * from l (IBM Plex Sans, Verdana), as many give l a tail. Null when it cannot tell: the face is not loaded (or not there
- * at all: a fallback would be drawn), there is no canvas, or the letters do not agree (a script face, a flared one).
- * Runs in the page.
+ * from l (IBM Plex Sans, Verdana), as many give l a tail. Null when it cannot tell: the face is not loaded (no copy of it
+ * at that weight is, or it is not there at all: a fallback would be drawn), there is no canvas, or the letters do not
+ * agree (a script face, a flared one). Runs in the page.
  */
 export function inPageFaceKind(family: string, weight: string): FaceKind | null {
   const SIZE = 200;
   const font = `normal ${weight} ${SIZE}px "${family.replace(/["\\]/g, '\\$&')}"`;
+  let loaded: boolean;
   try {
-    if (!document.fonts.check(font, 'nhmrx')) return null;
+    loaded = document.fonts.check(font, 'nhmrx');
   } catch {
     return null; // no font the page could name
   }
+  // check() wants every copy of the face loaded, and Framer declares faces twice: one copy loaded at this weight is
+  // enough. That it is what gets drawn, the widths below make sure.
+  const wanted = Number(weight) || 400;
+  document.fonts.forEach((face) => {
+    const [low = 400, high = low] = face.weight.split(/\s+/).map((w) => (w === 'bold' ? 700 : Number(w) || 400));
+    if (face.status === 'loaded' && face.family.replace(/^["']|["']$/g, '') === family && low <= wanted && wanted <= high) loaded = true;
+  });
+  if (!loaded) return null;
   const W = 2 * SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = W;

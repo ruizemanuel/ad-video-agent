@@ -10,8 +10,8 @@ import type { Page } from 'puppeteer-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
 import { inPageFaceKind, inPageFindLogo, inPageSetup } from '../../src/capture/extract';
-import { resolveFont } from '../../src/capture/fonts';
-import { launchBrowser } from '../../src/capture/page';
+import { download, resolveFont } from '../../src/capture/fonts';
+import { CHROME_UA, launchBrowser } from '../../src/capture/page';
 import { pngSize } from '../../src/capture/shots';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { serveFixtureSite } from './support/fixture-site';
@@ -43,6 +43,17 @@ const googleFontFile = async (family: string, dir: string): Promise<string> => {
   const font = await resolveFont(family, 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
   if (font.family !== family || !font.files?.[0]) throw new Error(`Google Fonts gave no file of ${family}.`);
   return join(dir, font.files[0].file);
+};
+
+/** The latin file of one weight of a family from Google Fonts, under it (resolveFont asks for 400 and up only). */
+const googleFontInstance = async (family: string, weight: number, dir: string): Promise<string> => {
+  const sheet = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}:wght@${weight}&display=swap`;
+  const css = await (await fetch(sheet, { headers: { 'user-agent': CHROME_UA } })).text();
+  const src = /\/\*\s*latin\s*\*\/\s*@font-face\s*{[^}]*url\(([^)]+)\)/.exec(css)?.[1];
+  if (!src) throw new Error(`Google Fonts gave no latin file of ${family} at ${weight}.`);
+  const file = join(dir, `${family.replace(/ /g, '-')}-${weight}.woff2`);
+  await download(src, file);
+  return file;
 };
 
 /** Captures once, in `beforeAll`, and gives the tests of the describe what came out. */
@@ -241,21 +252,29 @@ describe('the logo finder, in a page of its own', () => {
 describe('the measure of whether a face has serifs, in a page of its own', () => {
   let browser: Awaited<ReturnType<typeof launchBrowser>>;
   let page: Page;
-  // Real faces, loaded under names of a site's own: the measure goes by how the face draws, never by its name.
-  const FACES: Record<string, string> = {
-    'Brand Hairline': 'Playfair Display', // a serif whose serifs are hairlines
-    'Brand Light': 'Cormorant Garamond', // a light serif, thin all over
-    'Brand Plex': 'IBM Plex Sans', // a sans whose capital I has serifs
-    'Brand Grotesk': 'Inter',
+  // Real faces, loaded under names of a site's own: the measure goes by how the face draws, never by its name. A weight
+  // picks that one instance of the family; without one, the file resolveFont gets.
+  const FACES: Record<string, [family: string, weight?: number]> = {
+    'Brand Hairline': ['Playfair Display'], // a serif whose serifs are hairlines
+    'Brand Light': ['Cormorant Garamond'], // a light serif, thin all over
+    'Brand Thin': ['Source Serif 4', 200], // a thin serif, as GT Alpina Thin is: stems of a few pixels
+    'Brand Plex': ['IBM Plex Sans'], // a sans whose capital I has serifs
+    'Brand Grotesk': ['Inter'],
+    'Brand Thin Grotesk': ['Inter', 100], // a sans with hairline stems
+    'Brand Twice': ['Inter'], // also declared by the page, with a file it never loads (see below)
   };
   beforeAll(async () => {
     const dir = runDir();
     browser = await launchBrowser();
     page = await browser.newPage();
-    // A face the page declares and has not loaded, for it uses it nowhere.
-    await page.setContent('<style>@font-face { font-family: "Brand Unloaded"; src: url(https://127.0.0.1:1/unloaded.woff2); }</style><p>Text</p>');
-    for (const [name, family] of Object.entries(FACES)) {
-      const bytes = readFileSync(await googleFontFile(family, dir)).toString('base64');
+    // A face the page declares and has not loaded, for it uses it nowhere. And a face declared twice, as Framer does:
+    // this copy never loads, the one added below does.
+    await page.setContent(`<style>
+      @font-face { font-family: "Brand Unloaded"; src: url(https://127.0.0.1:1/unloaded.woff2); }
+      @font-face { font-family: "Brand Twice"; src: url(https://127.0.0.1:1/twice.woff2); }
+    </style><p>Text</p>`);
+    for (const [name, [family, weight]] of Object.entries(FACES)) {
+      const bytes = readFileSync(weight ? await googleFontInstance(family, weight, dir) : await googleFontFile(family, dir)).toString('base64');
       await page.evaluate(
         async (face, base64) => {
           document.fonts.add(await new FontFace(face, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))).load());
@@ -272,8 +291,10 @@ describe('the measure of whether a face has serifs, in a page of its own', () =>
   it.each([
     ['Brand Hairline', 'serif'],
     ['Brand Light', 'serif'],
+    ['Brand Thin', 'serif'],
     ['Brand Plex', 'sans-serif'],
     ['Brand Grotesk', 'sans-serif'],
+    ['Brand Thin Grotesk', 'sans-serif'],
   ])('reads %s as %s', async (family, kind) => {
     expect(await page.evaluate(inPageFaceKind, family, '400')).toBe(kind);
   });
@@ -281,6 +302,11 @@ describe('the measure of whether a face has serifs, in a page of its own', () =>
   it('cannot tell a face that is declared but not loaded, nor one that is not there at all: a fallback would be drawn', async () => {
     expect(await page.evaluate(inPageFaceKind, 'Brand Unloaded', '400')).toBeNull();
     expect(await page.evaluate(inPageFaceKind, 'Brand Nowhere', '400')).toBeNull();
+  });
+
+  it('reads a face declared twice, one copy loaded and one not, which document.fonts.check calls not loaded', async () => {
+    expect(await page.evaluate(() => document.fonts.check('400 16px "Brand Twice"'))).toBe(false);
+    expect(await page.evaluate(inPageFaceKind, 'Brand Twice', '400')).toBe('sans-serif');
   });
 });
 
