@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { genericOf, resolveFont, resolveFontFallback } from '../src/capture/fonts';
+import { fallbackKind, resolveFont, resolveFontFallback } from '../src/capture/fonts';
 
 describe('resolveFontFallback', () => {
   it('maps proprietary fonts to the closest open family', () => {
@@ -12,20 +12,36 @@ describe('resolveFontFallback', () => {
   });
 });
 
-describe('genericOf', () => {
+describe('fallbackKind', () => {
+  // [stack, family (its first, as resolveFont reads it), what the page measured of the face] -> [kind, why]
   it.each([
-    ['"Berkeley Mono", ui-monospace, monospace', 'monospace'],
-    ['"Tiempos Text", Georgia, serif', 'serif'],
-    ['"Circular Std", Helvetica, Arial, sans-serif', 'sans-serif'],
-    ['"Söhne", system-ui', 'sans-serif'],
-    ['ui-serif, Georgia', 'serif'],
-    // No generic word in the stack: the name of the font is what is left to go by.
-    ['"Berkeley Mono"', 'monospace'],
-    ['"Fira Code", Menlo', 'monospace'],
-    ['"Garamond Premier"', 'serif'],
-    ['"Plain Sans"', 'sans-serif'],
-  ])('reads %s as %s', (stack, generic) => {
-    expect(genericOf(stack)).toBe(generic);
+    // 1. Monospace, by the stack's generic word or by the name, whatever was measured: a monospace face has serifs or not.
+    ['"Berkeley Mono", ui-monospace, monospace', 'Berkeley Mono', 'serif', 'monospace', 'monospace by the stack'],
+    ['"Courier Prime", monospace', 'Courier Prime', 'serif', 'monospace', 'monospace by the stack'],
+    ['"Berkeley Mono", sans-serif', 'Berkeley Mono', 'sans-serif', 'monospace', 'monospace by its name'],
+    ['"Fira Code", Menlo', 'Fira Code', null, 'monospace', 'monospace by its name'],
+    // 2. What the page measured of the face, before its name and before the stack's last word.
+    ['"GT Alpina Thin", "GT Alpina Thin Placeholder", sans-serif', 'GT Alpina Thin', 'serif', 'serif', 'measured serif'],
+    ['"Brand Text", Georgia, serif', 'Brand Text', 'sans-serif', 'sans-serif', 'measured sans-serif'],
+    ['"Tiempos Text", serif', 'Tiempos Text', 'sans-serif', 'sans-serif', 'measured sans-serif'],
+    // 3. The face could not be measured: a serif's name, before the stack's last word (Framer ends every stack with sans-serif).
+    ['"GT Alpina Thin", "GT Alpina Thin Placeholder", sans-serif', 'GT Alpina Thin', null, 'serif', 'serif by its name'],
+    ['"Tiempos Headline", sans-serif', 'Tiempos Headline', null, 'serif', 'serif by its name'],
+    ['"Canela Deck", sans-serif', 'Canela Deck', null, 'serif', 'serif by its name'],
+    ['"Freight Big Pro", sans-serif', 'Freight Big Pro', null, 'serif', 'serif by its name'],
+    ['"GT Sectra Display", sans-serif', 'GT Sectra Display', null, 'serif', 'serif by its name'],
+    ['"PP Editorial New", sans-serif', 'PP Editorial New', null, 'serif', 'serif by its name'],
+    ['"Garamond Premier"', 'Garamond Premier', null, 'serif', 'serif by its name'],
+    // ... unless the name says sans: the sans of a serif family.
+    ['"Freight Sans Pro", sans-serif', 'Freight Sans Pro', null, 'sans-serif', 'sans-serif by the stack'],
+    ['"Merriweather Sans"', 'Merriweather Sans', null, 'sans-serif', 'sans-serif by default'],
+    // 4. The stack's generic word, the first there is; else sans-serif.
+    ['"Circular Std", Helvetica, Arial, sans-serif', 'Circular Std', null, 'sans-serif', 'sans-serif by the stack'],
+    ['"Söhne", system-ui', 'Söhne', null, 'sans-serif', 'sans-serif by the stack'],
+    ['"Brand Book", Georgia, serif', 'Brand Book', null, 'serif', 'serif by the stack'],
+    ['"Plain Face"', 'Plain Face', null, 'sans-serif', 'sans-serif by default'],
+  ] as const)('reads %s (%s, measured %s) as %s: %s', (stack, family, measured, generic, why) => {
+    expect(fallbackKind(stack, family, measured)).toEqual({ generic, why });
   });
 });
 
@@ -85,6 +101,34 @@ describe('resolveFont', () => {
     expect(serif.family).toBe('Source Serif 4');
     expect(mono.family).toBe('JetBrains Mono');
     expect(notes.join('\n')).toMatch(/Circular Std.*Inter/);
+  });
+
+  it('stands in for a face of the kind the page measured, before its name and the stack, and says why', async () => {
+    const { fetchImpl } = fakeGoogle({ Inter: {}, 'Source Serif 4': {} });
+    const notes: string[] = [];
+    const stack = '"GT Alpina Thin", "GT Alpina Thin Placeholder", sans-serif';
+
+    const measured = await resolveFont(stack, 'display', sources, { outDir: dir, fetchImpl, measured: 'serif', note: (n) => notes.push(n) });
+    const byName = await resolveFont(stack, 'display', sources, { outDir: dir, fetchImpl, measured: null, note: (n) => notes.push(n) });
+    const sans = await resolveFont('"Brand Text", Georgia, serif', 'body', sources, { outDir: dir, fetchImpl, measured: 'sans-serif', note: (n) => notes.push(n) });
+
+    expect([measured.family, byName.family, sans.family]).toEqual(['Source Serif 4', 'Source Serif 4', 'Inter']);
+    expect(notes).toEqual([
+      'font "GT Alpina Thin" is not on Google Fonts',
+      'font "GT Alpina Thin" replaced by Source Serif 4 (measured serif)',
+      'font "GT Alpina Thin" is not on Google Fonts',
+      'font "GT Alpina Thin" replaced by Source Serif 4 (serif by its name)',
+      'font "Brand Text" is not on Google Fonts',
+      'font "Brand Text" replaced by Inter (measured sans-serif)',
+    ]);
+  });
+
+  it('takes a face that is on Google Fonts as it is, whatever was measured of it', async () => {
+    const { fetchImpl } = fakeGoogle({ 'Bricolage Grotesque': {} });
+
+    const font = await resolveFont('"Bricolage Grotesque", sans-serif', 'display', sources, { outDir: dir, fetchImpl, measured: 'serif' });
+
+    expect(font.family).toBe('Bricolage Grotesque');
   });
 
   it('never leaves the default font of the browser: a system stack gets the open family without asking Google for it', async () => {

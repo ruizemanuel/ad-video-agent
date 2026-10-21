@@ -26,6 +26,7 @@ export type RawBrand = {
   displayStack: string;
   bodyStack: string;
   displayWeight: string;
+  bodyWeight: string;
   displayStretch: string;
   displayMetrics: { letterSpacingEm: number; lineHeight: number } | null;
   stylesheets: string[];
@@ -311,6 +312,7 @@ export function inPageBrand(): RawBrand {
     displayStack: fontStack(headingEl),
     bodyStack: fontStack(bodyEl),
     displayWeight: headingEl ? getComputedStyle(headingEl).fontWeight : '700',
+    bodyWeight: getComputedStyle(bodyEl).fontWeight,
     displayStretch: headingEl ? getComputedStyle(headingEl).fontStretch : '100%',
     // Tracking and leading of the main heading, relative to its font size.
     displayMetrics: (() => {
@@ -324,6 +326,70 @@ export function inPageBrand(): RawBrand {
     stylesheets: [...document.querySelectorAll<HTMLLinkElement>('link[rel~=stylesheet]')].map((l) => l.href),
     fontFaceSrcs,
   };
+}
+
+/** Whether a face has serifs: what the open font that stands in for it is chosen by (see fallbackKind in fonts.ts). */
+export type FaceKind = 'serif' | 'sans-serif';
+
+/**
+ * Whether `family`, a face the page has, has serifs, from how it draws: a stack's generic word is not about its face
+ * (Framer ends every stack with sans-serif, serifs included), and a name says little. The letters n, h, m and r are drawn
+ * 200 px tall on a canvas, and the foot of the first stem of each is compared with that stem at half the x-height:
+ * - a serif face sets a serif across the foot: 1.4 times the stem or more, and 0.02 em wider at the least;
+ * - a sans face ends its stems as they are: the foot is the stem, up to 1.3 times it (a flared stem) or 0.01 em wider
+ *   (a pixel, on a hairline stem).
+ * Three of the four letters have to agree. The capital I is not one of them: many sans faces give it serifs to tell it
+ * from l (IBM Plex Sans, Verdana), as many give l a tail. Null when it cannot tell: the face is not loaded (or not there
+ * at all: a fallback would be drawn), there is no canvas, or the letters do not agree (a script face, a flared one).
+ * Runs in the page.
+ */
+export function inPageFaceKind(family: string, weight: string): FaceKind | null {
+  const SIZE = 200;
+  const font = `normal ${weight} ${SIZE}px "${family.replace(/["\\]/g, '\\$&')}"`;
+  try {
+    if (!document.fonts.check(font, 'nhmrx')) return null;
+  } catch {
+    return null; // no font the page could name
+  }
+  const W = 2 * SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = W;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  // With the face first, two different fallbacks behind it give the same width only if the face is what is drawn.
+  const widthOver = (fallback: string): number => {
+    ctx.font = `${font}, ${fallback}`;
+    return ctx.measureText('nhmrx').width;
+  };
+  if (widthOver('monospace') !== widthOver('serif')) return null;
+  ctx.font = font;
+  const xHeight = ctx.measureText('x').actualBoundingBoxAscent;
+  const baseline = Math.round(1.5 * SIZE);
+  const votes = { serif: 0, sans: 0 };
+  for (const letter of ['n', 'h', 'm', 'r']) {
+    ctx.clearRect(0, 0, W, W);
+    ctx.fillText(letter, SIZE / 2, baseline);
+    const { data } = ctx.getImageData(0, 0, W, W);
+    // How wide the first run of ink from the left is on row y (pixels half covered or more), 0 on a row with none.
+    const firstRun = (y: number): number => {
+      let x = 0;
+      while (x < W && (data[(y * W + x) * 4 + 3] ?? 0) < 128) x++;
+      const start = x;
+      while (x < W && (data[(y * W + x) * 4 + 3] ?? 0) >= 128) x++;
+      return x - start;
+    };
+    const middle = Math.round(baseline - xHeight / 2);
+    const stem = firstRun(middle);
+    if (stem === 0) continue;
+    // The foot: the widest first run in the lowest 0.04 em of ink, which sits on the baseline.
+    let bottom = Math.min(W - 1, baseline + Math.ceil(0.03 * SIZE));
+    while (bottom > middle && firstRun(bottom) === 0) bottom--;
+    let foot = 0;
+    for (let y = bottom; y > bottom - 0.04 * SIZE; y--) foot = Math.max(foot, firstRun(y));
+    if (foot >= 1.4 * stem && foot - stem >= 0.02 * SIZE) votes.serif++;
+    else if (foot >= 0.8 * stem && (foot <= 1.3 * stem || foot - stem <= 0.01 * SIZE)) votes.sans++;
+  }
+  return votes.serif >= 3 ? 'serif' : votes.sans >= 3 ? 'sans-serif' : null;
 }
 
 /**

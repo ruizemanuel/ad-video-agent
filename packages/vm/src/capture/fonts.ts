@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FontFile, SiteFont } from '@app/core';
 import { describeError, sendWithRetries } from '../api';
+import type { FaceKind } from './extract';
 import { CHROME_UA } from './page';
 
 export type Generic = 'sans-serif' | 'serif' | 'monospace';
@@ -30,19 +31,47 @@ const GENERIC_WORDS: Record<string, Generic> = {
 };
 
 const MONO_NAME = /\b(mono|monospace|code|courier|consolas|menlo)\b/;
-const SERIF_NAME = /\b(serif|times|georgia|garamond|palatino|didot|bodoni|caslon|baskerville|tiempos|lora|merriweather|playfair|cambria)\b/;
+// Serifs by name: the classics, and the commercial faces sites self-host (never on Google Fonts).
+const SERIF_NAME = new RegExp(
+  `\\b(${[
+    ...['serif', 'times', 'georgia', 'garamond', 'palatino', 'didot', 'bodoni', 'caslon', 'baskerville', 'cambria', 'lora', 'merriweather', 'playfair'],
+    ...['alpina', 'tiempos', 'canela', 'freight', 'sectra', 'editorial', 'domaine', 'lyon', 'publico', 'chronicle', 'mercury', 'miller'],
+    ...['minion', 'sabon', 'bembo', 'plantin', 'perpetua', 'charter', 'iowan', 'hoefler', 'kepler', 'utopia', 'clarendon', 'rockwell'],
+    ...['recoleta', 'ogg', 'saol', 'reckless', 'signifier', 'financier', 'roslindale', 'gambarino'],
+  ].join('|')})\\b`,
+);
 
-/** What kind of font a CSS font stack is: by its generic word (the first one there is) and, if it has none, by the name of the font. */
-export function genericOf(stack: string): Generic {
-  const names = stack.split(',').map((t) => t.trim().replace(/^["']|["']$/g, '').toLowerCase());
-  for (const name of names) {
-    const generic = GENERIC_WORDS[name];
+/** The generic word of a CSS font stack (the first one there is), or null when it has none. */
+const genericWord = (stack: string): Generic | null => {
+  for (const name of stack.split(',')) {
+    const generic = GENERIC_WORDS[name.trim().replace(/^["']|["']$/g, '').toLowerCase()];
     if (generic) return generic;
   }
-  const first = names[0] ?? '';
-  if (MONO_NAME.test(first)) return 'monospace';
-  if (!/\bsans\b/.test(first) && SERIF_NAME.test(first)) return 'serif';
-  return 'sans-serif';
+  return null;
+};
+
+/** The kind of open font that stands in for a family, and why it is of that kind (said in the capture's log). */
+export type FallbackKind = { generic: Generic; why: string };
+
+/**
+ * The kind of open font that stands in for `family`, the first of `stack` as resolveFont reads it, given what the page
+ * measured of the face (see inPageFaceKind; null when it could not tell). In this order:
+ * 1. monospace, when the stack's generic word is a monospace one or the family's name says it is one;
+ * 2. what the page measured;
+ * 3. serif, when the family's name is a serif's and does not say sans;
+ * 4. the stack's generic word, else sans-serif.
+ * The name comes before the generic word: a stack's last word is not always about its face (Framer ends every stack with
+ * sans-serif, serifs included).
+ */
+export function fallbackKind(stack: string, family: string, measured: FaceKind | null): FallbackKind {
+  const generic = genericWord(stack);
+  const name = family.toLowerCase();
+  if (generic === 'monospace') return { generic, why: 'monospace by the stack' };
+  if (MONO_NAME.test(name)) return { generic: 'monospace', why: 'monospace by its name' };
+  if (measured) return { generic: measured, why: `measured ${measured}` };
+  if (!/\bsans\b/.test(name) && SERIF_NAME.test(name)) return { generic: 'serif', why: 'serif by its name' };
+  if (generic) return { generic, why: `${generic} by the stack` };
+  return { generic: 'sans-serif', why: 'sans-serif by default' };
 }
 
 // Fonts that every system has, or that are the stack of the system itself: they stand for "no font of its own".
@@ -96,6 +125,8 @@ export type FontOptions = {
   outDir: string;
   /** `font-stretch` of the heading. Anything but 100% asks Google for the width axis too. */
   stretch?: string;
+  /** Whether the face has serifs, as the page measured it (see inPageFaceKind): null or absent when it could not tell. */
+  measured?: FaceKind | null;
   fetchImpl?: typeof fetch;
   retryDelayMs?: number;
   note?: (text: string) => void;
@@ -148,12 +179,12 @@ async function fromGoogle(family: string, wide: boolean, outDir: string, fetchin
 
 /**
  * The font a CSS font stack stands for, with its files downloaded. A family that Google Fonts has (with a latin file)
- * is taken as it is. If it has none, or the stack is a system one, the closest open family stands in for it, and the
- * `note` says so. It throws if Google Fonts cannot be reached: a video with a font that is not there is worse than
- * none.
+ * is taken as it is. If it has none, or the stack is a system one, the open family of its kind stands in for it (see
+ * fallbackKind), and the `note` says so and why. It throws if Google Fonts cannot be reached: a video with a font that
+ * is not there is worse than none.
  */
 export async function resolveFont(stack: string, role: SiteFont['role'], sources: FontSources, options: FontOptions): Promise<SiteFont> {
-  const { outDir, stretch = '100%', note = () => {} } = options;
+  const { outDir, stretch = '100%', measured = null, note = () => {} } = options;
   const fetching: Fetching = { fetchImpl: options.fetchImpl, retryDelayMs: options.retryDelayMs };
   const first = firstFamily(stack);
   let family = first;
@@ -175,9 +206,10 @@ export async function resolveFont(stack: string, role: SiteFont['role'], sources
     note(`font stack "${stack}" names no font of its own`);
   }
 
-  const fallback = resolveFontFallback(family, genericOf(stack));
+  const kind = fallbackKind(stack, family, measured);
+  const fallback = resolveFontFallback(family, kind.generic);
   const found = await fromGoogle(fallback.family, false, outDir, fetching);
   if (!found) throw new Error(`No file could be got for the open font ${fallback.family}.`);
-  note(`font "${family || stack}" replaced by ${fallback.family}`);
+  note(`font "${family || stack}" replaced by ${fallback.family} (${kind.why})`);
   return { family: fallback.family, role, source: fallback.source, url: found.url, files: found.files };
 }

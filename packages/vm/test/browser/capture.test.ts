@@ -6,9 +6,11 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureInput, CaptureResult } from '@app/core';
+import type { Page } from 'puppeteer-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildCaptureFile, capture, type CapturedSite } from '../../src/capture';
-import { inPageFindLogo, inPageSetup } from '../../src/capture/extract';
+import { inPageFaceKind, inPageFindLogo, inPageSetup } from '../../src/capture/extract';
+import { resolveFont } from '../../src/capture/fonts';
 import { launchBrowser } from '../../src/capture/page';
 import { pngSize } from '../../src/capture/shots';
 import { serveFixtureSite } from './support/fixture-site';
@@ -34,6 +36,13 @@ const runDir = (): string => {
   return dir;
 };
 const readSite = (dir: string): CapturedSite => JSON.parse(readFileSync(join(dir, 'site.json'), 'utf8')) as CapturedSite;
+
+/** The file of a font from Google Fonts, got as the capture gets one (no font file is kept in the repo). */
+const googleFontFile = async (family: string, dir: string): Promise<string> => {
+  const font = await resolveFont(family, 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
+  if (font.family !== family || !font.files?.[0]) throw new Error(`Google Fonts gave no file of ${family}.`);
+  return join(dir, font.files[0].file);
+};
 
 /** Captures once, in `beforeAll`, and gives the tests of the describe what came out. */
 function sharedCapture(input: () => CaptureInput) {
@@ -228,6 +237,78 @@ describe('the logo finder, in a page of its own', () => {
   });
 });
 
+describe('the measure of whether a face has serifs, in a page of its own', () => {
+  let browser: Awaited<ReturnType<typeof launchBrowser>>;
+  let page: Page;
+  // Real faces, loaded under names of a site's own: the measure goes by how the face draws, never by its name.
+  const FACES: Record<string, string> = {
+    'Brand Hairline': 'Playfair Display', // a serif whose serifs are hairlines
+    'Brand Light': 'Cormorant Garamond', // a light serif, thin all over
+    'Brand Plex': 'IBM Plex Sans', // a sans whose capital I has serifs
+    'Brand Grotesk': 'Inter',
+  };
+  beforeAll(async () => {
+    const dir = runDir();
+    browser = await launchBrowser();
+    page = await browser.newPage();
+    // A face the page declares and has not loaded, for it uses it nowhere.
+    await page.setContent('<style>@font-face { font-family: "Brand Unloaded"; src: url(https://127.0.0.1:1/unloaded.woff2); }</style><p>Text</p>');
+    for (const [name, family] of Object.entries(FACES)) {
+      const bytes = readFileSync(await googleFontFile(family, dir)).toString('base64');
+      await page.evaluate(
+        async (face, base64) => {
+          document.fonts.add(await new FontFace(face, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))).load());
+        },
+        name,
+        bytes,
+      );
+    }
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  it.each([
+    ['Brand Hairline', 'serif'],
+    ['Brand Light', 'serif'],
+    ['Brand Plex', 'sans-serif'],
+    ['Brand Grotesk', 'sans-serif'],
+  ])('reads %s as %s', async (family, kind) => {
+    expect(await page.evaluate(inPageFaceKind, family, '400')).toBe(kind);
+  });
+
+  it('cannot tell a face that is declared but not loaded, nor one that is not there at all: a fallback would be drawn', async () => {
+    expect(await page.evaluate(inPageFaceKind, 'Brand Unloaded', '400')).toBeNull();
+    expect(await page.evaluate(inPageFaceKind, 'Brand Nowhere', '400')).toBeNull();
+  });
+});
+
+describe('a site set in faces of its own that Google Fonts does not have: a serif in a stack that ends in sans-serif, a sans in one that ends in serif', () => {
+  let served: Awaited<ReturnType<typeof serveFixtureSite>>;
+  beforeAll(async () => {
+    const dir = runDir();
+    served = await serveFixtureSite({
+      'fonts/brand-display.woff2': await googleFontFile('Playfair Display', dir),
+      'fonts/brand-text.woff2': await googleFontFile('IBM Plex Sans', dir),
+    });
+  });
+  afterAll(async () => {
+    await served.close();
+  });
+  const run = sharedCapture(() => ({ url: `${served.url}type.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('stands in for each with an open font of the kind the face is, as measured on the page, and says so', () => {
+    const { site } = run;
+    expect(site.brand.fonts.map((f) => [f.role, f.family])).toEqual([
+      ['display', 'Source Serif 4'],
+      ['body', 'Inter'],
+    ]);
+    expect(site.log.notes).toEqual(
+      expect.arrayContaining(['font "Brand Display" replaced by Source Serif 4 (measured serif)', 'font "Brand Text" replaced by Inter (measured sans-serif)']),
+    );
+  });
+});
+
 describe('a stats band right before a one-word title, and a title shaped like a figure', () => {
   const run = sharedCapture(() => ({ url: `${fixtureUrl}figures.html`, extraUrls: [], followDemoLinks: 0 }));
   const section = (heading: string) => run.site.sections.find((s) => s.heading === heading)!;
@@ -340,7 +421,8 @@ describe('a site with a demo page, followed once as a link and once as an extra'
     expect(display).toMatchObject({ family: 'Inter', source: 'google', alsoBody: true });
     expect(display.files?.length).toBeGreaterThan(0);
     for (const file of display.files ?? []) expect(existsSync(join(dir, file.file))).toBe(true);
-    expect(site.log.notes.join('\n')).toMatch(/Circular Std.*Inter/);
+    // The page names Circular Std and never loads it: there is no face to measure, and the stack's last word decides.
+    expect(site.log.notes).toContain('font "Circular Std" replaced by Inter (sans-serif by the stack)');
     expect(site.brand.colors.find((c) => c.role === 'primary')?.hex).toBe('#c81e6b');
   });
 });

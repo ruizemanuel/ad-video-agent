@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { detectBlocked, findDemoLinks, type Anchor, type CaptureFile, type CaptureInput, type CaptureLog, type CaptureResult, type SiteData, type TaskEnvelope } from '@app/core';
 import type { Browser, Page } from 'puppeteer-core';
 import { uploadToPresigned } from '../upload';
-import { inPageAnchors, inPageBrand, inPageExtractText, inPageFindLogo, pickColors, type PageText } from './extract';
+import { inPageAnchors, inPageBrand, inPageExtractText, inPageFaceKind, inPageFindLogo, pickColors, type PageText } from './extract';
 import { download, firstFamily, resolveFont } from './fonts';
 import { addNote, launchBrowser, openPage, sleep, UnreachableError, VIEWPORTS } from './page';
 import { makeDirectorJpegs, pngSize, shoot } from './shots';
@@ -67,12 +67,18 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
   const note = (n: string): void => addNote(log, n);
   const brand = await page.evaluate(inPageBrand);
   site.brand.colors = pickColors(brand, note);
-  const display = await resolveFont(brand.displayStack, 'display', brand, { outDir: runDir, stretch: brand.displayStretch, note });
+  // Whether each face has serifs, measured here where the page has its faces loaded: the kind of open font that stands
+  // in for one that Google Fonts does not have.
+  const measured = await page.evaluate(inPageFaceKind, firstFamily(brand.displayStack), brand.displayWeight);
+  const display = await resolveFont(brand.displayStack, 'display', brand, { outDir: runDir, stretch: brand.displayStretch, measured, note });
   display.weight = brand.displayWeight;
   if (brand.displayMetrics) Object.assign(display, brand.displayMetrics);
   site.brand.fonts.push(display);
   if (firstFamily(brand.bodyStack) === firstFamily(brand.displayStack)) display.alsoBody = true;
-  else site.brand.fonts.push(await resolveFont(brand.bodyStack, 'body', brand, { outDir: runDir, note }));
+  else {
+    const bodyMeasured = await page.evaluate(inPageFaceKind, firstFamily(brand.bodyStack), brand.bodyWeight);
+    site.brand.fonts.push(await resolveFont(brand.bodyStack, 'body', brand, { outDir: runDir, measured: bodyMeasured, note }));
+  }
   lap('brand');
 
   const mediaDir = join(runDir, 'media');
