@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { detectBlocked, findDemoLinks, type Anchor, type CaptureFile, type CaptureInput, type CaptureLog, type CaptureResult, type SiteData, type TaskEnvelope } from '@app/core';
 import type { Browser, Page } from 'puppeteer-core';
 import { uploadToPresigned } from '../upload';
-import { inPageAnchors, inPageBrand, inPageExtractText, inPageFaceKind, inPageFindLogo, pickColors, type PageText } from './extract';
+import { inPageAnchors, inPageBrand, inPageExtractText, inPageFaceKind, inPageFindLogo, pickColors, type FaceKind, type PageText } from './extract';
 import { download, firstFamily, resolveFont } from './fonts';
 import { addNote, launchBrowser, openPage, sleep, UnreachableError, VIEWPORTS } from './page';
 import { makeDirectorJpegs, pngSize, shoot } from './shots';
@@ -61,6 +61,16 @@ async function renumber(page: Page, text: PageText, offset: number): Promise<voi
   for (const s of text.sections) s.id = `s${Number(s.id.slice(1)) + offset}`;
 }
 
+/**
+ * Whether the first face of a CSS font stack has serifs, as the page draws it at `weight` (see inPageFaceKind). It is a
+ * hint: anything that goes wrong in the page makes it null ("cannot tell"), and never fails the capture.
+ */
+export const measureFace = (
+  page: { evaluate(measure: typeof inPageFaceKind, family: string, weight: string): Promise<FaceKind | null> },
+  stack: string,
+  weight: string,
+): Promise<FaceKind | null> => page.evaluate(inPageFaceKind, firstFamily(stack), weight).catch(() => null);
+
 /** The colors, the fonts, the logo and the og:image of the site, from its first page at the desktop size. */
 async function readBrand(ctx: Context, page: Page, url: string, text: PageText): Promise<void> {
   const { runDir, site, log, lap } = ctx;
@@ -69,14 +79,14 @@ async function readBrand(ctx: Context, page: Page, url: string, text: PageText):
   site.brand.colors = pickColors(brand, note);
   // Whether each face has serifs, measured here where the page has its faces loaded: the kind of open font that stands
   // in for one that Google Fonts does not have.
-  const measured = await page.evaluate(inPageFaceKind, firstFamily(brand.displayStack), brand.displayWeight);
+  const measured = await measureFace(page, brand.displayStack, brand.displayWeight);
   const display = await resolveFont(brand.displayStack, 'display', brand, { outDir: runDir, stretch: brand.displayStretch, measured, note });
   display.weight = brand.displayWeight;
   if (brand.displayMetrics) Object.assign(display, brand.displayMetrics);
   site.brand.fonts.push(display);
   if (firstFamily(brand.bodyStack) === firstFamily(brand.displayStack)) display.alsoBody = true;
   else {
-    const bodyMeasured = await page.evaluate(inPageFaceKind, firstFamily(brand.bodyStack), brand.bodyWeight);
+    const bodyMeasured = await measureFace(page, brand.bodyStack, brand.bodyWeight);
     site.brand.fonts.push(await resolveFont(brand.bodyStack, 'body', brand, { outDir: runDir, measured: bodyMeasured, note }));
   }
   lap('brand');

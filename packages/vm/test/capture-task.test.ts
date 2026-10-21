@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureResult, TaskEnvelope } from '@app/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { capture, captureTask, checkExtraPage, countWords, ExtraPageLeftOut, pairPhoneSections, parseCaptureInput, pickExtraPages, thinCaptureMessage } from '../src/capture';
+import { capture, captureTask, checkExtraPage, countWords, ExtraPageLeftOut, measureFace, pairPhoneSections, parseCaptureInput, pickExtraPages, thinCaptureMessage } from '../src/capture';
 
 const OK: CaptureResult = { ok: true, metadataBlocked: true, sections: 2, shots: 3 };
 const TARGET = 'https://store.example/orders/o1/capture.json?signature=SECRET';
@@ -96,6 +96,24 @@ describe('checkExtraPage', () => {
 
   it.each([404, 500, 301])('leaves out a page that answered HTTP %s, even with text on it', async (status) => {
     await expect(checkExtraPage(opened('Not found', content), status)).rejects.toThrow(`HTTP ${status}`);
+  });
+});
+
+describe('measureFace', () => {
+  it('asks the page about the first family of the stack, at the weight given', async () => {
+    const evaluate = vi.fn(async () => 'serif' as const);
+
+    await expect(measureFace({ evaluate }, '"GT Alpina Thin", "GT Alpina Thin Placeholder", sans-serif', '400')).resolves.toBe('serif');
+
+    expect(evaluate).toHaveBeenCalledWith(expect.any(Function), 'GT Alpina Thin', '400');
+  });
+
+  it('takes a measure that throws in the page as "cannot tell": it is a hint, and never fails the capture', async () => {
+    const evaluate = vi.fn(async () => {
+      throw new Error('Evaluation failed: TypeError: ctx.measureText is not a function');
+    });
+
+    await expect(measureFace({ evaluate }, 'Inter, sans-serif', '400')).resolves.toBeNull();
   });
 });
 
