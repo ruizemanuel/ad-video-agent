@@ -141,4 +141,4 @@ Two passes at once (an overlap with Vercel's daily run, or a slow pass running i
 
 ## License
 
-All rights reserved. No license is granted.
+MIT. See [LICENSE](LICENSE).

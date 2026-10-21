@@ -1,6 +1,7 @@
 {
   "name": "ad-video-agent",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@12.14.0",
   "engines": {
     "node": ">=24"
