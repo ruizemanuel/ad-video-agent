@@ -13,10 +13,12 @@ import {
   EdlSchema,
   beatsToFrames,
   captionRoom,
+  fewestBeats,
   isReadable,
   layoutScenes,
   readableIn,
   readingSeconds,
+  textRoom,
   textWindows,
   validateEdl,
   type Edl,
@@ -164,6 +166,51 @@ describe('captionRoom', () => {
   it('gives nothing when not even the shortest caption can be read', () => {
     expect(captionRoom(2, 112, 1)).toBe(0);
     expect(captionRoom(4, 112, 2)).toBe(0);
+  });
+});
+
+describe('textRoom and fewestBeats, for the tables of the prompt', () => {
+  // Wherever a scene plays: as the opening scene, and from every beat after it; before a wipe, but for the close, which
+  // ends the video.
+  const PLACES = [{ startBeat: 0, index: 0 }, ...Array.from({ length: 64 }, (_, startBeat) => ({ startBeat, index: 1 }))];
+  const readsAnywhere = (scene: Scene, bpm: number): boolean =>
+    PLACES.every((place) => windows(scene, { bpm, ...place, wipeOut: scene.piece !== 'EndCard' }).every(isReadable));
+  /** A text of `chars` characters in words of six letters, so that its characters, not its words, ask the most time. */
+  const ofChars = (chars: number): string => `${'abcdef '.repeat(chars).slice(0, chars - 1)}.`;
+  const withLine = (scene: Scene, k: number, chars: number): Scene => ({ ...scene, lines: scene.lines.map((line, j) => (j === k ? { ...line, text: ofChars(chars) } : line)) });
+
+  it.each([
+    ['a typed address in 6 beats at 112 bpm', { piece: 'TypeIn', beats: 6, variant: 'url', lines: [f('x')] }, 112],
+    ['a typed address in 8 beats at 98 bpm', { piece: 'TypeIn', beats: 8, variant: 'url', lines: [f('x')] }, 98],
+    ['the button and the tagline of a 6-beat close at 128 bpm', { piece: 'EndCard', beats: 6, lines: [f('x'), f('x')] }, 128],
+    ['the button and the tagline of a 6-beat close at 90 bpm', { piece: 'EndCard', beats: 6, lines: [f('x'), f('x')] }, 90],
+  ] as [string, Scene, number][])('gives the most characters each text holds wherever the scene plays: %s', (_, scene, bpm) => {
+    const rooms = textRoom(scene, bpm);
+    expect(rooms).toHaveLength(scene.lines.length);
+    rooms.forEach((room, k) => {
+      expect(room).toBeGreaterThan(0);
+      expect(readsAnywhere(withLine(scene, k, room), bpm), `line ${k}: ${room}`).toBe(true);
+      expect(readsAnywhere(withLine(scene, k, room + 1), bpm), `line ${k}: ${room + 1}`).toBe(false);
+    });
+  });
+
+  it.each([
+    ['a headline of 1 line of 18 characters', { piece: 'KineticHeadline', beats: 2, lines: [f('Vendés más rápido.')] }, [98, 112, 128]],
+    ['a headline of 3 lines', { piece: 'KineticHeadline', beats: 2, lines: [f('¿Cuánto te'), f('cobran por'), f('cada venta?')] }, [98, 112, 128]],
+    ['a stack of 3 lines of 22 characters', { piece: 'ClaimStack', beats: 2, lines: [f('Cobrás con tarjetas.'), f('Y con transferencias.'), f('Efectivo, al retirarlo')] }, [98, 112]],
+    ['a WordCycle of 2 words', { piece: 'WordCycle', beats: 2, lines: [f('Pagá con'), f('transferencia'), f('efectivo')] }, [98, 112, 128]],
+  ] as [string, Scene, number[]][])('gives the fewest beats in which every text of %s is read wherever it plays', (_, scene, tempos) => {
+    for (const bpm of tempos) {
+      const beats = fewestBeats(scene, bpm);
+      expect(beats, `${bpm} bpm`).toBeDefined();
+      expect(readsAnywhere({ ...scene, beats: beats! }, bpm), `${beats} beats at ${bpm} bpm`).toBe(true);
+      expect(readsAnywhere({ ...scene, beats: beats! - 1 }, bpm), `${beats! - 1} beats at ${bpm} bpm`).toBe(false);
+    }
+  });
+
+  it('gives no number of beats when none up to 8 reads the scene: three words, or a stack whose last line has 22 characters, at 128 bpm', () => {
+    expect(fewestBeats({ piece: 'WordCycle', beats: 2, lines: [f('Pagá con'), f('tarjeta'), f('efectivo'), f('débito')] }, 128)).toBeUndefined();
+    expect(fewestBeats({ piece: 'ClaimStack', beats: 2, lines: [f('Cobrás con tarjetas.'), f('Y con transferencias.'), f('Efectivo, al retirarlo')] }, 128)).toBeUndefined();
   });
 });
 

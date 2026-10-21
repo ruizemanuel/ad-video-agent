@@ -266,19 +266,43 @@ export const readingBeats = (scene: Scene, at: Placement, bpm: number, min: numb
   return undefined;
 };
 
+// Wherever a scene can play, for what the director is told (see textRoom and fewestBeats): as the opening scene, and from
+// every beat after it (a cut falls a frame earlier or later depending on the beat a scene starts on: 64 beats go through
+// every case); before a wipe into the next scene, the tighter case, but for the close, which ends the video.
+const anywhere = (scene: Scene): Placement[] => {
+  const wipeOut = scene.piece !== 'EndCard';
+  return [{ role: 'hook', index: 0, startBeat: 0, wipeOut }, ...Array.from({ length: 64 }, (_, startBeat) => ({ role: 'body' as const, index: 1, startBeat, wipeOut }))];
+};
+
 /**
- * The most characters each caption of a UiFocus or UiScroll of `beats` beats can have to be read at `bpm` (see
- * readingSeconds), wherever the scene starts and with a wipe into the next scene, the tighter case: its one caption, or each
- * of two, the second replacing the first at half the scene rounded up. 0 when not even the shortest caption can be read.
+ * The most characters each text of the scene (in the order of textWindows) can have and be read at `bpm` (see
+ * readingSeconds) wherever the scene plays: 0 for one where not even the shortest text can be. Where the texts are counts,
+ * not what they say; words are not counted (at 0.3 s each they ask more only below 5.1 characters a word).
+ */
+export const textRoom = (scene: Scene, bpm: number): number[] => {
+  const rooms = anywhere(scene).map((at) =>
+    textWindows(placeScene(scene, at.role, at.index, at.startBeat, bpm), bpm, at.wipeOut).map((w) => readableIn(w.leaves - w.fullyIn)?.chars ?? 0),
+  );
+  return (rooms[0] ?? []).map((_, k) => Math.min(...rooms.map((room) => room[k] ?? 0)));
+};
+
+/**
+ * The most characters each caption of a UiFocus or UiScroll of `beats` beats can have to be read at `bpm` wherever it plays
+ * (see textRoom): its one caption, or each of two, the second replacing the first at half the scene rounded up.
  */
 export const captionRoom = (beats: number, bpm: number, captions: 1 | 2): number => {
   const caption: Line = { text: '', kind: 'framing' };
-  const scene: Scene = { piece: 'UiFocus', beats, lines: captions === 1 ? [caption] : [caption, { ...caption, atBeat: Math.ceil(beats / 2) }] };
-  // A cut falls a frame earlier or later depending on the beat the scene starts on: 64 beats go through every case.
-  const rooms = Array.from({ length: 64 }, (_, startBeat) =>
-    textWindows(placeScene(scene, 'body', 1, startBeat, bpm), bpm, true).map((w) => readableIn(w.leaves - w.fullyIn)?.chars ?? 0),
-  );
-  return Math.min(...rooms.flat());
+  return Math.min(...textRoom({ piece: 'UiFocus', beats, lines: captions === 1 ? [caption] : [caption, { ...caption, atBeat: Math.ceil(beats / 2) }] }, bpm));
+};
+
+/** The fewest beats, up to `max`, in which every text of the scene is read at `bpm` wherever it plays (see textRoom); undefined when none does. */
+export const fewestBeats = (scene: Scene, bpm: number, max = 8): number | undefined => {
+  const places = anywhere(scene);
+  for (let beats = minSceneBeats(scene); beats <= max; beats++) {
+    const sized = { ...scene, beats };
+    if (places.every((at) => unreadTexts(sized, at, bpm).length === 0)) return beats;
+  }
+  return undefined;
 };
 
 // ---------- the retime ----------

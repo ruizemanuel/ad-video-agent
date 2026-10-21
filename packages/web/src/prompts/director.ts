@@ -2,17 +2,7 @@
 // (TypeIn, WordCycle, the two-step EndCard and the caption that changes on a beat), the rhythm in beats and the limits
 // validateEdl checks, how long a text stays on screen among them. The corrector works under the same rules, so it reads
 // the same sections.
-import {
-  BANNED_PHRASES,
-  CAPTION_DELAY,
-  captionRoom,
-  FPS,
-  MIN_SWAP_BEATS,
-  READING_RULE,
-  REVEAL_FRAMES,
-  WIPE_FRAMES,
-  type SiteData,
-} from '@app/core';
+import { BANNED_PHRASES, CAPTION_DELAY, FPS, MIN_SWAP_BEATS, READING_RULE, REVEAL_FRAMES, TYPED_BY, WIPE_FRAMES, type SiteData } from '@app/core';
 import { siteForModel, type ModelSite } from '../pipeline/site-for-model';
 import type { DirectorImage } from '../ports';
 import { jsonBlock } from './json-block';
@@ -20,20 +10,38 @@ import { jsonBlock } from './json-block';
 const BANNED = [...BANNED_PHRASES.es, ...BANNED_PHRASES.en].map((phrase) => `"${phrase}"`).join(', ');
 
 const seconds = (frames: number): string => (frames / FPS).toFixed(1);
-// The table of the most characters per caption, from the reading rule itself (captionRoom), so that it never drifts from
-// what validateEdl checks: one caption by the scene's beats, and each of two, at three tempos of the range.
-const ONE_CAPTION_BEATS = [3, 4, 5, 6, 8];
-const TWO_CAPTION_BEATS = [7, 8];
-const CAPTION_TABLE = [
-  `| bpm | ${[...ONE_CAPTION_BEATS.map((beats) => `${beats} beats`), ...TWO_CAPTION_BEATS.map((beats) => `${beats} beats, 2 captions`)].join(' | ')} |`,
-  `|${' --- |'.repeat(1 + ONE_CAPTION_BEATS.length + TWO_CAPTION_BEATS.length)}`,
-  ...[98, 112, 128].map(
-    (bpm) =>
-      `| ${bpm} | ${[...ONE_CAPTION_BEATS.map((beats) => String(captionRoom(beats, bpm, 1) || '–')), ...TWO_CAPTION_BEATS.map((beats) => `${captionRoom(beats, bpm, 2)} each`)].join(' | ')} |`,
-  ),
-]
-  .map((row) => `  ${row}`)
-  .join('\n');
+
+/** The tempos the director can ask for (validateEdl takes 90 to 128 bpm), in bands: a row of the tables holds at every tempo of its band. */
+export const TEMPO_BANDS: readonly (readonly [number, number])[] = [
+  [90, 104],
+  [104, 112],
+  [112, 120],
+  [120, 128],
+];
+/** The lengths of the lines of the type pieces the table of beats counts with: the limits their rules state. */
+export const TABLE_LIMITS = {
+  headline: { chars: 18, words: 3 },
+  stack: { chars: 22, words: 4 },
+  prefix: { chars: 14, words: 2 },
+  word: { chars: 13, words: 1 },
+} as const;
+
+// What fits in a scene, by band of tempo: the worst of the band, wherever the scene plays (first in the video or later,
+// before a wipe). Made from the reading rule (core's captionRoom, textRoom and fewestBeats) by the prompt tests
+// (test/support/timing-tables.ts), which fail when these no longer match it: computing them here would cost every cold
+// start about half a second. A dash: no text, or no length a scene may have, is read there.
+export const CHARACTER_TABLE = `  | bpm | caption in 3 beats | 4 beats | 5 beats | 6 beats | 8 beats | each of 2 captions in 7 beats | 8 beats | typed in 5 beats | 6 beats | 8 beats | button of a 6-beat close | its tagline |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 90-104 | 16 | 26 | 36 | 45 | 65 | 23 | 30 | 17 | 20 | 28 | 32 | 45 |
+  | 104-112 | 14 | 23 | 32 | 41 | 60 | 21 | 27 | 15 | 19 | 26 | 29 | 41 |
+  | 112-120 | – | 21 | 30 | 38 | 55 | 19 | 24 | 14 | 18 | 24 | 27 | 37 |
+  | 120-128 | – | 19 | 27 | 35 | 51 | 18 | 22 | – | 16 | 22 | 24 | 34 |`;
+export const BEAT_TABLE = `  | bpm | headline of 1 line | 2 lines | 3 lines | stack of 2 lines | 3 lines | WordCycle of 2 words | 3 words |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 90-104 | 4 | 4 | 6 | 7 | 8 | 6 | 8 |
+  | 104-112 | 4 | 5 | 6 | 7 | 8 | 6 | 8 |
+  | 112-120 | 4 | 5 | 6 | 7 | 8 | 6 | 8 |
+  | 120-128 | 4 | 5 | 6 | – | – | 7 | – |`;
 
 export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 
@@ -66,24 +74,29 @@ export const STRUCTURE_RULES = `# Structure and timing
 - Pick \`bpm\` from the energy of the site (calm: 98-110, bold: 112-128).
 - Durations are in beats: seconds = beats × 60 / bpm. Every hook plus body plus cta should last
   18 to 22 seconds (at 112 bpm that is 34 to 41 beats), and never under 15 or over 30.
-- Rhythm: hook scenes last 3 or 4 beats (a \`TypeIn\` may take 2), with 1 or 2 beats per group of
-  words; body scenes 4 to 6 (a \`WordCycle\` takes two beats per word plus one, up to 7); the cta 6.
-  No scene lasts under 2 or over 8 beats.
+- Rhythm: each scene lasts at least the beats its texts need at your tempo (the tables below); hook
+  scenes keep to that, body scenes take a beat or two more, and a \`WordCycle\` two beats per word plus
+  one at least. The cta lasts 6 beats. No scene lasts under 2 or over 8 beats.
 - Every text stays whole on screen long enough to be read: from when it is fully in to when it
   starts to leave, it needs 1 s per ${READING_RULE.charsPerSecond} characters, or ${READING_RULE.secondsPerWord} s per word if that is more, and ${READING_RULE.minSeconds.toFixed(2)} s
   at least. This is checked. Its time starts once it is in (a line of type rises in ${seconds(REVEAL_FRAMES)} s, a
-  caption in ${seconds(CAPTION_DELAY + REVEAL_FRAMES)} s) and ends where the wipe into the next scene starts (${seconds(WIPE_FRAMES / 2)} s before the cut), so a
-  scene with text lasts 3 beats or more, and the last line of a headline or a stack keeps 3 beats.
-  The most characters a caption of a \`UiFocus\` or \`UiScroll\` can have, by the scene's beats, with a
-  wipe after it (a cut leaves a few more):
+  caption in ${seconds(CAPTION_DELAY + REVEAL_FRAMES)} s, a \`TypeIn\` line once it is typed whole, at ${TYPED_BY * 100} % of the scene) and ends
+  where the wipe into the next scene starts (${seconds(WIPE_FRAMES / 2)} s before the cut). What fits at every tempo of
+  a row, wherever the scene plays: the most characters a text can have by its scene's beats,
 
-${CAPTION_TABLE}
+${CHARACTER_TABLE}
+
+  and the fewest beats a piece needs, its lines at the limits its rule states (headline lines of
+  ${TABLE_LIMITS.headline.chars} characters, stack lines of ${TABLE_LIMITS.stack.chars}, words of ${TABLE_LIMITS.word.chars} under a prefix of ${TABLE_LIMITS.prefix.chars}); a dash: no length a
+  scene may have reads it, so use shorter or fewer lines or words:
+
+${BEAT_TABLE}
 - \`transitionIn\`: "cut" by default. Use "wipe" at most twice, e.g. into the first body scene and
   into the cta.
 - \`style.energy\` and \`style.density\` describe the site: "bold" for strong colors and big type,
   "calm" otherwise; "airy" for lots of white space, "dense" otherwise.
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
-  get the same ad: a bold site cuts every 3 beats in its hooks and leans on \`TypeIn\` there and on
+  get the same ad: a bold site keeps its hook scenes to the beats their texts need and leans on \`TypeIn\` there and on
   \`WordCycle\` in its body; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
   \`UiScroll\`; a dense site can stack its points in a \`ClaimStack\`; an airy one keeps one short
   line per scene.`;
@@ -94,8 +107,8 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   ideally at most 18 characters (never more than 24). One idea. At most one \`accent\` in the scene.
 - **UiFocus**: a real screenshot in a large card, with a caption above it; the camera eases in to
   one element. Needs \`shotId\` and \`boxIndex\` (required): the element the caption is about, a box
-  with \`product: true\`. One caption line, at most 40 characters and as many as its beats allow (see
-  the table): a hook caption stays short, about 22 to 25 characters.
+  with \`product: true\`. One caption line, at most 40 characters and no more than the table gives
+  for its beats at your tempo.
 - **UiScroll**: the camera glides down a full-page screenshot (ids ending in \`-full\`) and lands on
   \`boxIndex\` (required), a box with \`product: true\`. One caption line, as for \`UiFocus\`.
 - A box has \`product: true\` when there is an image or a price in its section or card (a percentage
@@ -107,21 +120,24 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   \`beats\`, and it goes on that second line only. A second caption needs a scene of ${MIN_SWAP_BEATS} beats or more,
   whose time the two captions share (see the table: \`atBeat\` at half the scene, rounded up).
 - **ClaimStack**: 2 or 3 short lines (at most 22 characters each) that land one per beat and stack
-  up. Give it at least 2 beats per line, and its last line 3.
+  up. Give it at least 2 beats per line, and the beats the table gives.
 - **WordCycle**: a fixed prefix over a word that changes on the beat, for a short list the site
   states (payment methods, channels, who it is for). \`lines[0]\` is the prefix, a framing line; then
   2 or 3 lines of one word (or two) each, and every word that says something about the product is a
   claim with its quote. The words are spread evenly over the scene, two beats each at least, so the
-  scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3), too long for a hook
-  scene (3 or 4 beats): it goes in the body. Above 120 bpm a word needs 3 beats (7 beats for 2 words).
+  scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3) and the beats the
+  table gives: too long for a hook: it goes in the body.
 - **TypeIn**: a field where 1 line is typed, then a button is pressed. Exactly 1 line, framing, and
   a \`variant\`: "url" types the site's address, which is exactly the \`host\` of the site data (no
-  "www.", no "https://", no path); "prompt" types a short question the audience would ask.
+  "www.", no "https://", no path); "prompt" types a short question the audience would ask. The line
+  is typed whole by ${TYPED_BY * 100} % of the scene and then has to be read: the table gives how many characters
+  fit in its beats. An address cannot be cut: a site whose address does not fit needs another hook.
 - **EndCard**: the close, in two steps: first the logo, with \`lines[1]\` under it; then a button with
   \`lines[0]\` as its label, over the domain. \`lines[0]\` is the button: the site's own call to
   action, verbatim when possible (a CTA that promises something, like "gratis"/"free", is a claim
   with its quote; otherwise it is framing). \`lines[1]\` is an optional short tagline, a claim with
-  its quote when it says something about the product. It lasts 6 beats (never fewer than 4).`;
+  its quote when it says something about the product. It lasts 6 beats (never fewer than 4), and its
+  button and its tagline hold the characters the table gives at your tempo: shorten a longer one.`;
 
 const COMPOSITION_RULES = `Composition rules:
 - **The real product is the protagonist.** You see the phone screenshots as images: tell product

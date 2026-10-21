@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { BANNED_PHRASES, captionRoom, judgeItems, validateEdl, type Edl, type Line, type Problem, type SiteData } from '@app/core';
+import { BANNED_PHRASES, judgeItems, validateEdl, type Edl, type Line, type Problem, type Scene, type SiteData } from '@app/core';
 import { CLASSIFY_SYSTEM, classifyPrompt } from '../src/prompts/classify';
-import { DIRECTOR_SYSTEM, directorRequest } from '../src/prompts/director';
+import { BEAT_TABLE, CHARACTER_TABLE, DIRECTOR_SYSTEM, directorRequest, TABLE_LIMITS, TEMPO_BANDS } from '../src/prompts/director';
 import { JUDGE_SYSTEM, judgePrompt } from '../src/prompts/judge';
 import { PATCH_SYSTEM, patchPrompt } from '../src/prompts/patch';
 import { REVIEW_OUTPUT, REVIEW_SYSTEM, reviewIntro } from '../src/prompts/review';
 import { siteForModel } from '../src/pipeline/site-for-model';
 import { captureShop, edlShop, siteShop } from './support/shop';
+import { beatRows, beatTable, characterRows, characterTable, sample } from './support/timing-tables';
 
 // How many fence markers a prompt has, and what the JSON blocks between them hold.
 const fences = (text: string): number => text.split('```').length - 1;
@@ -62,17 +63,17 @@ describe('DIRECTOR_SYSTEM', () => {
       ['the corrector', PATCH_SYSTEM],
     ])('tells %s a WordCycle is too long for a hook and goes in the body', (_, system) => {
       const rules = flat(system);
-      expect(rules).toContain('too long for a hook scene (3 or 4 beats): it goes in the body');
-      expect(rules).toContain('a bold site cuts every 3 beats in its hooks and leans on `TypeIn` there and on `WordCycle` in its body');
+      expect(rules).toContain('too long for a hook: it goes in the body');
+      expect(rules).toContain('a bold site keeps its hook scenes to the beats their texts need and leans on `TypeIn` there and on `WordCycle` in its body');
       expect(rules).not.toContain('leans on `WordCycle` and `TypeIn`');
     });
 
     it.each([
       ['the director', DIRECTOR_SYSTEM],
       ['the corrector', PATCH_SYSTEM],
-    ])('tells %s that the rhythm of body scenes does not cover a WordCycle, which takes up to 7 beats', (_, system) => {
+    ])('tells %s that a WordCycle takes two beats per word plus one at least, and no scene over 8', (_, system) => {
       const rules = flat(system);
-      expect(rules).toContain('body scenes 4 to 6 (a `WordCycle` takes two beats per word plus one, up to 7)');
+      expect(rules).toContain('and a `WordCycle` two beats per word plus one at least');
       // Still no scene over 8 beats.
       expect(rules).toContain('No scene lasts under 2 or over 8 beats');
     });
@@ -87,7 +88,8 @@ describe('DIRECTOR_SYSTEM', () => {
   });
 
   it('gives the rhythm and the tempo ranges by energy', () => {
-    for (const rule of ['hook scenes last 3 or 4 beats', 'body scenes 4 to 6', 'the cta 6', 'calm: 98-110', 'bold: 112-128']) expect(DIRECTOR_SYSTEM).toContain(rule);
+    const rules = DIRECTOR_SYSTEM.replace(/\s+/g, ' ');
+    for (const rule of ['hook scenes keep to that', 'body scenes take a beat or two more', 'The cta lasts 6 beats', 'calm: 98-110', 'bold: 112-128']) expect(rules).toContain(rule);
   });
 
   it('varies rhythm and pieces with the style of the site', () => {
@@ -144,58 +146,94 @@ describe('how long a text stays on screen', () => {
   it.each(systems)('tells %s the rule validateEdl checks, instead of the old advice', (_, system) => {
     const rules = flat(system);
     expect(rules).toContain('it needs 1 s per 17 characters, or 0.3 s per word if that is more, and 0.83 s at least. This is checked.');
-    expect(rules).toContain('so a scene with text lasts 3 beats or more, and the last line of a headline or a stack keeps 3 beats');
-    expect(rules).not.toContain('0.35 s per word');
-    expect(rules).not.toContain('about every 2 seconds');
+    expect(rules).toContain('a `TypeIn` line once it is typed whole, at 60 % of the scene');
+    for (const old of ['0.35 s per word', 'about every 2 seconds', 'about 22 to 25', 'every 3 beats', '3 or 4 beats', 'keeps 3 beats', 'Above 120 bpm', 'its last line 3', 'may take 2'])
+      expect(rules).not.toContain(old);
   });
 
-  it.each(systems)('tells %s a second caption needs a scene of 7 beats or more, and a hook caption stays short', (_, system) => {
+  it.each(systems)('tells %s a second caption needs a scene of 7 beats or more', (_, system) =>
+    expect(flat(system)).toContain('A second caption needs a scene of 7 beats or more'));
+
+  it.each(systems)('gives %s the tables of what fits, as the reading rule computes them, and points to them for the beats', (_, system) => {
+    expect(CHARACTER_TABLE).toBe(characterTable());
+    expect(BEAT_TABLE).toBe(beatTable());
+    expect(system).toContain(CHARACTER_TABLE);
+    expect(system).toContain(BEAT_TABLE);
     const rules = flat(system);
-    expect(rules).toContain('A second caption needs a scene of 7 beats or more');
-    expect(rules).toContain('a hook caption stays short, about 22 to 25 characters');
+    expect(rules).toContain('each scene lasts at least the beats its texts need at your tempo (the tables below)');
+    expect(rules).toContain('its button and its tagline hold the characters the table gives at your tempo');
   });
 
-  // The rows of the table of the most characters per caption, as the models read them.
-  const table = (system: string) =>
-    [...system.matchAll(/^ {2}\| (\d+) \| (.+) \|$/gm)].map(([, bpm, cells]) => ({ bpm: Number(bpm), cells: (cells ?? '').split(' | ') }));
-
-  it('gives the most characters per caption by beats at three tempos, as the reading rule has it', () => {
-    const rows = table(DIRECTOR_SYSTEM);
-    expect(rows.map((row) => row.bpm)).toEqual([98, 112, 128]);
-    for (const { bpm, cells } of rows)
-      expect(cells, `${bpm} bpm`).toEqual([
-        ...[3, 4, 5, 6, 8].map((beats) => String(captionRoom(beats, bpm, 1) || '–')),
-        ...[7, 8].map((beats) => `${captionRoom(beats, bpm, 2)} each`),
-      ]);
-    // A caption in a 4-beat hook: about 22 to 25 characters, as the prompt says.
-    expect(rows.map(({ cells }) => Number(cells[1]))).toEqual([28, 23, 19]);
-    expect(table(PATCH_SYSTEM)).toEqual(rows);
-  });
-
-  it('passes an edit list written by the prompt at 112 bpm, its captions as long as the table allows', () => {
-    const at112 = table(DIRECTOR_SYSTEM).find((row) => row.bpm === 112)?.cells ?? [];
-    const most = (cell: string | undefined): number => Number.parseInt(cell ?? '', 10);
-    // Words of six letters: a caption as long as the table allows, not slowed down by its words.
-    const text = (chars: number): string => `${'Vendes '.repeat(chars).slice(0, chars - 1)}.`;
-    const line = (t: string, extra: Partial<Line> = {}): Line => ({ text: t, kind: 'framing', ...extra });
-    const edl: Edl = {
+  describe('edit lists written to the tables pass validateEdl, at every tempo of a band', () => {
+    const chars = characterRows();
+    const beats = beatRows();
+    // The columns of the tables (see CHARACTER_COLUMNS and BEAT_COLUMNS).
+    const [, caption4, , caption6, , , eachOf2In8, , typed6, , button, tagline] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const [headline1, headline2, headline3, stack2, stack3, cycle2] = [0, 1, 2, 3, 4, 5];
+    const { headline, stack, prefix, word } = TABLE_LIMITS;
+    /** A framing line of `count` characters, in words of about seven letters: its characters ask the most time. */
+    const text = (count: number): Line => sample(count, Math.max(1, Math.floor(count / 7)));
+    const ui = (piece: 'UiFocus' | 'UiScroll', beatsOf: number, lines: Line[], extra: Partial<Scene> = {}): Scene => ({
+      piece,
+      beats: beatsOf,
+      shotId: 's1-mobile',
+      boxIndex: piece === 'UiFocus' ? 0 : 2,
+      lines,
+      ...extra,
+    });
+    const at = (values: (number | undefined)[], column: number): number => {
+      const value = values[column];
+      if (value === undefined || value === 0) throw new Error(`no value in column ${column}`);
+      return value;
+    };
+    const edl = (bpm: number, hook: Scene, body: Scene[], cta: Scene): Edl => ({
       lang: 'es',
-      bpm: 112,
+      bpm,
       style: { energy: 'bold', density: 'airy' },
-      hooks: [[{ piece: 'UiFocus', beats: 4, shotId: 's1-mobile', boxIndex: 0, lines: [line(text(most(at112[1])))] }]],
-      body: [
-        { piece: 'KineticHeadline', beats: 4, transitionIn: 'wipe', lines: [line('Vendé hoy'), line('sin vueltas.')] },
-        // Two captions in 8 beats, the second at half the scene.
-        { piece: 'UiScroll', beats: 8, shotId: 's1-mobile', boxIndex: 2, lines: [line(text(most(at112[6]))), line(text(most(at112[6])), { atBeat: 4 })] },
-        { piece: 'WordCycle', beats: 5, lines: [line('Pagá con'), line('tarjeta'), line('efectivo')] },
-        { piece: 'ClaimStack', beats: 7, lines: [line('Sin vueltas.'), line('Sin esperas.'), line('Sin letra chica.')] },
-        { piece: 'UiFocus', beats: 6, shotId: 's4-mobile', boxIndex: 1, lines: [line(text(most(at112[3])))] },
-      ],
-      cta: { piece: 'EndCard', beats: 6, transitionIn: 'wipe', lines: [line('Crear mi tienda'), line('Tu tienda, en un link.')] },
+      hooks: [[hook]],
+      body,
+      cta,
       claims: [],
       musicPrompt: 'Upbeat Latin pop.',
-    };
-    expect(validateEdl(edl, siteShop())).toEqual([]);
+    });
+    const close = (room: (number | undefined)[]): Scene => ({ piece: 'EndCard', beats: 6, transitionIn: 'wipe', lines: [text(at(room, button)), text(at(room, tagline))] });
+
+    it.each(TEMPO_BANDS.map((band, i) => [band, i] as const))('at %j bpm', ([low, high], i) => {
+      const room = chars[i]?.values ?? [];
+      const need = beats[i]?.values ?? [];
+      // A stack of 3 lines when some length reads it, of 2 when only that does, none when neither does.
+      const stackLines = need[stack3] !== undefined ? 3 : need[stack2] !== undefined ? 2 : 0;
+      const stackScene: Scene[] = stackLines
+        ? [{ piece: 'ClaimStack', beats: at(need, stackLines === 3 ? stack3 : stack2), lines: Array.from({ length: stackLines }, () => sample(stack.chars, stack.words)) }]
+        : [];
+      for (const bpm of [low, (low + high) / 2 + 0.5, high]) {
+        const headlineOf = (count: number, beatsOf: number): Scene => ({ piece: 'KineticHeadline', beats: beatsOf, lines: Array.from({ length: count }, () => sample(headline.chars, headline.words)) });
+        const cycle: Scene = { piece: 'WordCycle', beats: at(need, cycle2), lines: [sample(prefix.chars, prefix.words), sample(word.chars, word.words), sample(word.chars, word.words)] };
+        // An opening headline, then every piece at what the tables give, a wipe into the body and into the close.
+        const pieces = edl(
+          bpm,
+          headlineOf(1, at(need, headline1)),
+          [
+            ui('UiFocus', 4, [text(at(room, caption4))], { transitionIn: 'wipe' }),
+            ui('UiScroll', 8, [text(at(room, eachOf2In8)), { ...text(at(room, eachOf2In8)), atBeat: 4 }]),
+            ...stackScene,
+            cycle,
+            headlineOf(3, at(need, headline3)),
+          ],
+          close(room),
+        );
+        expect(validateEdl(pieces, siteShop()), `${bpm} bpm`).toEqual([]);
+        // A typed address as the hook, as long as the table lets a 6-beat TypeIn type.
+        const host = `${'a'.repeat(at(room, typed6) - 4)}.com`;
+        const typed = edl(
+          bpm,
+          { piece: 'TypeIn', beats: 6, variant: 'url', lines: [{ text: host, kind: 'framing' }] },
+          [ui('UiFocus', 6, [text(at(room, caption6))], { transitionIn: 'wipe' }), headlineOf(2, at(need, headline2)), ui('UiScroll', 8, [text(at(room, eachOf2In8)), { ...text(at(room, eachOf2In8)), atBeat: 4 }]), cycle],
+          close(room),
+        );
+        expect(validateEdl(typed, { ...siteShop(), url: `https://${host}/` }), `${bpm} bpm, typed`).toEqual([]);
+      }
+    });
   });
 });
 
