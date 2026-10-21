@@ -169,21 +169,21 @@ describe('the lines of a headline', () => {
 describe('the two steps of the EndCard', () => {
   const close = (beats: number) => scene('EndCard', beats, [framing('Start free'), framing('Your shop in one link.')]);
 
-  it('brings the button in on beat 3 and presses it on beat 4.5 of a 6-beat close', () => {
+  it('brings the button in on beat 2 and presses it on beat 4.5 of a 6-beat close', () => {
     const timed = placed(close(6), 112, 24);
     expect(endCardSteps(timed, 112)).toEqual({
-      button: beatsToFrames(27, 112) - timed.from,
+      button: beatsToFrames(26, 112) - timed.from,
       press: beatsToFrames(28.5, 112) - timed.from,
     });
   });
 
   it('keeps those beats in a longer close', () => {
     const timed = placed(close(8), 112);
-    expect(endCardSteps(timed, 112)).toEqual({ button: beatsToFrames(3, 112), press: beatsToFrames(4.5, 112) });
+    expect(endCardSteps(timed, 112)).toEqual({ button: beatsToFrames(2, 112), press: beatsToFrames(4.5, 112) });
   });
 
-  it('moves both earlier, on half beats, in a shorter close: 2.5 and 3.5 in 5 beats, 1.5 and 2.5 in 4', () => {
-    expect(endCardSteps(placed(close(5), 112), 112)).toEqual({ button: beatsToFrames(2.5, 112), press: beatsToFrames(3.5, 112) });
+  it('moves the press earlier, on half beats, in a shorter close, and the button a beat before it: 2 and 3.5 in 5 beats, 1.5 and 2.5 in 4', () => {
+    expect(endCardSteps(placed(close(5), 112), 112)).toEqual({ button: beatsToFrames(2, 112), press: beatsToFrames(3.5, 112) });
     expect(endCardSteps(placed(close(4), 112), 112)).toEqual({ button: beatsToFrames(1.5, 112), press: beatsToFrames(2.5, 112) });
   });
 

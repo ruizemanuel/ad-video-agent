@@ -7,12 +7,15 @@ import {
   WIPE_FRAMES,
   beatsToFrames,
   headlineLineStart,
+  isReadable,
   layoutScenes,
   minSceneBeats,
   opensWithBrand,
   retimeForBpm,
   settledFrame,
   stackLineStart,
+  textWindows,
+  timedScenePath,
   validateEdl,
   type Edl,
   type Line,
@@ -21,6 +24,7 @@ import {
   type TimedScene,
 } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
+import { run7 } from './fixtures/paid-runs';
 import siteShopJson from './fixtures/site-shop.json';
 
 const edlShop = EdlSchema.parse(edlShopJson);
@@ -81,9 +85,9 @@ describe('minSceneBeats', () => {
     expect(minSceneBeats(scene('WordCycle', [framing('Pay with'), framing('cards'), framing('cash'), framing('transfers')]))).toBe(7);
   });
 
-  it('keeps 2 beats for any scene, 3 when a caption is replaced and 4 for the EndCard', () => {
+  it('keeps 2 beats for any scene, 7 when a caption is replaced and 4 for the EndCard', () => {
     expect(minSceneBeats(scene('KineticHeadline', [framing('One')]))).toBe(2);
-    expect(minSceneBeats(scene('UiFocus', [framing('One'), framing('Two', 2)]))).toBe(3);
+    expect(minSceneBeats(scene('UiFocus', [framing('One'), framing('Two', 2)]))).toBe(7);
     expect(minSceneBeats(scene('EndCard', [framing('Start free')]))).toBe(4);
   });
 });
@@ -177,7 +181,7 @@ describe('retimeForBpm', () => {
       lines: [{ text: 'Pagá con', kind: 'framing' }, ...['MP', 'Transferencia', 'Efectivo'].map((text) => ({ text, kind: 'claim' as const, claimId: 'c5' }))],
     });
     // Planned at 112 bpm and retimed to 90, each of these scenes would round to a beat less than it needs.
-    const swapFirst: Edl = { ...edlShop, body: [ui(3, 2), ...edlShop.body] };
+    const swapFirst: Edl = { ...edlShop, body: [ui(7, 5), ...edlShop.body] };
     const cycleFirst: Edl = { ...edlShop, body: [cycle(7), ...edlShop.body] };
     const shortClose: Edl = { ...edlShop, body: edlShop.body.map((s, i) => (i === 0 ? { ...s, beats: 7 } : s)), cta: { ...edlShop.cta, beats: 4 } };
     const cases: [string, Edl][] = [
@@ -191,15 +195,66 @@ describe('retimeForBpm', () => {
       for (const measured of [90, 96, 100.5]) expect(validateEdl(retimeForBpm(edl, measured), site), `${measured} bpm`).toEqual([]);
     });
 
-    it('keeps a replaced caption 3 beats long, its atBeat at 2', () => {
+    it('keeps a replaced caption 7 beats long, its atBeat moved with the tempo', () => {
       const swap = first(retimeForBpm(swapFirst, 90).body);
-      expect(swap.beats).toBe(3);
-      expect(swap.lines[1]?.atBeat).toBe(2);
+      expect(swap.beats).toBe(7);
+      expect(swap.lines[1]?.atBeat).toBe(4);
+    });
+
+    it('moves an atBeat with the tempo only as far as both captions stay read', () => {
+      // Scaled, beat 5 of 7 at 112 bpm would be beat 6 of 8 at 123.2: too late for "Sin comisiones." to be read.
+      const late = first(retimeForBpm(swapFirst, 123.2).body);
+      expect([late.beats, late.lines[1]?.atBeat]).toEqual([8, 5]);
+      // Beat 4 of 8 at 104 bpm would stay beat 4 of 9 at 114.4: too soon for the first caption.
+      const early = first(retimeForBpm({ ...edlShop, bpm: 104, body: [ui(8, 4), ...edlShop.body] }, 114.4).body);
+      expect([early.beats, early.lines[1]?.atBeat]).toEqual([9, 5]);
     });
 
     it('keeps two beats per word plus one in a WordCycle', () => expect(first(retimeForBpm(cycleFirst, 90).body).beats).toBe(7));
 
     it('keeps the EndCard 4 beats long', () => expect(retimeForBpm(shortClose, 90).cta.beats).toBe(4));
+  });
+
+  describe('keeps every text on screen long enough to be read, at every tempo the music comes at', () => {
+    /**
+     * The texts that are not on screen long enough to be read, where validateEdl checks them: each hook in its own video,
+     * the body and the cta in the main one (hook 0), the video the order renders.
+     */
+    const unread = (edl: Edl): string[] =>
+      edl.hooks.flatMap((_, hook) => {
+        const { scenes } = layoutScenes(edl, hook);
+        return scenes.flatMap((timed, k) =>
+          hook > 0 && timed.role !== 'hook'
+            ? []
+            : textWindows(timed, edl.bpm, scenes[k + 1]?.scene.transitionIn === 'wipe')
+                .filter((w) => !isReadable(w))
+                .map((w) => `${timedScenePath(edl, hook, timed)}.lines[${w.line}] "${w.text}"`),
+        );
+      });
+    // Run 7 as the investigation fixed it (34 beats), and the shop, planned at a tempo the director may pick.
+    const fixed7 = (bpm: number): Edl => {
+      const edl = run7();
+      const [headline, , cycle, focus] = edl.body;
+      const scroll: Scene = { piece: 'UiScroll', beats: 8, shotId: 's1-mobile', boxIndex: 2, lines: [{ text: 'Productos y sesiones 1:1.', kind: 'claim', claimId: 'c3' }, { text: 'Un solo link para tu bio.', kind: 'claim', claimId: 'c4', atBeat: 4 }] };
+      return { ...edl, bpm, hooks: [[{ piece: 'UiFocus', beats: 4, shotId: 's1-mobile', boxIndex: 0, lines: [{ text: '¿Cuánto te queda?', kind: 'framing' }] }]], body: [headline!, scroll, cycle!, focus!] };
+    };
+
+    it.each([
+      ['run 7 fixed, planned at 100 bpm', [90, 125], fixed7(100)],
+      ['run 7 fixed, planned at 100 bpm', [85, 88.5, 93.2, 96, 104, 107.7, 111.3, 115], fixed7(100)],
+      ['the shop, planned at 112 bpm', [95.2, 99, 103.4, 108, 116.6, 120.8, 124.1, 128.8], edlShop],
+      ['the shop, planned at 128 bpm', [108.8, 113, 118.5, 122.2, 133.3, 139, 143.6, 147.2], { ...edlShop, bpm: 128 }],
+    ] as [string, number[], Edl][])('%s, retimed to %j', (_, tempos, planned) => {
+      expect(unread(planned)).toEqual([]);
+      for (const measured of tempos) expect(unread(retimeForBpm(planned, measured)), `${measured} bpm`).toEqual([]);
+    });
+
+    it('lengthens a scene by the beat its texts need, and no more, when rounding would pull its cut in', () => {
+      // The 3-beat headline of hook 2 would round to 2 beats at 90 bpm, too short for "Sin comisiones." to be read.
+      const retimed = retimeForBpm(edlShop, 90);
+      expect(retimed.hooks[2]?.[1]?.beats).toBe(3);
+      expect(retimed.hooks[2]?.[0]?.beats).toBe(4);
+    });
   });
 
   it('returns the same edit list at the same bpm', () => expect(retimeForBpm(edlShop, edlShop.bpm)).toEqual(edlShop));

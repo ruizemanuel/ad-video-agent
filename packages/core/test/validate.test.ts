@@ -56,23 +56,28 @@ const withQuote = (id: string, quote: string): Case =>
 const inBody = (scene: Scene, site: SiteData = siteShop): Case => shop(withBody(0, scene), site);
 const uiFocus = (extra: Partial<Scene> = {}): Scene => ({
   piece: 'UiFocus',
-  beats: 4,
+  beats: 5,
   shotId: 's1-mobile',
   boxIndex: 0,
   lines: [claimLine('Tu tienda, lista en minutos.', 'c2')],
   ...extra,
 });
+// In body[1], which a cut follows: the wipe after body[0] would take the end of its last word (see the reading tests).
 const wordCycle = (words: string[], prefix: Line = framing('Pagá con'), beats = 6): Case =>
-  inBody({ piece: 'WordCycle', beats, lines: [prefix, ...words.map((w) => claimLine(w, 'c5'))] });
+  shop(withBody(1, { piece: 'WordCycle', beats, lines: [prefix, ...words.map((w) => claimLine(w, 'c5'))] }));
 const typeIn = (lines: Line[], variant?: 'url' | 'prompt', site: SiteData = siteShop): Case =>
   inBody({ piece: 'TypeIn', beats: 4, variant, lines }, site);
 const atBeat = (value: number, beats: number): Case =>
   inBody(uiFocus({ beats, lines: [claimLine('Tu tienda, lista en minutos.', 'c2'), claimLine('Sin comisiones.', 'c1', { atBeat: value })] }));
+// The problems that are not about how long a text stays on screen.
+const notReading = (c: Case) => problemsOf(c).filter((p) => !p.detail.includes(' is readable '));
 
-// A video of exactly `total` beats (4 in the hook, 6 in the cta, the rest in filler body scenes of 2 to 8 beats).
+// A video of exactly `total` beats (4 in the hook, 6 in the cta, the rest in filler body scenes of 3 to 8 beats, each long
+// enough for its word to be read).
 const ofBeats = (total: number, bpm: number): Case => {
   const rest = total - 10;
-  const sizes = [...Array.from({ length: Math.floor(rest / 8) }, () => 8), ...(rest % 8 ? [rest % 8] : [])];
+  const count = Math.ceil(rest / 8);
+  const sizes = Array.from({ length: count }, (_, i) => Math.floor(rest / count) + (i < rest % count ? 1 : 0));
   return shop({
     ...edlShop,
     bpm,
@@ -154,7 +159,8 @@ describe('validateEdl: banned phrases', () => {
   });
 
   it('reports one problem per line, however many phrases or spellings match', () => {
-    const problems = problemsOf(withFraming('Llevá tu marca al siguiente nivel y revolucionario'));
+    // 50 characters: the scene is long enough for them to be read.
+    const problems = problemsOf(shop(withBody(1, headline([framing('Llevá tu marca al siguiente nivel y revolucionario')], 8))));
     expect(problems.map((p) => [p.where, p.rule])).toEqual([['body[1].lines[0]', 'banned-phrase']]);
     for (const phrase of ['llevá tu', 'al siguiente nivel', 'revolucionario']) expect(problems[0]?.detail).toContain(phrase);
   });
@@ -199,8 +205,10 @@ describe('validateEdl: structure', () => {
   it.each([89, 129, 0, Number.NaN])('rejects %s bpm', (bpm) => structure(shop({ ...edlShop, bpm })));
   it.each([90, 100.5, 128])('accepts %s bpm', (bpm) => clean(shop({ ...edlShop, bpm })));
 
-  it.each([1, 9])('rejects a scene of %s beats', (beats) => structure(shop(withBody(0, { ...get(edlShop.body, 0), beats }))));
-  it.each([2, 8])('accepts a scene of %s beats', (beats) => clean(shop(withBody(0, { ...get(edlShop.body, 0), beats }))));
+  // A TypeIn, whose text is read as it is typed: in 2 beats, the text of any other piece is not on screen long enough.
+  const typedAddress = (beats: number): Scene => ({ piece: 'TypeIn', beats, variant: 'url', lines: [framing('tiendita.example')] });
+  it.each([1, 9])('rejects a scene of %s beats', (beats) => structure(shop(withBody(0, typedAddress(beats)))));
+  it.each([2, 8])('accepts a scene of %s beats', (beats) => clean(shop(withBody(0, typedAddress(beats)))));
 
   describe('UiFocus and UiScroll', () => {
     it('requires UiFocus to have a boxIndex', () => structure(inBody(uiFocus({ boxIndex: undefined }))));
@@ -394,28 +402,29 @@ describe('validateEdl: structure', () => {
 
   describe('ClaimStack', () => {
     const means = ['Mercado Pago', 'Transferencia', 'Efectivo', 'Débito'];
-    const stack = (n: number): Case => inBody({ piece: 'ClaimStack', beats: 6, lines: means.slice(0, n).map((m) => claimLine(m, 'c5')) });
-    it.each([1, 4])('rejects %s lines', (n) => structure(stack(n)));
+    // 8 beats: the last of 3 lines keeps 4, enough to be read before the wipe into body[1].
+    const stack = (n: number): Case => inBody({ piece: 'ClaimStack', beats: 8, lines: means.slice(0, n).map((m) => claimLine(m, 'c5')) });
+    it.each([1, 4])('rejects %s lines', (n) => expect(notReading(stack(n))).toEqual([{ where: 'body[0]', rule: 'structure', detail: 'ClaimStack needs 2 or 3 lines' }]));
     it.each([2, 3])('accepts %s lines', (n) => clean(stack(n)));
   });
 
   describe('WordCycle', () => {
     it('requires WordCycle to have a framing prefix plus 2 or 3 words', () => {
       structure(wordCycle(['MP']));
-      // Four words, given the 8 beats a scene lasts at most: they cannot hold two beats each.
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 8));
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8));
+      // Four words, given the 8 beats a scene lasts at most: they cannot hold two beats each (nor be read: see the reading tests).
+      expect(notReading(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 8)).map((p) => p.rule)).toEqual(['structure']);
+      expect(notReading(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8)).map((p) => p.rule)).toEqual(['structure']);
       structure(wordCycle(['MP', 'Transferencia'], claimLine('Pagá con', 'c5')));
       clean(wordCycle(['MP', 'Transferencia']));
       clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 7));
     });
     it('says what it wants when a WordCycle has too many words: the beats it needs once the count is valid, never more than a scene lasts', () => {
-      const four = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 6));
+      const four = notReading(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito'], framing('Pagá con'), 6));
       expect(four.map((p) => p.detail)).toEqual([
         'WordCycle needs 2 or 3 words after its framing line, got 4: cut it to 3 words and give it at least 7 beats, or 2 words and 5 beats',
       ]);
       // The same with 5 words, and with the 8 beats a scene lasts at most: the count is what is wrong.
-      const five = problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8));
+      const five = notReading(wordCycle(['MP', 'Transferencia', 'Efectivo', 'Débito', 'Crédito'], framing('Pagá con'), 8));
       expect(five.map((p) => p.detail)).toEqual([
         'WordCycle needs 2 or 3 words after its framing line, got 5: cut it to 3 words and give it at least 7 beats, or 2 words and 5 beats',
       ]);
@@ -428,12 +437,13 @@ describe('validateEdl: structure', () => {
     });
     it('flags a WordCycle without lines', () => expect(rules(inBody({ piece: 'WordCycle', beats: 6, lines: [] }))).toEqual(['structure', 'structure']));
     it('requires two beats per word plus one, so that every word stays on screen for two beats within the scene', () => {
-      structure(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 4));
+      // Too short a scene leaves its words too short to be read as well: the reading rule refuses them on their lines.
+      expect(notReading(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 4)).map((p) => p.rule)).toEqual(['structure']);
       clean(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 5));
-      structure(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6));
+      expect(notReading(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6)).map((p) => p.rule)).toEqual(['structure']);
       clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 7));
       clean(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 8));
-      expect(problemsOf(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6)).map((p) => p.where)).toEqual(['body[0]']);
+      expect(notReading(wordCycle(['MP', 'Transferencia', 'Efectivo'], framing('Pagá con'), 6)).map((p) => p.where)).toEqual(['body[1]']);
     });
     it('names the minimum in the message', () => {
       const [short] = problemsOf(wordCycle(['MP', 'Transferencia'], framing('Pagá con'), 4));
@@ -496,21 +506,33 @@ describe('validateEdl: structure', () => {
   });
 
   describe('atBeat', () => {
-    it('requires atBeat between 2 and beats-1, only on UiFocus/UiScroll, so that the first caption stays about a second', () => {
-      structure(atBeat(4, 4));
-      structure(atBeat(0, 4));
-      structure(atBeat(1, 4));
-      clean(atBeat(2, 4));
-      clean(atBeat(3, 4));
-      expect(problemsOf(atBeat(1, 4)).map((p) => p.where)).toEqual(['body[0].lines[1]']);
+    it('requires atBeat between 2 and beats-1, only on UiFocus/UiScroll', () => {
+      const outside = (value: number) => notReading(atBeat(value, 8)).map((p) => [p.where, p.detail]);
+      expect(outside(8)).toEqual([['body[0].lines[1]', 'atBeat 8 outside 2-7']]);
+      expect(outside(0)).toEqual([['body[0].lines[1]', 'atBeat 0 outside 2-7']]);
+      expect(outside(1)).toEqual([['body[0].lines[1]', 'atBeat 1 outside 2-7']]);
+      for (const value of [2, 7]) expect(outside(value)).toEqual([]);
+    });
+
+    it('needs a scene of 7 beats or more for a second caption, and says how to fix it', () => {
+      const swap = (beats: number) =>
+        `a second caption (atBeat) needs a scene of 7 beats or more, got ${beats}: drop the second caption, or give the scene 7 beats or more`;
+      expect(notReading(atBeat(3, 6))).toEqual([{ where: 'body[0].lines[1]', rule: 'structure', detail: swap(6) }]);
+      expect(notReading(atBeat(2, 4))).toEqual([{ where: 'body[0].lines[1]', rule: 'structure', detail: swap(4) }]);
+      // Both: an atBeat outside the scene, in a scene too short for two captions.
+      expect(notReading(atBeat(4, 4)).map((p) => p.detail)).toEqual(['atBeat 4 outside 2-3', swap(4)]);
+      // In 8 beats, with the second caption on beat 5, both are on screen long enough to be read (see the reading tests).
+      clean(atBeat(5, 8));
     });
 
     it('allows atBeat on the second line of a UiScroll', () =>
-      clean(inBody({ piece: 'UiScroll', beats: 4, shotId: 's1-mobile', boxIndex: 0, lines: [framing('Mirá'), framing('Y seguí', { atBeat: 2 })] })));
+      clean(inBody({ piece: 'UiScroll', beats: 7, shotId: 's1-mobile', boxIndex: 0, lines: [framing('Mirá'), framing('Y seguí', { atBeat: 3 })] })));
 
     it('rejects atBeat on any line but the second', () => {
       structure(inBody(uiFocus({ lines: [claimLine('Tu tienda, lista en minutos.', 'c2', { atBeat: 2 })] })));
-      structure(inBody(uiFocus({ lines: [framing('Uno'), framing('Dos'), framing('Tres', { atBeat: 2 })] })));
+      expect(notReading(inBody(uiFocus({ beats: 8, lines: [framing('Uno'), framing('Dos'), framing('Tres', { atBeat: 2 })] }))).map((p) => p.detail)).toEqual([
+        'atBeat belongs only on the second line of a UiFocus or UiScroll scene',
+      ]);
     });
 
     it('rejects atBeat on other pieces', () => structure(inBody(headline([framing('Uno'), framing('Dos', { atBeat: 2 })], 4))));
@@ -518,8 +540,9 @@ describe('validateEdl: structure', () => {
 
   describe('length of the main video', () => {
     it('requires hook 0 to last 15-30 s', () => {
-      // 2 scenes of 2 beats and a cta of 4 beats at 128 bpm: 8 beats in all, 3.75 s.
-      structure(shop({ ...edlShop, bpm: 128, hooks: [[headline([framing('Uno')], 2), headline([framing('Dos')], 2)]], body: [], cta: { ...edlShop.cta, beats: 4 } }));
+      // 2 scenes of 2 beats and a cta of 4 beats at 128 bpm: 8 beats in all, 113 frames (too short for their texts too).
+      const short = shop({ ...edlShop, bpm: 128, hooks: [[headline([framing('Uno')], 2), headline([framing('Dos')], 2)]], body: [], cta: { ...edlShop.cta, beats: 4 } });
+      expect(problemsOf(short).filter((p) => p.where === 'edl')).toEqual([{ where: 'edl', rule: 'structure', detail: 'the video with hook 0 lasts 3.77 s (expected 15-30)' }]);
     });
 
     it.each([

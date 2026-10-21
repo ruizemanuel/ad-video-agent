@@ -26,7 +26,7 @@
     [
       {
         "piece": "UiFocus",
-        "beats": 3,
+        "beats": 5,
         "shotId": "s1-mobile",
         "boxIndex": 0,
         "lines": [{ "text": "Tu tienda, lista en minutos.", "kind": "claim", "claimId": "c2", "accent": "en minutos." }]
@@ -54,7 +54,7 @@
     },
     {
       "piece": "ClaimStack",
-      "beats": 7,
+      "beats": 8,
       "lines": [
         { "text": "Mercado Pago.", "kind": "claim", "claimId": "c5" },
         { "text": "Transferencia.", "kind": "claim", "claimId": "c5" },
@@ -63,7 +63,7 @@
     },
     {
       "piece": "KineticHeadline",
-      "beats": 6,
+      "beats": 5,
       "transitionIn": "wipe",
       "lines": [
         { "text": "Plan Pro", "kind": "claim", "claimId": "c4" },

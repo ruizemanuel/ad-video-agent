@@ -227,7 +227,7 @@ describe('runScript', () => {
       const edl = withScene(edlShop, 'body[1]', (scene) => ({ ...scene, lines: [{ text: 'Nadie más te da', kind: 'framing' }, ...scene.lines] }));
       llm.edl = edl;
       judgeFailsOnce('body[1]:framing:0');
-      const changed = withScene(edl, 'body[1]', (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 1 ? { ...line, text: '0% de comisión en tus ventas.' } : line)) }));
+      const changed = withScene(edl, 'body[1]', (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 1 ? { ...line, text: '0% de comisión al vender.' } : line)) }));
       llm.patchEdl = async () => ({ patches: [{ path: 'body[1]', scene: changed.body[1] ?? edlShop.cta }], claimFixes: [], usd: 0.05 });
       expect(await runScript(args)).toEqual({ ok: true, edl: changed });
       expect(llm.lastJudgeInput).toEqual({

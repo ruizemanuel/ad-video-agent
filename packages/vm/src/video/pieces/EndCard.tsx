@@ -10,10 +10,10 @@ import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progre
 const PILL_HEIGHT_EM = 2.24;
 
 // The close, in two steps (spec 6.5). First the brand: its logo, or its name in the site's heading font and brand color
-// when the logo does not read (see logoReads), with the optional tagline (lines[1]) under it. Then, on beat 3, the
+// when the logo does not read (see logoReads), with the optional tagline (lines[1]) under it. Then, on beat 2, the
 // brand moves up as the site's call to action (lines[0]) comes in under it as a button in the brand color, over the
-// domain; on beat 4.5 the button is pressed. Centered on the frame's center line, not in the safe zone (which is
-// lopsided in 9:16).
+// domain; on beat 4.5 the button is pressed (see endCardSteps). Centered on the frame's center line, not in the safe
+// zone (which is lopsided in 9:16).
 export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   const ad = useAd();
   const { theme, format, site, edl } = ad;

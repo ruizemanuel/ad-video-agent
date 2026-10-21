@@ -1,13 +1,33 @@
 // Checks an edit list by code, before any model reviews it or any frame is rendered: quotes are verbatim, numbers
-// on screen are in their quote, framing lines carry no data, no filler phrases, and the structure the schema
-// leaves open. The same module builds what the semantic judge reads and applies the fixes a corrector returns.
+// on screen are in their quote, framing lines carry no data, no filler phrases, the structure the schema leaves open,
+// and every text stays on screen long enough to be read. The same module builds what the semantic judge reads and
+// applies the fixes a corrector returns.
 import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
 import { framesCleanly, framingOf } from './camera';
 import type { Claim, Edl, Scene } from './edl';
 import { MAIN_FORMAT } from './formats';
 import { isProductTarget } from './product';
 import type { SiteData } from './site';
-import { FPS, layoutScenes, MIN_AT_BEAT, MIN_ENDCARD_BEATS, wordCycleMinBeats, type TimedScene } from './timing';
+import {
+  FPS,
+  isReadable,
+  layoutScenes,
+  MIN_AT_BEAT,
+  MIN_ENDCARD_BEATS,
+  MIN_SWAP_BEATS,
+  minSceneBeats,
+  readableIn,
+  readingBeats,
+  readingCounts,
+  readingSeconds,
+  swapsCaption,
+  textWindows,
+  unreadTexts,
+  wordCycleMinBeats,
+  type Placement,
+  type TextWindow,
+  type TimedScene,
+} from './timing';
 
 export type Problem = {
   /**
@@ -172,9 +192,121 @@ const checkAtBeat = (path: string, scene: Scene, report: Report): void => {
   scene.lines.forEach((line, k) => {
     if (line.atBeat === undefined) return;
     const at = `${path}.lines[${k}]`;
-    if (!allowed || k !== 1) report(at, 'structure', 'atBeat belongs only on the second line of a UiFocus or UiScroll scene');
-    else if (line.atBeat < MIN_AT_BEAT || line.atBeat >= scene.beats) report(at, 'structure', `atBeat ${line.atBeat} outside ${MIN_AT_BEAT}-${scene.beats - 1}`);
+    if (!allowed || k !== 1) {
+      report(at, 'structure', 'atBeat belongs only on the second line of a UiFocus or UiScroll scene');
+      return;
+    }
+    if (line.atBeat < MIN_AT_BEAT || line.atBeat >= scene.beats) report(at, 'structure', `atBeat ${line.atBeat} outside ${MIN_AT_BEAT}-${scene.beats - 1}`);
+    // Two captions share the scene: in a short one, neither is on screen long enough to be read.
+    if (scene.beats < MIN_SWAP_BEATS)
+      report(at, 'structure', `a second caption (atBeat) needs a scene of ${MIN_SWAP_BEATS} beats or more, got ${scene.beats}: drop the second caption, or give the scene ${MIN_SWAP_BEATS} beats or more`);
   });
+};
+
+// ---------- reading ----------
+
+/**
+ * Where each scene plays, for the reading check: the scenes of hook i as the video of hook i lays them out, the body and
+ * the cta as the main video (hook 0) does. Nothing at a tempo outside the range (checkEdl reports it): how long a text
+ * stays on screen depends on the tempo the edit list will be given.
+ */
+const placements = (edl: Edl): Map<string, { timed: TimedScene; at: Placement }> => {
+  const placed = new Map<string, { timed: TimedScene; at: Placement }>();
+  if (!(edl.bpm >= BPM.min && edl.bpm <= BPM.max)) return placed;
+  edl.hooks.forEach((_, hook) => {
+    const { scenes } = layoutScenes(edl, hook);
+    scenes.forEach((timed, k) => {
+      const path = timedScenePath(edl, hook, timed);
+      const wipeOut = scenes[k + 1]?.scene.transitionIn === 'wipe';
+      if (!placed.has(path)) placed.set(path, { timed, at: { role: timed.role, index: timed.index, startBeat: timed.startBeat, wipeOut } });
+    });
+  });
+  return placed;
+};
+
+const textName = (scene: Scene, w: TextWindow, captions: number): string => {
+  switch (scene.piece) {
+    case 'UiFocus':
+    case 'UiScroll':
+      return captions > 1 ? `caption ${w.line + 1}` : 'the caption';
+    case 'KineticHeadline':
+      return `headline line ${w.line + 1}`;
+    case 'ClaimStack':
+      return `stack line ${w.line + 1}`;
+    case 'WordCycle':
+      return w.line === 0 ? 'the prefix' : `word ${w.line}`;
+    case 'EndCard':
+      return w.line === 0 ? 'the button' : 'the tagline';
+    case 'TypeIn':
+      return 'the text';
+  }
+};
+
+/** "cut it to 24 characters and 4 words": the most a text can have to be read in its window (words only when it has more). */
+const cutToRead = (w: TextWindow, what: string): string | undefined => {
+  const room = readableIn(w.leaves - w.fullyIn);
+  if (!room) return undefined;
+  return `cut ${what} to ${room.chars} characters${readingCounts(w.text).words > room.words ? ` and ${room.words} words` : ''}`;
+};
+
+/** The atBeat, among those that get both captions read, nearest the scene's own moved with its length. */
+const nearestAtBeat = (atBeats: number[], scene: Scene, beats: number): number => {
+  const own = Math.round(((scene.lines[1]?.atBeat ?? MIN_AT_BEAT) * beats) / Math.max(1, scene.beats));
+  return atBeats.reduce((best, atBeat) => (Math.abs(atBeat - own) < Math.abs(best - own) ? atBeat : best));
+};
+
+/**
+ * What gets every text of the scene read, short of cutting the one refused (see checkReading), in the terms of the edit
+ * list: dropping the second caption (and what the first then needs), the fewest beats that do it (with the atBeat), or,
+ * when no length a scene may have does, a word or a line less. Only lengths a scene may have are named.
+ */
+const readingFixes = (scene: Scene, at: Placement, bpm: number): string[] => {
+  const fixes: string[] = [];
+  const longest = SCENE_BEATS.max;
+  if (swapsCaption(scene)) {
+    const alone: Scene = { ...scene, lines: scene.lines.slice(0, 1) };
+    const [first] = unreadTexts(alone, at, bpm);
+    if (!first) fixes.push('drop the second caption');
+    else {
+      const longer = readingBeats(alone, at, bpm, minSceneBeats(alone), longest);
+      const then = [longer && `give the scene ${longer.beats} beats`, cutToRead(first, 'the first caption')].filter((fix) => typeof fix === 'string');
+      fixes.push(then.length ? `drop the second caption and ${then.length > 1 ? `either ${then.join(' or ')}` : then[0]}` : 'drop the second caption');
+    }
+  }
+  const fit = readingBeats(scene, at, bpm, minSceneBeats(scene), longest);
+  if (fit && swapsCaption(scene)) {
+    const atBeat = nearestAtBeat(fit.atBeats, scene, fit.beats);
+    fixes.push(fit.beats === scene.beats ? `move atBeat to ${atBeat}` : `give the scene ${fit.beats} beats with atBeat ${atBeat}`);
+  } else if (fit) fixes.push(`give the scene ${fit.beats} beats`);
+  else if ((scene.piece === 'WordCycle' && scene.lines.length > CYCLE_WORDS.min + 1) || (scene.piece === 'ClaimStack' && scene.lines.length > 2)) {
+    const fewer: Scene = { ...scene, lines: scene.lines.slice(0, -1) };
+    const part = scene.piece === 'WordCycle' ? 'a word' : 'a line';
+    const longer = readingBeats(fewer, at, bpm, minSceneBeats(fewer), longest);
+    if (!unreadTexts(fewer, at, bpm).length) fixes.push(`drop ${part}`);
+    else if (longer) fixes.push(`drop ${part} and give the scene ${longer.beats} beats`);
+  }
+  return fixes;
+};
+
+// Every text stays whole on screen long enough to be read (see readingSeconds): one problem per text that does not, at
+// its line, saying what would fix it.
+const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placement, bpm: number, report: Report): void => {
+  const windows = textWindows(timed, bpm, at.wipeOut);
+  const unread = windows.filter((w) => !isReadable(w));
+  if (!unread.length) return;
+  const fixes = readingFixes(scene, at, bpm);
+  // Cutting the text helps nothing when two captions share a scene too short for them (see checkAtBeat).
+  const cuts = !swapsCaption(scene) || scene.beats >= MIN_SWAP_BEATS;
+  for (const w of unread) {
+    const cut = cuts ? cutToRead(w, 'it') : undefined;
+    const options = cut ? [...fixes, cut] : fixes;
+    const readable = (Math.max(0, w.leaves - w.fullyIn) / FPS).toFixed(2);
+    report(
+      `${path}.lines[${w.line}]`,
+      'structure',
+      `${textName(scene, w, windows.length)} "${w.text}" (${readingCounts(w.text).chars} characters) is readable ${readable} s of the ${readingSeconds(w.text).toFixed(2)} s it needs: ${options.length ? options.join(', or ') : 'give it a scene of its own'}`,
+    );
+  }
 };
 
 // Structure of one scene that the schema leaves open.
@@ -233,9 +365,12 @@ export const validateEdl = (edl: Edl, site: SiteData, banned: BannedPhrases = BA
   }
 
   checkClaims(edl, site, report);
+  const placed = placements(edl);
   for (const { path, scene } of scenePaths(edl)) {
     checkLines(path, scene, claims, bannedFolded, report);
     checkScene(path, scene, site, report);
+    const where = placed.get(path);
+    if (where) checkReading(path, scene, where.timed, where.at, edl.bpm, report);
   }
   checkEdl(edl, report);
   return problems;
