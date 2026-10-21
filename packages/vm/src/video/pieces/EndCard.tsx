@@ -1,13 +1,11 @@
 import { Fragment, useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
-import { alpha, TYPE } from '@app/core';
+import { alpha, BUTTON_IN, endCardSteps, MARK_AT, TAGLINE_AT, TYPE } from '@app/core';
 import { brandName, closeLogoBox } from '../logo';
-import { BUTTON_IN, endCardSteps, pressState } from '../rhythm';
+import { pressState } from '../rhythm';
 import { fitAddress, layoutLines, pillSize, toWords } from '../type';
 import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, type PieceProps } from './common';
 
-// The brand comes in a few frames into the scene, under the end of the wipe that usually brings the close in.
-const MARK_AT = 3;
 // The pill of the call to action: 0.62 em of padding above and below a line 1 em tall.
 const PILL_HEIGHT_EM = 2.24;
 
@@ -61,7 +59,7 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
           <BrandMark box={logoBox} name={{ max: Math.round(type.headline * 0.8), width: column.width }} align="center" delay={MARK_AT} />
           {tagline && (
             <div style={{ marginTop: gaps.tagline }}>
-              <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={MARK_AT + 6} align="center" />
+              <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={TAGLINE_AT} align="center" />
             </div>
           )}
           <div style={{ marginTop: gaps.button, height: buttonHeight, display: 'flex', alignItems: 'center' }}>

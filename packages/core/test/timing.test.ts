@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, FPS, WIPE_FRAMES, beatsToFrames, layoutScenes, minSceneBeats, retimeForBpm, settledFrame, validateEdl, type Edl, type Line, type Scene, type SiteData } from '../src/index';
+import {
+  AFTER_LOGO,
+  EdlSchema,
+  FPS,
+  LINE_IN,
+  WIPE_FRAMES,
+  beatsToFrames,
+  headlineLineStart,
+  layoutScenes,
+  minSceneBeats,
+  opensWithBrand,
+  retimeForBpm,
+  settledFrame,
+  stackLineStart,
+  validateEdl,
+  type Edl,
+  type Line,
+  type Scene,
+  type SiteData,
+  type TimedScene,
+} from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
@@ -200,5 +220,56 @@ describe('settledFrame', () => {
     const t = layoutScenes(edlShop, 0).scenes[1]!;
     expect(settledFrame(t)).toBe(t.from + t.duration - WIPE_FRAMES / 2 - 2);
     expect(t.from + t.duration - settledFrame(t)).toBe(8);
+  });
+});
+
+describe('the rhythm of the pieces', () => {
+  const framing = (text: string): Line => ({ text, kind: 'framing' });
+  const lines = ['One', 'Two', 'Three'].map(framing);
+  /** A scene placed at `startBeat` of a video at `bpm`, as layoutScenes places it. */
+  const placed = (scene: Scene, bpm: number, startBeat = 0, index = 1): TimedScene => {
+    const from = beatsToFrames(startBeat, bpm);
+    return { scene, role: 'body', index, from, duration: beatsToFrames(startBeat + scene.beats, bpm) - from, startBeat };
+  };
+
+  describe('headlineLineStart', () => {
+    // At 120 bpm a beat is 15 frames.
+    const headline = placed({ piece: 'KineticHeadline', beats: 6, lines }, 120, 4);
+
+    it('brings line i in on beat i of the scene', () => expect([0, 1, 2].map((i) => headlineLineStart(i, headline, 120, false))).toEqual([0, 15, 30]));
+
+    it('brings the first line in after the brand when the headline opens the video', () => {
+      expect(headlineLineStart(0, headline, 120, true)).toBe(AFTER_LOGO);
+      expect(headlineLineStart(1, headline, 120, true)).toBe(15);
+    });
+
+    it('brings the second half of a line split in two in `stagger` frames later', () => expect(headlineLineStart(1, headline, 120, false, 5)).toBe(20));
+
+    it('brings a line in no later than LINE_IN frames before the settled frame, in a scene too short for its beat', () => {
+      // 3 beats: 45 frames, settled at 37; line 2 would come in on beat 2 (frame 30), after 37 - 12 = 25.
+      const short = placed({ piece: 'KineticHeadline', beats: 3, lines }, 120);
+      expect(headlineLineStart(2, short, 120, false)).toBe(settledFrame(short) - short.from - LINE_IN);
+      expect(headlineLineStart(1, short, 120, false)).toBe(15);
+    });
+  });
+
+  describe('stackLineStart', () => {
+    it('spreads the lines of a ClaimStack floor(beats / lines) beats apart, on the beat grid of the whole video', () => {
+      const stack = placed({ piece: 'ClaimStack', beats: 7, lines }, 113.19, 5);
+      expect([0, 1, 2].map((i) => stackLineStart(i, stack, 113.19))).toEqual([5, 7, 9].map((beat) => beatsToFrames(beat, 113.19) - stack.from));
+    });
+
+    it('keeps the lines a beat apart at least', () => {
+      const crowded = placed({ piece: 'ClaimStack', beats: 2, lines }, 120);
+      expect([0, 1, 2].map((i) => stackLineStart(i, crowded, 120))).toEqual([0, 15, 30]);
+    });
+  });
+
+  describe('opensWithBrand', () => {
+    it('is true of a headline that opens the video, which carries the brand over it', () => {
+      expect(opensWithBrand(placed({ piece: 'KineticHeadline', beats: 4, lines }, 120, 0, 0))).toBe(true);
+      expect(opensWithBrand(placed({ piece: 'KineticHeadline', beats: 4, lines }, 120, 4, 1))).toBe(false);
+      expect(opensWithBrand(placed({ piece: 'ClaimStack', beats: 4, lines }, 120, 0, 0))).toBe(false);
+    });
   });
 });

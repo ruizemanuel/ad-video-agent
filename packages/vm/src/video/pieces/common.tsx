@@ -3,9 +3,27 @@
 import { createContext, useContext, useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
 import { measureText } from '@remotion/layout-utils';
 import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, FORMATS, mix, safeWidth, stageLayout, TYPE, type Edl, type FontSpec, type Format, type Scene, type Shot, type SiteData, type Theme, type TimedScene } from '@app/core';
+import {
+  alpha,
+  CAPTION_DELAY,
+  CAPTION_SWAP,
+  captionSwapFrame,
+  FORMATS,
+  mix,
+  REVEAL_FRAMES,
+  safeWidth,
+  stageLayout,
+  TYPE,
+  type Edl,
+  type FontSpec,
+  type Format,
+  type Scene,
+  type Shot,
+  type SiteData,
+  type Theme,
+  type TimedScene,
+} from '@app/core';
 import { brandName, fitLogo, type Size } from '../logo';
-import { captionSwapFrame } from '../rhythm';
 import { glyphOverhang, hideTravel, layoutCaptions, layoutLines, lineText, maskRoom, ROOM, toWords, type InkMeasure, type Measure, type Room, type TypeLine } from '../type';
 
 /**
@@ -124,11 +142,15 @@ export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines
   );
 };
 
+/** How far a line that starts to rise at `start` is still below its clip at `frame`: 1 hidden, 0 in place REVEAL_FRAMES later. */
+export const revealDrop = (frame: number, start: number, fps: number): number =>
+  1 - spring({ frame: frame - start, fps, config: { damping: 200 }, durationInFrames: REVEAL_FRAMES });
+
 /** Lines revealed by a mask, each rising from below its own clip: line i from frame `starts[i]`, or one after the other from `delay`. */
 export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; starts?: readonly number[] }> = ({ delay = 0, stagger = 5, starts, ...set }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const drop = set.lines.map((_, i) => 1 - spring({ frame: frame - (starts?.[i] ?? delay + i * stagger), fps, config: { damping: 200 }, durationInFrames: 16 }));
+  const drop = set.lines.map((_, i) => revealDrop(frame, starts?.[i] ?? delay + i * stagger, fps));
   return <TypeLines {...set} drop={drop} />;
 };
 
@@ -203,12 +225,15 @@ export const ShotImage: FC<{ shot: Shot; placed: { x: number; y: number; scale: 
   </div>
 );
 
-// A caption replaced at its atBeat fades into the next one over 6 frames from the beat: the one that goes is out in
-// the first 3, the one that comes is in by the 6th, so the two never read on top of each other.
-const CAPTION_OUT = 3;
-const CAPTION_IN = { from: 1, to: 6 };
-// While they fade, the caption that goes rises this share of its size and the one that comes rises into place.
+// While a caption is replaced (see CAPTION_SWAP), the one that goes rises this share of its size and the one that comes
+// rises into place.
 const CAPTION_DRIFT = 0.12;
+
+/** How far the caption that goes is out, and the one that comes is in, at `frame` of a scene whose caption is replaced at `swap` (see CAPTION_SWAP). */
+export const captionFade = (frame: number, swap: number | undefined): { out: number; come: number } =>
+  swap === undefined
+    ? { out: 0, come: 0 }
+    : { out: progress(frame, swap, swap + CAPTION_SWAP.out), come: progress(frame, swap + CAPTION_SWAP.in.from, swap + CAPTION_SWAP.in.to) };
 
 /**
  * The caption on top, in a block of fixed height so that captions of one or two lines never move the card, and the real
@@ -240,8 +265,7 @@ export const UiStage: FC<{ scene: Scene; timed: TimedScene; shot: Shot; placed: 
     return lines.map((caption) => ({ lines: caption, size }));
   }, [scene, swap, captionWidth, type, theme, stage.captionHeight]);
   const rise = spring({ frame, fps, config: { damping: 200 }, durationInFrames: 18 });
-  const out = swap === undefined ? 0 : progress(frame, swap, swap + CAPTION_OUT);
-  const come = swap === undefined ? 0 : progress(frame, swap + CAPTION_IN.from, swap + CAPTION_IN.to);
+  const { out, come } = captionFade(frame, swap);
   const [first, second] = captions;
   const drift = (first?.size ?? 0) * CAPTION_DRIFT;
   const caption = (children: ReactNode, opacity: number, y: number) => (
@@ -252,7 +276,7 @@ export const UiStage: FC<{ scene: Scene; timed: TimedScene; shot: Shot; placed: 
     <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(theme.bg, theme.primary, 0.1)} 0%, ${theme.bg} 70%)` }}>
       <div style={{ position: 'absolute', left: captionLeft, top: stage.captionTop, width: captionWidth, height: stage.captionHeight }}>
         {/* Each caption is on screen, and probed, only while it can be seen. */}
-        {first && out < 1 && caption(<RevealLines lines={first.lines} size={first.size} {...text} delay={2} />, 1 - out, -out * drift)}
+        {first && out < 1 && caption(<RevealLines lines={first.lines} size={first.size} {...text} delay={CAPTION_DELAY} />, 1 - out, -out * drift)}
         {second && come > 0 && caption(<TypeLines lines={second.lines} size={second.size} {...text} />, come, (1 - come) * drift)}
       </div>
       <div

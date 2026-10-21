@@ -1,6 +1,6 @@
 import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
-import { beatsToFrames, safeWidth, TYPE } from '@app/core';
+import { safeWidth, stackLineStart, TYPE } from '@app/core';
 import { layoutLines, toWords } from '../type';
 import { measureWith, RevealLines, safeBox, useAd, type PieceProps } from './common';
 
@@ -19,9 +19,8 @@ export const ClaimStack: FC<PieceProps> = ({ scene, timed }) => {
     const size = Math.min(...laid.map((g) => g.size));
     return laid.map((g) => ({ lines: g.lines, size }));
   }, [scene, format, type, theme]);
-  const spacing = Math.max(1, Math.floor(scene.beats / scene.lines.length));
   // On the beat grid of the whole video, so that each claim lands on the pulse.
-  const starts = groups.map((_, i) => beatsToFrames(timed.startBeat + i * spacing, edl.bpm) - timed.from);
+  const starts = groups.map((_, i) => stackLineStart(i, timed, edl.bpm));
   return (
     <AbsoluteFill style={{ background: theme.bg }}>
       <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: (groups[0]?.size ?? 0) * 0.32 }}>

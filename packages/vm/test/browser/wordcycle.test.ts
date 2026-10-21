@@ -9,11 +9,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
-import { beatsToFrames, FORMATS, layoutScenes, settledFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
+import { beatsToFrames, FORMATS, layoutScenes, settledFrame, wordEnterFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveFont } from '../../src/capture/fonts';
 import { runFfmpeg } from '../../src/render/ffmpeg';
-import { wordEnterFrame } from '../../src/video/rhythm';
 import { ROOM } from '../../src/video/type';
 import { readClips, type ClippedLine, type Rect } from './support/clips';
 

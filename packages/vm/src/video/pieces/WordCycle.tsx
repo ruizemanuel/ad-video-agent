@@ -1,12 +1,9 @@
 import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
-import { safeWidth, TYPE } from '@app/core';
-import { wordEnterFrame } from '../rhythm';
+import { safeWidth, TYPE, WORD_ROLL, wordEnterFrame } from '@app/core';
 import { layoutLines, lineSources, toWords, type Measure } from '../type';
 import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, type PieceProps } from './common';
 
-// A word rolls through the mask over this many frames, from its beat on.
-const ROLL = 6;
 // How far a word travels through the mask, as a share of its line: past its own line, descenders included.
 const TRAVEL = 1.35;
 // In the layout the mask takes its line less this much, as it always has: the text is centered by it and stays where it is.
@@ -66,9 +63,9 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
           }}
         >
           {words.map((word, k) => {
-            const come = progress(frame, enters[k] ?? 0, (enters[k] ?? 0) + ROLL);
+            const come = progress(frame, enters[k] ?? 0, (enters[k] ?? 0) + WORD_ROLL);
             const next = enters[k + 1];
-            const go = next === undefined ? 0 : progress(frame, next, next + ROLL);
+            const go = next === undefined ? 0 : progress(frame, next, next + WORD_ROLL);
             // On screen, and probed, only while some of it shows.
             if (come <= 0 || go >= 1) return null;
             return (

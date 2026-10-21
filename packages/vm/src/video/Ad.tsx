@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useState, type FC } from 'react';
 import { loadFont } from '@remotion/fonts';
 import { Audio } from '@remotion/media';
 import { AbsoluteFill, cancelRender, continueRender, delayRender, Sequence, staticFile, useCurrentFrame } from 'remotion';
-import { fontFaces, layoutScenes, theme as makeTheme, WIPE_FRAMES, type Edl, type Format, type PieceName, type ProbeItem, type SiteData } from '@app/core';
+import { fontFaces, layoutScenes, theme as makeTheme, opensWithBrand, WIPE_FRAMES, type Edl, type Format, type PieceName, type ProbeItem, type SiteData } from '@app/core';
 import { recordedLogoSize, videoShowsLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, type PieceProps } from './pieces/common';
@@ -131,7 +131,7 @@ const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> 
           const Piece = PIECES[timed.scene.piece];
           return (
             <Sequence key={timed.index} from={timed.from} durationInFrames={timed.duration} name={`${timed.role}-${timed.index}-${timed.scene.piece}`}>
-              <Piece scene={timed.scene} timed={timed} showLogo={timed.index === 0 && timed.scene.piece === 'KineticHeadline'} />
+              <Piece scene={timed.scene} timed={timed} showLogo={opensWithBrand(timed)} />
             </Sequence>
           );
         })}

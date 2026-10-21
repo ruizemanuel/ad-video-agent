@@ -1,10 +1,10 @@
-import { beatsToFrames, focusMove, layoutScenes, scrollMove, settledFrame, type Box, type Edl, type Scene, type Shot } from '@app/core';
+import { beatsToFrames, captionSwapFrame, focusMove, layoutScenes, scrollMove, settledFrame, wordEnterFrame, type Box, type Edl, type Scene, type Shot } from '@app/core';
 import { describe, expect, it } from 'vitest';
 import { keyframePlan } from '../src/render/keyframes';
 import { focusCameraAt } from '../src/video/pieces/UiFocus';
 import { scrollCameraAt } from '../src/video/pieces/UiScroll';
 import { PROBE_PREFIX, readProbe } from '../src/video/probe';
-import { captionIndex, captionSwapFrame, cycleIndex, wordEnterFrame } from '../src/video/rhythm';
+import { captionIndex, cycleIndex } from '../src/video/rhythm';
 
 const scene = (piece: Scene['piece'], beats: number, lines: Scene['lines'], extra: Partial<Scene> = {}): Scene => ({ piece, beats, lines, ...extra });
 const framing = (text: string, atBeat?: number) => ({ text, kind: 'framing' as const, ...(atBeat === undefined ? {} : { atBeat }) });

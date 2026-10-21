@@ -1,6 +1,6 @@
-import { beatsToFrames, settledFrame, type Line, type Scene, type TimedScene } from '@app/core';
+import { beatsToFrames, BUTTON_IN, captionSwapFrame, endCardSteps, lineEnterFrame, settledFrame, wordEnterFrame, type Line, type Scene, type TimedScene } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { BUTTON_IN, cameraFrames, captionIndex, captionSwapFrame, cycleIndex, endCardSteps, lineEnterFrame, PRESS_FRAMES, pressState, textChanges, typedChars, typeInPressFrame, wordEnterFrame } from '../src/video/rhythm';
+import { cameraFrames, captionIndex, cycleIndex, PRESS_FRAMES, pressState, textChanges, typedChars, typeInPressFrame } from '../src/video/rhythm';
 
 const framing = (text: string, atBeat?: number): Line => ({ text, kind: 'framing', ...(atBeat === undefined ? {} : { atBeat }) });
 const scene = (piece: Scene['piece'], beats: number, lines: Line[]): Scene => ({ piece, beats, lines });
