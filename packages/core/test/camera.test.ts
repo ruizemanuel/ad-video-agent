@@ -733,6 +733,57 @@ describe('the top edge rule on a long page', () => {
     expect(shows(view, picture)).toBe(false);
     expect(landing.clean).toBe(false);
   });
+
+  it('leaves a price there above the card as well, not on its top edge: a top made at the bottom edge that lies on a card is no clear one', () => {
+    const card = block('m-full', 0, 600, 300, 2000);
+    const price = box('m-full', 'price', '$ 4.500', 400, 1500, 300, 60);
+    // UiFocus (1.12x): the frame 24 px clear under the price would open 0.29 px into the card, within the tolerance but
+    // on its top edge, and the one 24 px clear of the card would end 0.29 px into the price: each as flush as a top made
+    // flush with that edge. It ends 24 px over the price instead. UiScroll opens 24 px clear of the card, as for the picture.
+    const want = { UiFocus: { top: 1500 - 24 - stageLayout('9x16').cardH / (1.12 * (960 / 780)), end: 1500 - 24 }, UiScroll: { top: card.y - 24 } };
+    for (const piece of ['UiFocus', 'UiScroll'] as const) {
+      const landing = (piece === 'UiFocus' ? focusLanding : scrollLanding)(price, phonePage, '9x16', [price], [card]);
+      const view = viewOf(phonePage, landing.camera, [price]);
+      expect(slices(view, card), piece).toBe(false);
+      expect(slicesEnd(view, price), piece).toBe(false);
+      expect(view.top, piece).toBeCloseTo(want[piece].top);
+      if (piece === 'UiFocus') expect(view.end).toBeCloseTo(want.UiFocus.end);
+      // Clear of the card's top edge, and of the price at the bottom edge, by the margin.
+      expect(card.y - view.top, piece).toBeGreaterThanOrEqual(24 - EPS);
+      expect(Math.min(Math.abs(view.end - price.y), Math.abs(view.end - price.y - price.h)), piece).toBeGreaterThanOrEqual(24 - EPS);
+      expect(shows(view, price), piece).toBe(false);
+      expect(landing.clean, piece).toBe(false);
+    }
+  });
+
+  it("opens a scroll to a price under its card's title when the next card's title is less than a frame away: run 8's store", () => {
+    // cobrame.app's demo store (paid run 8): the "Pack de Presets" card, too tall to frame, with its photo, title and price
+    // row, and the next two cards. The title and the next card's title are 1104 px apart, and the frame shows 1101.75: no
+    // frame shows the one and clears the other.
+    const page = shot('x1-m-full', 'mobile', 3072);
+    const cards = [block(page.id, 32, 562, 716, 719), block(page.id, 32, 1312, 716, 719), block(page.id, 32, 2063, 716, 274)];
+    const boxes = [
+      box(page.id, 'image', '', 34, 564, 712, 445),
+      box(page.id, 'heading', 'Pack de Presets Lightroom', 66, 1041, 648, 48),
+      box(page.id, 'price', '$ 4.500 Agregar', 66, 1166, 648, 80),
+      box(page.id, 'image', '', 34, 1314, 712, 445),
+      box(page.id, 'heading', 'Guía: Monetiza tu Instagram', 66, 1791, 648, 48),
+      box(page.id, 'price', '$ 8.900 Agregar', 66, 1917, 648, 80),
+      box(page.id, 'heading', 'Comunidad Discord Privada', 66, 2097, 648, 48),
+      box(page.id, 'price', '$ 3.000 Agregar', 66, 2222, 648, 80),
+    ];
+    const [, title, price] = boxes as [Box, Box, Box];
+    const landing = scrollLanding(price, page, '9x16', boxes, cards);
+    const view = viewOf(page, landing.camera, boxes);
+    expect(landing.clean).toBe(true);
+    expect(shows(view, price)).toBe(true);
+    expect(boxes.filter((b) => slices(view, b) || (b.kind !== 'image' && slicesEnd(view, b)))).toEqual([]);
+    // Under the title, 7 px clear of it, the bottom edge 24 px over the last price row; through the price's own card
+    // only, and into no other card's top band.
+    expect(view.top).toBeCloseTo(1096.25);
+    expect(view.top).toBeGreaterThan(title.y + title.h);
+    expect(cards.slice(1).filter((c) => slices(view, c) || (view.top > c.y + EPS && view.top < c.y + 24))).toEqual([]);
+  });
 });
 
 describe('the bottom edge of the frame', () => {
@@ -816,7 +867,7 @@ describe('the bottom edge of the frame', () => {
 describe('the edge rules, against a search of every top', () => {
   // A reference written to be read rather than fast: every top the camera weighs (where it aims, the top of the shot and
   // the lowest top, 24 px clear of each box and card or flush with it, and the same for the bottom edge of the frame
-  // against each heading, price and button), each ranked against every region. The camera weighs the tops a window at a
+  // against each heading, price and button), each ranked against every region, at both edges. The camera weighs the tops a window at a
   // time (see avoidTopCut); on layouts made to tempt the windows' edges (regions 0 to 3 px tall, regions flush or 23 to
   // 25 px apart or overlapping, regions clipped at the top of a one-screen shot, panels around cards), each piece has to
   // land where the reference does, and be as clean. The reference takes the scale from the landing (how far UiFocus zooms
@@ -853,18 +904,26 @@ describe('the edge rules, against a search of every top', () => {
     const texts = ownBoxes.filter((b) => b.kind !== 'image');
     const lowest = Math.max(0, page.height - frame);
     const start = Math.min(Math.max(aimedAt.y + aimedAt.h / 2 - focusY / scale, 0), lowest);
-    const tops: [number, boolean][] = [[start, false], [0, false], [lowest, false]];
-    for (const r of own) tops.push([r.y - MARGIN, false], [r.y + r.h + MARGIN, false]);
-    for (const r of texts) tops.push([r.y - MARGIN - frame, false], [r.y + r.h + MARGIN - frame, false]);
-    for (const r of own) tops.push([r.y, true], [r.y + r.h, true]);
-    for (const r of texts) tops.push([r.y - frame, true], [r.y + r.h - frame, true]);
+    // Each top with what it was made from: where the camera aims or a limit, 24 px clear of a region at the top edge or
+    // at the bottom edge, or flush with one.
+    const tops: [number, 'aim' | 'top' | 'bottom' | 'flush'][] = [[start, 'aim'], [0, 'aim'], [lowest, 'aim']];
+    for (const r of own) tops.push([r.y - MARGIN, 'top'], [r.y + r.h + MARGIN, 'top']);
+    for (const r of texts) tops.push([r.y - MARGIN - frame, 'bottom'], [r.y + r.h + MARGIN - frame, 'bottom']);
+    for (const r of own) tops.push([r.y, 'flush'], [r.y + r.h, 'flush']);
+    for (const r of texts) tops.push([r.y - frame, 'flush'], [r.y + r.h - frame, 'flush']);
+    // Whether an edge of the frame lies on an edge of a region (the top of one clipped at the top of the shot is none).
+    const lies = (regions: readonly Region[], at: number): boolean =>
+      regions.some((r) => [...(r.clippedTop === true ? [] : [r.y]), r.y + r.h].some((edge) => edge >= at - TOLERANCE && edge <= at + TOLERANCE));
     let best: { top: number; rank: number[] } | undefined;
-    for (const [top, flush] of tops) {
+    for (const [top, made] of tops) {
       if (top < 0 || top > lowest) continue;
       const end = top + frame;
-      const cuts = kept.filter((r) => cutTop(r, top)).length + (end < page.height - TOLERANCE ? texts.filter((r) => cutEnd(r, end)).length : 0);
+      const ends = end < page.height - TOLERANCE;
+      const cuts = kept.filter((r) => cutTop(r, top)).length + (ends ? texts.filter((r) => cutEnd(r, end)).length : 0);
       const whole = !cutTop(aim, top) && aim.y >= top - TOLERANCE && aim.y + aim.h <= top + visible + TOLERANCE;
       const hidden = Math.min(aim.h, Math.max(0, top - aim.y) + Math.max(0, aim.y + aim.h - (top + visible)));
+      // One made clear at one edge that lies on a region at the other is as flush as one made flush.
+      const flush = made === 'flush' || (made === 'top' && ends && lies(texts, end)) || (made === 'bottom' && lies(kept, top));
       const rank = [cuts, whole ? 0 : 1, flush ? 1 : 0, hidden, Math.abs(top - start)];
       if (!best || better(rank, best.rank)) best = { top, rank };
     }

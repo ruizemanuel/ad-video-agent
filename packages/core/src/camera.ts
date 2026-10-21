@@ -285,6 +285,15 @@ const cutCounter = (regions: readonly Region[]): ((top: number) => number) => {
   };
 };
 
+/**
+ * Whether an edge of the frame at `at` lies on an edge of one of the `regions`, within half a shot pixel: the top or the
+ * bottom of a region, but for the top of one the capture clipped (it goes on above the shot). Each answer in log time.
+ */
+const touchCounter = (regions: readonly Region[]): ((at: number) => boolean) => {
+  const edges = regions.flatMap((r) => (r.clippedTop === true ? [r.y + r.h] : [r.y, r.y + r.h])).sort((a, b) => a - b);
+  return (at) => countBelow(edges, at + EDGE_TOLERANCE, true) > countBelow(edges, at - EDGE_TOLERANCE);
+};
+
 /** Whether the target is whole in a view from `top`, `visible` shot pixels tall (no target: nothing to keep). */
 const wholeIn = (target: Region | undefined, top: number, visible: number): boolean =>
   !target || (!cutAt(target, top) && target.y >= top - EDGE_TOLERANCE && target.y + target.h <= top + visible + EDGE_TOLERANCE);
@@ -304,6 +313,9 @@ const textsOf = (shot: Shot, boxes: readonly Box[]): Box[] => boxes.filter((b) =
 
 // How a top for the view ranks, best first, compared item by item (see avoidTopCut).
 type TopRank = [cuts: number, notWhole: number, flush: number, hidden: number, distance: number];
+// Where a top to weigh comes from (see avoidTopCut): where the camera aims or a limit of the shot, 24 px clear of a region
+// at the top edge or at the bottom edge of the frame, or flush with one.
+type Made = 'aim' | 'top' | 'bottom' | 'flush';
 const better = (a: TopRank, b: TopRank): boolean => {
   const i = a.findIndex((value, n) => value !== b[n]);
   return i >= 0 && a[i]! < b[i]!;
@@ -333,9 +345,10 @@ type TopCut = {
  * shot the one that shows it whole and the one that pushes it out of view, 24 px clear of it, or else flush with it
  * (cards closer together than that), and the same at the bottom edge for each heading, price and button. Of those, the
  * one that cuts the fewest, at both edges; then one that keeps `target` whole above the platform UI; then one 24 px
- * clear; then the one that hides the least of the target; then the nearest to where the camera aims. When no clean top
- * keeps the target whole (it sits too near the end of the shot, is taller than the view, or every view that shows it
- * ends in a heading), the target gives way, as little as it can.
+ * clear (one made 24 px clear at one edge whose other edge lies on the edge of a region there, within half a pixel, is
+ * as flush as one made flush with it); then the one that hides the least of the target; then the nearest to where the
+ * camera aims. When no clean top keeps the target whole (it sits too near the end of the shot, is taller than the view,
+ * or every view that shows it ends in a heading), the target gives way, as little as it can.
  *
  * A long page has hundreds of boxes, so the tops are weighed a window at a time, against the regions near the window
  * alone (those near the window moved down by the frame, for the bottom edge). A top outside a window that holds every top
@@ -363,10 +376,11 @@ const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowes
     hidden(top),
     Math.abs(top - start),
   ];
+  const ends = (top: number): boolean => top + frame < shot.height - EDGE_TOLERANCE;
   /**
    * The best top in [from, to], weighing only the regions whose tops can fall there (`sources` for the top edge and
-   * `below` for the bottom edge, by the margins of the tops each gives) and the regions a top there can cut, at either
-   * edge (counted by `cuts`). Undefined when no top lies there.
+   * `below` for the bottom edge, by the margins of the tops each gives) and the regions a top there can cut or lie on,
+   * at either edge (counted by `cuts`, found by `onTop` and `onEnd`). Undefined when no top lies there.
    */
   const bestIn = (from: number, to: number): { top: number; rank: TopRank } | undefined => {
     const sources = own.filter((r) => r.y + r.h >= from - SOURCE_REACH && r.y <= to + SOURCE_REACH);
@@ -375,34 +389,37 @@ const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowes
     // The bottom edge of a frame from `top` cuts what its top edge would cut at `top + frame`, but for a text the capture
     // clipped at the top of the shot: it begins at 0, above any bottom edge, so it is counted as one that begins above it.
     const cutsAtEnd = cutCounter(texts.filter((r) => r.y + r.h > from + frame && r.y < to + frame));
-    const cuts = (top: number): number => cutsAtTop(top) + (top + frame < shot.height - EDGE_TOLERANCE ? cutsAtEnd(top + frame) : 0);
+    const cuts = (top: number): number => cutsAtTop(top) + (ends(top) ? cutsAtEnd(top + frame) : 0);
+    const onTop = touchCounter(kept.filter((r) => r.y + r.h >= from - EDGE_TOLERANCE && r.y <= to + EDGE_TOLERANCE));
+    const onEnd = touchCounter(texts.filter((r) => r.y + r.h >= from + frame - EDGE_TOLERANCE && r.y <= to + frame + EDGE_TOLERANCE));
     const low = Math.max(0, from);
     const high = Math.min(lowest, to);
     let winner: { top: number; rank: TopRank } | undefined;
-    const weigh = (top: number, flush: boolean): void => {
+    const weigh = (top: number, made: Made): void => {
       if (top < low || top > high) return;
+      const flush = made === 'flush' || (made === 'top' && ends(top) && onEnd(top + frame)) || (made === 'bottom' && onTop(top));
       const candidate = { top, rank: rank(cuts, top, flush) };
       if (!winner || better(candidate.rank, winner.rank)) winner = candidate;
     };
     // The first of equals is kept, and the first is where the camera aims; the tops 24 px clear come before the flush ones.
-    weigh(start, false);
-    weigh(0, false);
-    if (Number.isFinite(lowest)) weigh(lowest, false);
+    weigh(start, 'aim');
+    weigh(0, 'aim');
+    if (Number.isFinite(lowest)) weigh(lowest, 'aim');
     for (const r of sources) {
-      weigh(r.y - TOP_CUT_MARGIN, false);
-      weigh(r.y + r.h + TOP_CUT_MARGIN, false);
+      weigh(r.y - TOP_CUT_MARGIN, 'top');
+      weigh(r.y + r.h + TOP_CUT_MARGIN, 'top');
     }
     for (const r of below) {
-      weigh(r.y - TOP_CUT_MARGIN - frame, false);
-      weigh(r.y + r.h + TOP_CUT_MARGIN - frame, false);
+      weigh(r.y - TOP_CUT_MARGIN - frame, 'bottom');
+      weigh(r.y + r.h + TOP_CUT_MARGIN - frame, 'bottom');
     }
     for (const r of sources) {
-      weigh(r.y, true);
-      weigh(r.y + r.h, true);
+      weigh(r.y, 'flush');
+      weigh(r.y + r.h, 'flush');
     }
     for (const r of below) {
-      weigh(r.y - frame, true);
-      weigh(r.y + r.h - frame, true);
+      weigh(r.y - frame, 'flush');
+      weigh(r.y + r.h - frame, 'flush');
     }
     return winner;
   };
