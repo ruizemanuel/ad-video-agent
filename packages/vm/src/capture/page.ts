@@ -33,9 +33,9 @@ const NAME_SHIM = 'globalThis.__name = (fn) => fn;';
  * Makes the IntersectionObservers of the page keep what they revealed: once an observer has reported a target in view,
  * it never passes on that the target left it. Such an entry is dropped from what the callback gets and from what
  * `takeRecords()` gives, and a callback left with no entry is not called. Every other entry passes as it is, the first
- * report that a target is not in view yet included. Otherwise the observer is Chrome's own (it is a subclass of it):
- * `instanceof`, `observe`, `unobserve`, `disconnect`, `takeRecords`, `root`, `rootMargin` and `thresholds` are the
- * native ones, and the callback gets the observer itself.
+ * report that a target is not in view yet included. The rest is Chrome's own (the observer is a subclass of Chrome's):
+ * `instanceof`, `observe`, `unobserve`, `disconnect`, `root`, `rootMargin` and `thresholds`, and `takeRecords` but for
+ * the entries it drops; the callback gets the observer itself.
  *
  * Why: a reveal effect that replays (Framer's appear effect) hides its content again when it leaves the screen, and the
  * full-page shots are taken back at the top of the page: what the auto-scroll revealed would be blank in them, and no box
