@@ -133,6 +133,56 @@ describe('DIRECTOR_SYSTEM', () => {
       for (const rule of ['`boxIndex` (required)', 'an image or a price in its section or card', 'is rejected']) expect(flat(PATCH_SYSTEM)).toContain(rule);
     });
   });
+
+  describe('a site with no product UI', () => {
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    // The director's rule for such a site, as one sentence.
+    const noUiRule = (): string => flat(DIRECTOR_SYSTEM.match(/- \*\*A site with no product UI\.\*\*[\s\S]*?(?=\n- )/)?.[0] ?? '');
+
+    it('names what is not product UI even when its box has product: true: logos, blog and news thumbnails, posters, decorative artwork', () => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain(
+        'A box with `product: true` is not always product UI: partner or customer logos, blog and news thumbnails, posters and decorative artwork are not, and they are never filmed as the product.',
+      );
+    });
+
+    it('defines a site with no product UI by what its screenshots do not show', () => {
+      expect(noUiRule()).toContain('If no phone screenshot shows an app screen, a store, a dashboard, a checkout or real photos of the product');
+      expect(noUiRule()).toContain('typical of a protocol, a network, an agency or a marketing site');
+    });
+
+    it('leads such an ad with its own numbers and claims, in type pieces', () => {
+      expect(noUiRule()).toContain('its own numbers and claims are the product. The ad is led by them, in type pieces.');
+    });
+
+    it('lets a UiFocus or a UiScroll frame a stat card, a price or the hero imagery, still a box with product: true, never a logo, a blog thumbnail or a poster', () => {
+      expect(noUiRule()).toContain(
+        "A `UiFocus`/`UiScroll` may frame a stat card, a price or the site's own hero imagery (still a box with `product: true`, which is checked), never a partner logo, a blog thumbnail or a poster",
+      );
+      expect(noUiRule()).toContain('a stat card shows a number, so it is not one of the marketing text cards above');
+    });
+
+    it('drops the two requirements of product UI for such a site: shown twice in the main cut, opening a hook', () => {
+      expect(noUiRule()).toContain('The main cut does not have to show product UI at least twice, and no hook has to open on it.');
+    });
+
+    it('keeps the limit of half of the scenes being type only, for such a site too', () => {
+      expect(noUiRule()).toContain('The limit of half of the scenes being type only still applies.');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('At most half of the scenes are type only (`KineticHeadline`, `ClaimStack`, `WordCycle`, `TypeIn`).');
+    });
+
+    it('scopes the requirements of product UI to a site that has it, and says nothing else changes for it', () => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain(
+        'On a site with product UI, the main cut (hooks[0] + body) shows the most distinctive product UI at least twice; at least one of the three hooks opens on it.',
+      );
+      // The rest of the rule for a site with product UI, word for word.
+      for (const sentence of [
+        'tell product UI (an app screen, a store, a dashboard, a checkout, real photos) apart from marketing text cards (feature grids, "why us" sections).',
+        'a text card only proves a claim, it does not show the product, and this is checked.',
+        'If no screenshot shows product UI for a claim, state it in a type scene: never use a section that is mostly paragraphs or a marketing text card as a product shot.',
+      ])
+        expect(flat(DIRECTOR_SYSTEM)).toContain(sentence);
+    });
+  });
 });
 
 describe('how long a text stays on screen', () => {
@@ -290,6 +340,43 @@ describe('PATCH_SYSTEM', () => {
     it('says a new boxIndex for a visual problem must be a box with product: true', () => {
       expect(fixFor('visual')).toContain('a new `boxIndex` must be a box with `product: true`');
     });
+
+    it('keeps a new boxIndex for a visual problem off logos, thumbnails and posters, which can carry product: true', () => {
+      expect(fixFor('visual')).toContain('and never a partner logo, a blog or news thumbnail or a poster');
+    });
+  });
+
+  describe('a site with no product UI', () => {
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    // The corrector gets no composition rules: this paragraph is where it learns what is not product UI.
+    const noUiRule = (): string => flat(PATCH_SYSTEM.match(/A box with `product: true` is not always product UI[\s\S]*?\n\n/)?.[0] ?? '');
+
+    it('says its own numbers and claims are what make an ad specific, in the fix of the logo-swap test', () => {
+      const fix = flat(PATCH_SYSTEM.match(/or "all" when[\s\S]*?any scenes\./)?.[0] ?? '');
+      expect(fix).toContain('make the scenes more specific to this brand, with its real product and its own words from the site.');
+      expect(fix).toContain('On a site with no product UI, its own numbers and claims are what make it specific.');
+    });
+
+    it('names what is not product UI even when its box has product: true, and keeps every new boxIndex off it', () => {
+      expect(noUiRule()).toContain('A box with `product: true` is not always product UI: partner or customer logos, blog and news thumbnails, posters and decorative artwork are not');
+      expect(noUiRule()).toContain('never filmed as the product, so a `boxIndex` you choose never aims at one');
+    });
+
+    it('says how it tells such a site apart without pictures: by the text and the boxes', () => {
+      expect(noUiRule()).toContain('A site has no product UI when its sections and boxes show no app screen, store, dashboard or checkout');
+      expect(noUiRule()).toContain('you do not see the pictures');
+    });
+
+    it('leads such an ad with its own numbers and claims in type pieces, and lets a UiFocus or a UiScroll frame a stat card, a price or the hero imagery', () => {
+      expect(noUiRule()).toContain('lead with its own numbers and claims, in type pieces');
+      expect(noUiRule()).toContain(
+        "a `UiFocus`/`UiScroll` may frame a stat card, a price or the site's own hero imagery (a box with `product: true`), never a partner logo, a blog thumbnail or a poster",
+      );
+    });
+
+    it('does not hand the corrector the requirement of product UI in the main cut, which it never had', () => {
+      expect(flat(PATCH_SYSTEM)).not.toContain('shows the most distinctive product UI at least twice');
+    });
   });
 
   it('asks only for the scenes it changes and the claims it corrects', () => {
@@ -376,6 +463,33 @@ describe('REVIEW_SYSTEM', () => {
   it('asks the logo-swap test, and generic true when it would do for any brand', () => {
     expect(REVIEW_SYSTEM).toContain('logo and the name were replaced with another brand');
     expect(REVIEW_SYSTEM).toContain('`generic: true`');
+  });
+
+  describe('a site with no product UI', () => {
+    // The prompt wraps its lines: the rule is read as a sentence.
+    const rule = (): string => (REVIEW_SYSTEM.match(/On a site with no product UI[\s\S]*?\n\n/)?.[0] ?? '').replace(/\s+/g, ' ');
+
+    it('says how it tells such a site apart from the frames, since it sees no more than them and the address', () => {
+      expect(rule()).toContain('On a site with no product UI (no app screen, store, dashboard, checkout or product photos in any screenshot of the site in the frames)');
+      expect(rule()).toContain('You do not see the site itself: if no frame holds a screenshot of it, judge as for a site with product UI.');
+    });
+
+    it('takes its own numbers and claims in type, and its stat cards, as how it shows the product', () => {
+      expect(rule()).toContain("the site's own numbers and claims in type, and its stat cards, are how it shows the product");
+    });
+
+    it('does not report the absence of UI as an issue', () => {
+      expect(rule()).toContain('do not report the absence of UI as an issue (not a shot that does not show the product, not the real product as the protagonist)');
+    });
+
+    it('judges the logo-swap test by whether those numbers and claims belong to this brand', () => {
+      expect(rule()).toContain('judge the logo-swap test by whether those numbers and claims belong to this brand');
+      expect(rule()).toContain('no other brand could put its name under them');
+    });
+
+    it('still reports partner logos, blog thumbnails and posters filmed as the product', () => {
+      expect(rule()).toContain('Partner logos, blog thumbnails and posters filmed as the product remain an issue.');
+    });
   });
 
   it('lets only legibility and the cut letter stop the ad: the rest goes in the remarks', () => {

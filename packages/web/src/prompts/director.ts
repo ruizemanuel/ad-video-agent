@@ -144,8 +144,18 @@ const COMPOSITION_RULES = `Composition rules:
   UI (an app screen, a store, a dashboard, a checkout, real photos) apart from marketing text
   cards (feature grids, "why us" sections). \`UiFocus\`/\`UiScroll\` must aim at a box with
   \`product: true\`; a text card only proves a claim, it does not show the product, and this is
-  checked. The main cut (hooks[0] + body) shows the most distinctive product UI at least twice; at
-  least one of the three hooks opens on it.
+  checked. A box with \`product: true\` is not always product UI: partner or customer logos, blog and
+  news thumbnails, posters and decorative artwork are not, and they are never filmed as the product.
+  On a site with product UI, the main cut (hooks[0] + body) shows the most distinctive product UI at
+  least twice; at least one of the three hooks opens on it.
+- **A site with no product UI.** If no phone screenshot shows an app screen, a store, a dashboard, a
+  checkout or real photos of the product (typical of a protocol, a network, an agency or a marketing
+  site), its own numbers and claims are the product. The ad is led by them, in type pieces. A
+  \`UiFocus\`/\`UiScroll\` may frame a stat card, a price or the site's own hero imagery (still a box
+  with \`product: true\`, which is checked), never a partner logo, a blog thumbnail or a poster; a
+  stat card shows a number, so it is not one of the marketing text cards above. The main cut does
+  not have to show product UI at least twice, and no hook has to open on it. The limit of half of
+  the scenes being type only still applies.
 - **Brand-specific, not a template.** Ask yourself: if the logo and name were swapped for a
   competitor's, would this ad still work? Then it is generic. Lean on what only this product has:
   its UI, its numbers, its payment methods, its audience's words.
