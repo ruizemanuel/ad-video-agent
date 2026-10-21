@@ -131,7 +131,7 @@ export const stackLineStart = (i: number, timed: TimedScene, bpm: number): numbe
 
 // What a close of 6 beats or more does on its beats: the button comes in on beat 2 and is pressed on beat 4.5. On beat 2
 // the button of a 6-beat close stays on screen long enough to be read (see readingSeconds) with a site's call to action at
-// every tempo the music comes at (20 characters at 147 bpm, 25 at 128); on beat 3 it did not, at 111 bpm already.
+// every tempo the music comes at (20 characters at 147 bpm, 24 at 128); on beat 3 it did not, at 111 bpm already.
 const BUTTON_BEAT = 2;
 const PRESS_BEAT = 4.5;
 // A shorter close keeps the press this many beats before its end (and the button a beat before the press), so the press
