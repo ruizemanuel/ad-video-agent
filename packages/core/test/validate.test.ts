@@ -549,16 +549,32 @@ describe('validateEdl: structure', () => {
       expect(problemsOf(short).filter((p) => p.where === 'edl')).toEqual([{ where: 'edl', rule: 'structure', detail: 'the video with hook 0 lasts 3.77 s (expected 15-30)' }]);
     });
 
+    const lengthProblems = (c: Case) => problemsOf(c).filter((p) => p.where === 'edl').map((p) => p.detail);
+
     it.each([
-      [30, 120, true],
-      [29, 120, false],
-      [60, 120, true],
-      [61, 120, false],
-    ])('measures a video of %s beats at %s bpm: ok is %s', (beats, bpm, ok) => {
-      const c = ofBeats(beats, bpm);
-      const seconds = layoutScenes(c.edl, 0).total / FPS;
-      expect(seconds).toBe(beats / 2);
-      expect(rules(c)).toEqual(ok ? [] : ['structure']);
+      [29, 'the video with hook 0 lasts 14.50 s (expected 15-30)'],
+      [61, 'the video with hook 0 lasts 30.50 s (expected 15-30)'],
+    ])('measures a video of %s beats at 120 bpm against the band, as planned', (beats, detail) => {
+      expect(layoutScenes(ofBeats(beats, 120).edl, 0).total / FPS).toBe(beats / 2);
+      expect(lengthProblems(ofBeats(beats, 120))).toEqual([detail]);
+    });
+
+    it.each([
+      [60, 'the video with hook 0 lasts 30.00 s, and up to 30.53 s once moved to the tempo its music comes at (within 15 % of 120 bpm; expected 15-30): take 2 beats off its scenes'],
+      [59, 'the video with hook 0 lasts 29.50 s, and up to 30.03 s once moved to the tempo its music comes at (within 15 % of 120 bpm; expected 15-30): take 1 beat off its scenes'],
+      [30, 'the video with hook 0 lasts 15.00 s, and down to 14.47 s once moved to the tempo its music comes at (within 15 % of 120 bpm; expected 15-30): add 2 beats to its scenes'],
+    ])('keeps a video of %s beats at 120 bpm in the band once retimed to any tempo its music can come at, naming the beats', (beats, detail) =>
+      expect(lengthProblems(ofBeats(beats, 120))).toEqual([detail]));
+
+    it.each([32, 58])('takes a video of %s beats at 120 bpm, in the band at every tempo its music can come at', (beats) =>
+      expect(lengthProblems(ofBeats(beats, 120))).toEqual([]));
+
+    it('takes every plan of 18 to 22 s, at every tempo the director can ask for', () => {
+      for (const bpm of [90, 98, 104, 112, 120, 128]) {
+        const shortest = Math.ceil((18 * bpm) / 60);
+        const longest = Math.floor((22 * bpm) / 60);
+        for (const beats of [shortest, Math.round((shortest + longest) / 2), longest]) expect(lengthProblems(ofBeats(beats, bpm)), `${beats} beats at ${bpm} bpm`).toEqual([]);
+      }
     });
 
     it('counts the body and the cta, not just the hook', () => {

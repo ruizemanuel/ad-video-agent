@@ -6,6 +6,7 @@ import { BANNED_PHRASES, type BannedPhrases } from './banned-phrases';
 import { framesCleanly, framingOf } from './camera';
 import type { Claim, Edl, Scene } from './edl';
 import { MAIN_FORMAT } from './formats';
+import { MAX_BPM_DEVIATION, retimedVideoRange } from './music';
 import { isProductTarget } from './product';
 import type { SiteData } from './site';
 import {
@@ -335,6 +336,20 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
   checkAtBeat(path, scene, report);
 };
 
+// The video is rendered moved to the tempo of its music, which can lengthen it by the beats its texts need, or shorten it
+// by rounding: it has to stay in the band at every tempo the music can come at. The fix is said in beats of the plan.
+const checkRetimedLength = (edl: Edl, seconds: number, report: Report): void => {
+  const { shortest, longest } = retimedVideoRange(edl);
+  const beat = 60 / edl.bpm;
+  const beats = (count: number): string => `${count} beat${count === 1 ? '' : 's'}`;
+  const moved = `once moved to the tempo its music comes at (within ${Math.round(MAX_BPM_DEVIATION * 100)} % of ${edl.bpm} bpm; expected ${VIDEO_SECONDS.min}-${VIDEO_SECONDS.max})`;
+  const lasts = `the video with hook 0 lasts ${seconds.toFixed(2)} s`;
+  if (longest > VIDEO_SECONDS.max)
+    report('edl', 'structure', `${lasts}, and up to ${longest.toFixed(2)} s ${moved}: take ${beats(Math.ceil((longest - VIDEO_SECONDS.max) / beat))} off its scenes`);
+  if (shortest < VIDEO_SECONDS.min)
+    report('edl', 'structure', `${lasts}, and down to ${shortest.toFixed(2)} s ${moved}: add ${beats(Math.ceil((VIDEO_SECONDS.min - shortest) / beat))} to its scenes`);
+};
+
 // Structure of the whole edit list.
 const checkEdl = (edl: Edl, report: Report): void => {
   if (edl.hooks.length < HOOKS.min || edl.hooks.length > HOOKS.max)
@@ -350,6 +365,7 @@ const checkEdl = (edl: Edl, report: Report): void => {
     const seconds = layoutScenes(edl, 0).total / FPS;
     if (seconds < VIDEO_SECONDS.min || seconds > VIDEO_SECONDS.max)
       report('edl', 'structure', `the video with hook 0 lasts ${seconds.toFixed(2)} s (expected ${VIDEO_SECONDS.min}-${VIDEO_SECONDS.max})`);
+    else if (edl.bpm >= BPM.min && edl.bpm <= BPM.max) checkRetimedLength(edl, seconds, report);
   }
 };
 

@@ -505,7 +505,8 @@ async function queueTask(orderId: string, task: TaskRequest): Promise<void> {
 
 /**
  * What the VM is given. The render gets the edit list moved to the tempo measured on the track: that one is checked with
- * the schema only, since its tempo may fall outside the director's range and its length pass the cap by about a beat.
+ * the schema only, since its tempo may fall outside the director's range (validateEdl kept its length in the band at every
+ * tempo its music could come at).
  */
 function taskInput(task: TaskRequest): unknown {
   switch (task.kind) {
