@@ -1,9 +1,11 @@
-// Opt-in (`pnpm --filter @app/vm test:browser`): the two things the capture does to a page before it films it, tried one
-// by one in a real Chrome on small pages made here: answering a cookie banner, and hiding what covers the site.
+// Opt-in (`pnpm --filter @app/vm test:browser`): the things the capture does to a page before it films it, tried one by
+// one in a real Chrome on small pages made here: answering a cookie banner, hiding what covers the site, and keeping what
+// an observer revealed on the screen.
 import type { CaptureLog } from '@app/core';
 import type { Browser, Page } from 'puppeteer-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { dismissCookies, launchBrowser, removeOverlays } from '../../src/capture/page';
+import { dismissCookies, inPageKeepRevealed, launchBrowser, openPage, removeOverlays } from '../../src/capture/page';
+import { serveFixtureSite } from './support/fixture-site';
 
 let browser: Browser;
 let page: Page;
@@ -205,5 +207,152 @@ describe('overlays', () => {
       expect(await state('#late')).toBe('hidden');
       expect(await state('#stage')).toBe('shown');
     });
+  });
+});
+
+describe('what an observer revealed', () => {
+  // Two targets 100 px tall at the top of the screen (a, a2), three far below it (b, b2, c), and room to scroll past them.
+  const PAGE = `<style>body { margin: 0; } .t { height: 100px; }</style>
+    <div id="a" class="t"></div><div id="a2" class="t"></div><div style="height: 2000px"></div>
+    <div id="b" class="t"></div><div id="b2" class="t"></div><div id="c" class="t"></div><div style="height: 3000px"></div>`;
+
+  beforeEach(async () => {
+    await page.setContent(PAGE);
+    await page.evaluate(() => {
+      (window as unknown as { NativeObserver: typeof IntersectionObserver }).NativeObserver = IntersectionObserver;
+    });
+    await page.evaluate(inPageKeepRevealed);
+  });
+
+  it('is an IntersectionObserver with the root, margin and thresholds it was given, that calls back with itself', async () => {
+    const seen = await page.evaluate(async () => {
+      const Native = (window as unknown as { NativeObserver: typeof IntersectionObserver }).NativeObserver;
+      const calls: { self: boolean; given: boolean; entries: number }[] = [];
+      const observer = new IntersectionObserver(
+        function (this: unknown, entries, given) {
+          calls.push({ self: this === observer, given: given === observer, entries: entries.length });
+        },
+        { rootMargin: '10px', threshold: [0, 0.5] },
+      );
+      observer.observe(document.getElementById('a')!);
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 100))));
+      let refused = '';
+      try {
+        new IntersectionObserver(null as unknown as IntersectionObserverCallback);
+      } catch (error) {
+        refused = (error as Error).name;
+      }
+      return {
+        wrapped: IntersectionObserver !== Native,
+        instanceOf: [observer instanceof IntersectionObserver, observer instanceof Native],
+        tag: Object.prototype.toString.call(observer),
+        root: observer.root,
+        rootMargin: observer.rootMargin,
+        thresholds: [...observer.thresholds],
+        calls,
+        refused,
+      };
+    });
+    expect(seen).toEqual({
+      wrapped: true,
+      instanceOf: [true, true],
+      tag: '[object IntersectionObserver]',
+      root: null,
+      rootMargin: '10px 10px 10px 10px',
+      thresholds: [0, 0.5],
+      calls: [{ self: true, given: true, entries: 1 }],
+      refused: 'TypeError',
+    });
+  });
+
+  it('passes on the first report that a target is not in view yet, and its coming into view, but never its leaving after that', async () => {
+    const batches = await page.evaluate(async () => {
+      const settled = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 100))));
+      const batches: [string, boolean][][] = [];
+      const observer = new IntersectionObserver((entries) => batches.push(entries.map((e): [string, boolean] => [e.target.id, e.isIntersecting])));
+      observer.observe(document.getElementById('a')!);
+      observer.observe(document.getElementById('b')!);
+      await settled();
+      scrollTo(0, document.getElementById('b')!.offsetTop); // a leaves, b comes in
+      await settled();
+      scrollTo(0, document.documentElement.scrollHeight); // b leaves too: nothing is left to pass on, and nobody is called
+      await settled();
+      return batches;
+    });
+    expect(batches).toEqual([[['a', true], ['b', false]], [['b', true]]]);
+  });
+
+  it('drops a leaving from what takeRecords gives too, and gives the rest', async () => {
+    // X watches a and b, Y watches a2 and b2. One scroll takes a and a2 off the screen and brings b and b2 on, so both
+    // have entries waiting at once: the one Chrome calls back first takes the other's with takeRecords.
+    const seen = await page.evaluate(async () => {
+      const settled = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 100))));
+      const ids = (entries: IntersectionObserverEntry[]) => entries.map((e): [string, boolean] => [e.target.id, e.isIntersecting]);
+      const calls: Record<'X' | 'Y', [string, boolean][][]> = { X: [], Y: [] };
+      const taken: [string, boolean][][] = [];
+      let scrolled = false;
+      const X: IntersectionObserver = new IntersectionObserver((entries) => {
+        calls.X.push(ids(entries));
+        if (scrolled) taken.push(ids(Y.takeRecords()));
+      });
+      const Y: IntersectionObserver = new IntersectionObserver((entries) => {
+        calls.Y.push(ids(entries));
+        if (scrolled) taken.push(ids(X.takeRecords()));
+      });
+      for (const [observer, id] of [[X, 'a'], [X, 'b'], [Y, 'a2'], [Y, 'b2']] as const) observer.observe(document.getElementById(id)!);
+      await settled();
+      scrolled = true;
+      scrollTo(0, document.getElementById('b')!.offsetTop);
+      await settled();
+      return { calls, taken };
+    });
+    expect(seen.calls.X[0]).toEqual([['a', true], ['b', false]]);
+    expect(seen.calls.Y[0]).toEqual([['a2', true], ['b2', false]]);
+    // One callback ran and took the other's entries: each observer's target that came in, once, and neither that left.
+    expect(seen.taken).toHaveLength(1);
+    const after = [...seen.calls.X.slice(1), ...seen.calls.Y.slice(1), ...seen.taken];
+    expect(after).toHaveLength(2);
+    expect(after).toEqual(expect.arrayContaining([[['b', true]], [['b2', true]]]));
+  });
+
+  it('stops watching a target it is told to unobserve, and all of them once it is disconnected', async () => {
+    const batches = await page.evaluate(async () => {
+      const settled = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 100))));
+      const batches: [string, boolean][][] = [];
+      const observer = new IntersectionObserver((entries) => batches.push(entries.map((e): [string, boolean] => [e.target.id, e.isIntersecting])));
+      for (const id of ['a', 'b', 'c']) observer.observe(document.getElementById(id)!);
+      await settled();
+      observer.unobserve(document.getElementById('c')!);
+      scrollTo(0, document.getElementById('b')!.offsetTop); // b and c come in, but c is no longer watched
+      await settled();
+      observer.disconnect();
+      scrollTo(0, 0); // a comes back, but nothing is watched
+      await settled();
+      return batches;
+    });
+    expect(batches).toEqual([[['a', true], ['b', false], ['c', false]], [['b', true]]]);
+  });
+});
+
+describe("opening a page whose card appears in view and goes again out of it (Framer's appear effect)", () => {
+  let site: Awaited<ReturnType<typeof serveFixtureSite>>;
+  beforeAll(async () => {
+    site = await serveFixtureSite();
+  });
+  afterAll(async () => {
+    await site.close();
+  });
+
+  it.each(['desktop', 'mobile'] as const)('leaves the card the scroll revealed shown, back at the top (%s)', async (viewport) => {
+    const opened = await openPage(browser, `${site.url}appear.html`, viewport, log);
+    try {
+      const card = await opened.page.evaluate(() => {
+        const cs = getComputedStyle(document.querySelector('.appear')!);
+        return { top: scrollY, opacity: cs.opacity, transform: cs.transform };
+      });
+      expect(card).toEqual({ top: 0, opacity: '1', transform: 'none' });
+    } finally {
+      await opened.page.close();
+    }
   });
 });

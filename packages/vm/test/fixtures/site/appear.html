@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ledgerline | Payments onchain</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Helvetica, sans-serif; background: #fcff52; color: #111111; }
+    section { min-height: 1100px; padding: 80px 32px; }
+    h1 { font-size: 48px; margin: 0 0 16px; }
+    h2 { font-size: 40px; margin: 0 0 16px; }
+    p { font-size: 20px; max-width: 640px; margin: 0 0 8px; }
+    /* Framer's appear effect: out of view the card waits faded out and lower down, in view it comes up. */
+    .appear { max-width: 640px; height: 200px; margin-top: 32px; padding: 16px; border: 1px solid #111111; opacity: 0; transform: translateY(150px); transition: opacity 0.2s, transform 0.2s; }
+    .appear.shown { opacity: 1; transform: none; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>Payments that settle in a second</h1>
+    <p>Send stablecoins to anyone, anywhere, for a fraction of a cent, and see them arrive before the page reloads.</p>
+  </section>
+  <section>
+    <h2>The numbers</h2>
+    <p>What the network does for the people who pay with it, every day of the week.</p>
+    <div class="appear">
+      <p>Avg gas fee</p>
+      <p>$0.0004 per payment</p>
+    </div>
+  </section>
+  <section>
+    <h2>Get started</h2>
+    <p>Open a wallet in a minute and make your first payment on the house.</p>
+  </section>
+  <script>
+    // The effect replays: the card is shown while it is in view, and hidden again once it leaves.
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) entry.target.classList.toggle('shown', entry.isIntersecting);
+    }, { threshold: 0.1 });
+    for (const card of document.querySelectorAll('.appear')) observer.observe(card);
+  </script>
+</body>
+</html>

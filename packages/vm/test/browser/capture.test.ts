@@ -265,6 +265,24 @@ describe('a scroll stage pinned over the screen that holds only figures, and a c
   });
 });
 
+describe("a page whose card appears in view and goes again out of it (Framer's appear effect)", () => {
+  const run = sharedCapture(() => ({ url: `${fixtureUrl}appear.html`, extraUrls: [], followDemoLinks: 0 }));
+
+  it('measures the card the scroll revealed on the full-page shots, taken back at the top, as on the shot of its section', () => {
+    const { site } = run;
+    const numbers = site.sections.find((s) => s.heading === 'The numbers')!;
+    for (const v of ['d', 'm']) {
+      for (const shotId of [`${v}-${numbers.id}`, `${v}-full`]) {
+        // The card (its short text holds a price) and its line with the price.
+        const prices = site.boxes.filter((b) => b.shotId === shotId && b.kind === 'price').map((b) => ({ text: b.text, sectionId: b.sectionId }));
+        expect(prices, shotId).toEqual(['Avg gas fee $0.0004 per payment', '$0.0004 per payment'].map((text) => ({ text, sectionId: numbers.id })));
+        // The card itself: 640 px wide at most, 200 px tall.
+        expect(site.blocks.filter((b) => b.shotId === shotId).map((b) => b.h), shotId).toEqual([400]);
+      }
+    }
+  });
+});
+
 describe('a site with a demo page, followed once as a link and once as an extra', () => {
   const run = sharedCapture(() => ({ url: fixtureUrl, extraUrls: [`${fixtureUrl}demo.html#again`], followDemoLinks: 2 }));
 

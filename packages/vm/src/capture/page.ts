@@ -30,6 +30,55 @@ export class UnreachableError extends Error {
 const NAME_SHIM = 'globalThis.__name = (fn) => fn;';
 
 /**
+ * Makes the IntersectionObservers of the page keep what they revealed: once an observer has reported a target in view,
+ * it never passes on that the target left it. Such an entry is dropped from what the callback gets and from what
+ * `takeRecords()` gives, and a callback left with no entry is not called. Every other entry passes as it is, the first
+ * report that a target is not in view yet included. Otherwise the observer is Chrome's own (it is a subclass of it):
+ * `instanceof`, `observe`, `unobserve`, `disconnect`, `takeRecords`, `root`, `rootMargin` and `thresholds` are the
+ * native ones, and the callback gets the observer itself.
+ *
+ * Why: a reveal effect that replays (Framer's appear effect) hides its content again when it leaves the screen, and the
+ * full-page shots are taken back at the top of the page: what the auto-scroll revealed would be blank in them, and no box
+ * could be measured on it. The trade-off: a page that acts when a target leaves the screen (pausing a video, toggling a
+ * sticky bar) acts as if it were still in view. That only touches the capture: the video is made from its pictures,
+ * never from the live site. A reveal tied to the scroll position rather than to an observer is not helped.
+ *
+ * Runs in the page before any script of it (see openPage), so every observer the page makes is one of these.
+ */
+export function inPageKeepRevealed(): void {
+  const Native = window.IntersectionObserver;
+  if (typeof Native !== 'function') return;
+  const nativeTakeRecords = Native.prototype.takeRecords;
+  const filters = new WeakMap<IntersectionObserver, (entries: IntersectionObserverEntry[]) => IntersectionObserverEntry[]>();
+  window.IntersectionObserver = class IntersectionObserver extends Native {
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      const reported = new WeakSet<Element>();
+      const keep = (entries: IntersectionObserverEntry[]): IntersectionObserverEntry[] =>
+        entries.filter((entry) => {
+          if (entry.isIntersecting) reported.add(entry.target);
+          return entry.isIntersecting || !reported.has(entry.target);
+        });
+      // A callback that is no function goes to Chrome as it is, and Chrome refuses it as it would.
+      super(
+        typeof callback === 'function'
+          ? function (this: IntersectionObserver, entries: IntersectionObserverEntry[], observer: IntersectionObserver) {
+              const kept = keep(entries);
+              if (kept.length > 0) callback.call(this, kept, observer);
+            }
+          : callback,
+        options,
+      );
+      filters.set(this, keep);
+    }
+
+    takeRecords(): IntersectionObserverEntry[] {
+      const records = nativeTakeRecords.call(this);
+      return filters.get(this)?.(records) ?? records;
+    }
+  };
+}
+
+/**
  * Chrome Headless Shell, the one Remotion downloads on the first run (and the render uses later), started as the
  * worker's own child: with an environment of its own, so it cannot see the order token.
  */
@@ -164,8 +213,9 @@ export type OpenedPage = { page: Page; height: number; status: number };
 
 /**
  * Opens `url` at a viewport and leaves it ready to read: network idle, fonts loaded, helpers in the page, cookie banner
- * answered, overlays off, scrolled to the bottom and back for what loads on scroll. `status` is the HTTP status of the
- * page. Throws `UnreachableError` if the address cannot be reached at all.
+ * answered, overlays off, scrolled to the bottom and back for what loads on scroll, and what that revealed still shown
+ * (see inPageKeepRevealed). `status` is the HTTP status of the page. Throws `UnreachableError` if the address cannot be
+ * reached at all.
  */
 export async function openPage(browser: Browser, url: string, viewport: ViewportName, log: CaptureLog): Promise<OpenedPage> {
   const vp = VIEWPORTS[viewport];
@@ -173,6 +223,7 @@ export async function openPage(browser: Browser, url: string, viewport: Viewport
   const page = await browser.newPage();
   try {
     await page.evaluateOnNewDocument(NAME_SHIM);
+    await page.evaluateOnNewDocument(inPageKeepRevealed);
     await page.setUserAgent(viewport === 'mobile' ? PHONE_UA : CHROME_UA);
     await page.setViewport(vp);
     let status = 200;
