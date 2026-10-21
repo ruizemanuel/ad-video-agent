@@ -1,4 +1,4 @@
-import { FORMATS, type Block, type Box, type Scene, type Shot, type SiteData } from '../src/index';
+import { blockOf, FORMATS, type Block, type Box, type Format, type Scene, type Shot, type SiteData } from '../src/index';
 import { describe, expect, it } from 'vitest';
 import {
   cameraAt,
@@ -63,11 +63,15 @@ const inFrame = (target: Shot, at: { x: number; y: number }, camera: ReturnType<
   return { x: stage.cardLeft + placed.x + at.x * placed.scale, y: stage.cardTop + placed.y + at.y * placed.scale };
 };
 
-/** The part of the shot the card shows above the platform UI, with the camera there: its top and bottom, in shot pixels. */
+/**
+ * The part of the shot the card shows above the platform UI, with the camera there: its top and bottom, in shot pixels;
+ * and `end`, where the bottom edge of the frame falls on the shot (the card runs on under the platform UI to it).
+ */
 const viewOf = (target: Shot, camera: Camera, boxes: Box[], format: '9x16' | '16x9' | '4x5' = '9x16') => {
   const placed = placeShot(target, camera, format, boxes);
   const top = -placed.y / placed.scale;
-  return { top, bottom: top + (2 * stageLayout(format).focusY) / placed.scale };
+  const stage = stageLayout(format);
+  return { top, bottom: top + (2 * stage.focusY) / placed.scale, end: top + stage.cardH / placed.scale };
 };
 // A view that comes back from placeShot is off by float noise (562.0000000000001 for a top flush on 562).
 const EPS = 1e-6;
@@ -75,6 +79,8 @@ const EPS = 1e-6;
 const slices = (view: { top: number }, r: { y: number; h: number; clippedTop?: true }): boolean =>
   (r.clippedTop === true || r.y < view.top - EPS) && r.y + r.h > view.top + EPS;
 const shows = (view: { top: number; bottom: number }, r: { y: number; h: number }): boolean => r.y >= view.top - EPS && r.y + r.h <= view.bottom + EPS;
+/** Whether the bottom edge of the frame cuts through the region (a box never runs past the end of its shot). */
+const slicesEnd = (view: { end: number }, r: { y: number; h: number }): boolean => r.y < view.end - EPS && r.y + r.h > view.end + EPS;
 
 describe('the camera on a UI shot', () => {
   it('never zooms a phone shot past 1.12x', () => {
@@ -715,15 +721,220 @@ describe('the take UiFocus films', () => {
 
 describe('the top edge rule on a long page', () => {
   it('weighs the whole page when no top near the target is clean: a card beside the target that spans every view of it is left whole', () => {
-    // A tall card down the left of the page, and a price beside it: every view that shows the price cuts the card.
+    // A tall card down the left of the page, and a picture beside it: every view that shows the picture cuts the card. (A
+    // picture, so that the bottom edge of the frame gives no tops of its own here: a heading, a price or a button would.)
     const card = block('m-full', 0, 600, 300, 2000);
-    const price = box('m-full', 'price', '$ 4.500', 400, 1500, 300, 60);
-    const landing = focusLanding(price, phonePage, '9x16', [price], [card]);
-    const view = viewOf(phonePage, landing.camera, [price]);
-    // The top edge goes up to 24 px above the card, the clean top nearest to where the camera aimed, and the price gives way.
+    const picture = box('m-full', 'image', '', 400, 1500, 300, 60);
+    const landing = focusLanding(picture, phonePage, '9x16', [picture], [card]);
+    const view = viewOf(phonePage, landing.camera, [picture]);
+    // The top edge goes up to 24 px above the card, the clean top nearest to where the camera aimed, and the picture gives way.
     expect(slices(view, card)).toBe(false);
     expect(view.top).toBeCloseTo(card.y - 24);
-    expect(shows(view, price)).toBe(false);
+    expect(shows(view, picture)).toBe(false);
     expect(landing.clean).toBe(false);
+  });
+});
+
+describe('the bottom edge of the frame', () => {
+  // The card runs on under the platform UI to the bottom of the frame, and the review sees the whole frame: a heading the
+  // bottom edge falls through is sliced in the key frame, as in paid run 9 (celo.org: a UiScroll to the $6.2B card ended
+  // in the middle of "1 sec." and "$0.0004").
+  const formats = ['9x16', '4x5', '16x9'] as const;
+  const pieces = ['UiFocus', 'UiScroll'] as const;
+  type Piece = (typeof pieces)[number];
+  const landingOf = (piece: Piece) => (piece === 'UiFocus' ? focusLanding : scrollLanding);
+  const moveOf = (piece: Piece) => (piece === 'UiFocus' ? focusMove : scrollMove);
+  // A long page of the viewport the format films, whose content is a column x..x+w (on a desktop page its title tells the
+  // camera so), with a price halfway down.
+  const pageFor = (format: Format) => {
+    const desktop = format === '16x9';
+    const page = shot(desktop ? 'd-full' : 'm-full', desktop ? 'desktop' : 'mobile', 8000);
+    const [x, w] = desktop ? [400, 2080] : [40, 700];
+    const price = box(page.id, 'price', '$ 4.500', x + 40, 3000, 300, 60);
+    return { page, x, w, price, boxes: [box(page.id, 'heading', 'Tiendita', x, 400, w, 60), price] };
+  };
+
+  for (const format of formats) {
+    for (const piece of pieces) {
+      it(`${piece} in ${format}: moves off a heading the bottom edge would slice, with both edges clear and the target whole`, () => {
+        const { page, x, w, price, boxes: plain } = pageFor(format);
+        const first = landingOf(piece)(price, page, format, plain);
+        expect(first.clean).toBe(true);
+        // A heading right where the bottom edge of that frame falls.
+        const heading = box(page.id, 'heading', 'Simple pricing', x, viewOf(page, first.camera, plain, format).end - 30, w, 60);
+        const boxes = [...plain, heading];
+
+        const landed = landingOf(piece)(price, page, format, boxes);
+        const view = viewOf(page, landed.camera, boxes, format);
+        expect(landed.camera.y).not.toBeCloseTo(first.camera.y);
+        expect(boxes.filter((b) => slices(view, b) || slicesEnd(view, b))).toEqual([]);
+        expect(shows(view, price)).toBe(true);
+        expect(landed.clean).toBe(true);
+        expect(moveOf(piece)(price, page, format, boxes).to).toEqual(landed.camera);
+      });
+    }
+  }
+
+  it('lets a picture or a card run off the bottom of the frame: the card the shot is in is drawn bleeding off it', () => {
+    for (const format of formats) {
+      for (const piece of pieces) {
+        const { page, x, w, price, boxes } = pageFor(format);
+        const first = landingOf(piece)(price, page, format, boxes);
+        const { bottom, end } = viewOf(page, first.camera, boxes, format);
+        // Both begin under the platform UI and run on past the bottom of the frame.
+        const picture = box(page.id, 'image', '', x, bottom + 10, w, end - bottom + 200);
+        const card = block(page.id, x, bottom + 5, w, end - bottom + 300);
+        const landed = landingOf(piece)(price, page, format, [...boxes, picture], [card]);
+        expect(landed, `${piece} ${format}`).toEqual(first);
+        const view = viewOf(page, landed.camera, boxes, format);
+        expect([slicesEnd(view, picture), slicesEnd(view, card)]).toEqual([true, true]);
+      }
+    }
+  });
+
+  it('is not clean when every landing that keeps the target whole has a heading at its bottom edge', () => {
+    // Headings stacked under the price, each overlapping the next: every frame that shows the price whole ends in one.
+    const price = box('m-full', 'price', '$ 4.500', 80, 3000, 290, 40);
+    const stack = Array.from({ length: 20 }, (_, k) => box('m-full', 'heading', `Step ${k + 1}`, 40, 3300 + 50 * k, 700, 60));
+    const boxes = [price, ...stack];
+    const shop = site([phonePage], boxes);
+    for (const piece of pieces) {
+      const landed = landingOf(piece)(price, phonePage, '9x16', boxes);
+      expect(landed.clean, piece).toBe(false);
+      // As at the top edge, the target gives way rather than an edge cut through a heading.
+      const view = viewOf(phonePage, landed.camera, boxes);
+      expect(boxes.filter((b) => slices(view, b) || slicesEnd(view, b))).toEqual([]);
+      expect(shows(view, price)).toBe(false);
+      expect(framesCleanly(shop, { piece, shotId: 'm-full', boxIndex: 0 }, '9x16'), piece).toBe(false);
+    }
+    // With the headings apart, the same price frames cleanly.
+    const apart = [price, ...stack.filter((_, k) => k % 2 === 0)];
+    for (const piece of pieces) expect(framesCleanly(site([phonePage], apart), { piece, shotId: 'm-full', boxIndex: 0 }, '9x16'), piece).toBe(true);
+  });
+});
+
+describe('the edge rules, against a search of every top', () => {
+  // A reference written to be read rather than fast: every top the camera weighs (where it aims, the top of the shot and
+  // the lowest top, 24 px clear of each box and card or flush with it, and the same for the bottom edge of the frame
+  // against each heading, price and button), each ranked against every region. The camera weighs the tops a window at a
+  // time (see avoidTopCut); on layouts made to tempt the windows' edges (regions 0 to 3 px tall, regions flush or 23 to
+  // 25 px apart or overlapping, regions clipped at the top of a one-screen shot, panels around cards), each piece has to
+  // land where the reference does, and be as clean. The reference takes the scale from the landing (how far UiFocus zooms
+  // is not what it checks), and aims as the pieces do: at the card that holds the target when the frame holds it whole,
+  // else UiScroll at the target and UiFocus at what a heading titles (see focusRegion).
+  const TOLERANCE = 0.5;
+  const MARGIN = 24;
+  type Piece = 'UiFocus' | 'UiScroll';
+  type Region = { x: number; y: number; w: number; h: number; clippedTop?: true };
+  const holds = (outer: Region, inner: Region): boolean =>
+    outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.w >= inner.x + inner.w && outer.y + outer.h >= inner.y + inner.h;
+  const cutTop = (r: Region, top: number): boolean => (r.clippedTop === true || r.y < top - TOLERANCE) && r.y + r.h > top + TOLERANCE;
+  const cutEnd = (r: Region, end: number): boolean => r.y < end - TOLERANCE && r.y + r.h > end + TOLERANCE;
+  const better = (a: number[], b: number[]): boolean => {
+    const i = a.findIndex((value, n) => value !== b[n]);
+    return i >= 0 && a[i]! < b[i]!;
+  };
+
+  /**
+   * Where `piece` lands on `box` at `scale` (card pixels per shot pixel), the top of its view, by the reference: and
+   * whether that landing is clean.
+   */
+  const reference = (piece: Piece, box: Box, scale: number, page: Shot, format: Format, boxes: readonly Box[], blocks: readonly Block[]): { top: number; clean: boolean } => {
+    const { cardW, cardH, focusY } = stageLayout(format);
+    const visible = (2 * focusY) / scale;
+    const frame = cardH / scale;
+    const card = blockOf(blocks, page.id, box);
+    const aim: Region = card && card.h * scale <= 0.9 * 2 * focusY && card.w * scale <= cardW ? card : box;
+    const aimedAt: Region = aim === box && piece === 'UiFocus' ? focusRegion(box) : aim;
+    const ownBoxes = boxes.filter((b) => b.shotId === page.id);
+    const ownBlocks = blocks.filter((b) => b.shotId === page.id);
+    const own: Region[] = [...ownBoxes, ...ownBlocks];
+    const kept: Region[] = [...ownBoxes, ...ownBlocks.filter((b) => !(b !== aim && holds(b, aim)))];
+    const texts = ownBoxes.filter((b) => b.kind !== 'image');
+    const lowest = Math.max(0, page.height - frame);
+    const start = Math.min(Math.max(aimedAt.y + aimedAt.h / 2 - focusY / scale, 0), lowest);
+    const tops: [number, boolean][] = [[start, false], [0, false], [lowest, false]];
+    for (const r of own) tops.push([r.y - MARGIN, false], [r.y + r.h + MARGIN, false]);
+    for (const r of texts) tops.push([r.y - MARGIN - frame, false], [r.y + r.h + MARGIN - frame, false]);
+    for (const r of own) tops.push([r.y, true], [r.y + r.h, true]);
+    for (const r of texts) tops.push([r.y - frame, true], [r.y + r.h - frame, true]);
+    let best: { top: number; rank: number[] } | undefined;
+    for (const [top, flush] of tops) {
+      if (top < 0 || top > lowest) continue;
+      const end = top + frame;
+      const cuts = kept.filter((r) => cutTop(r, top)).length + (end < page.height - TOLERANCE ? texts.filter((r) => cutEnd(r, end)).length : 0);
+      const whole = !cutTop(aim, top) && aim.y >= top - TOLERANCE && aim.y + aim.h <= top + visible + TOLERANCE;
+      const hidden = Math.min(aim.h, Math.max(0, top - aim.y) + Math.max(0, aim.y + aim.h - (top + visible)));
+      const rank = [cuts, whole ? 0 : 1, flush ? 1 : 0, hidden, Math.abs(top - start)];
+      if (!best || better(rank, best.rank)) best = { top, rank };
+    }
+    return { top: best!.top, clean: best!.rank[0] === 0 && best!.rank[1] === 0 };
+  };
+
+  // A park-miller generator, so that every run tries the same layouts.
+  const seeded = (seed: number) => () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const KINDS = ['heading', 'price', 'cta', 'image'] as const;
+
+  /** A page or a one-screen shot with a column of boxes and cards, some of them close, some thin, some in panels. */
+  const layout = (rand: () => number): { page: Shot; boxes: Box[]; blocks: Block[] } => {
+    const desktop = rand() < 0.3;
+    const screen = rand() < 0.25;
+    const id = `${desktop ? 'd' : 'm'}-${screen ? 's2' : 'full'}`;
+    const page = shot(id, desktop ? 'desktop' : 'mobile', screen ? (desktop ? 1800 : 1688) : 1500 + Math.floor(rand() * 9000), screen ? 's2' : undefined);
+    const boxes: Box[] = [];
+    const blocks: Block[] = [];
+    const heights = [0, 1, 2, 3, 40, 84, 160, 300, 700];
+    const gaps = [0, 23, 24, 25, -10, 60, 300, 900];
+    let y = screen && rand() < 0.5 ? 0 : Math.floor(rand() * 300);
+    for (let n = 3 + Math.floor(rand() * 26); n > 0; n -= 1) {
+      const h = heights[Math.floor(rand() * heights.length)]! + (rand() < 0.3 ? rand() * 10 : 0);
+      if (y + h > page.height) break;
+      const x = Math.floor(rand() * page.width * 0.5);
+      const w = Math.max(20, Math.floor(rand() * (page.width - x)));
+      const clippedTop = y === 0 && screen && rand() < 0.7 ? { clippedTop: true as const } : {};
+      if (rand() < 0.3) blocks.push({ shotId: id, x, y, w, h, ...clippedTop });
+      else boxes.push({ shotId: id, kind: KINDS[Math.floor(rand() * KINDS.length)]!, text: `Box ${n}`, x, y, w, h, ...clippedTop });
+      // Now and then a panel around what came before.
+      if (rand() < 0.08) blocks.push({ shotId: id, x: 0, y: Math.max(0, y - 400), w: page.width, h: Math.min(page.height, y + h + 40) - Math.max(0, y - 400) });
+      y = Math.max(0, y + (rand() < 0.5 ? h : 0) + gaps[Math.floor(rand() * gaps.length)]!);
+    }
+    return { page, boxes, blocks };
+  };
+
+  // Where an edge of a region lies exactly half a pixel from an edge of the frame, the tolerance decides by a hair, and so
+  // does float noise: the view placeShot gives back is the camera's top give or take 1e-12 (see EDGE_TOLERANCE).
+  const onTolerance = (edge: number, regions: readonly Region[]): boolean =>
+    regions.some((r) => [r.y, r.y + r.h].some((at) => Math.abs(Math.abs(at - edge) - TOLERANCE) < 1e-6));
+
+  it('lands each piece where the reference does, in every format, on 500 layouts', () => {
+    const rand = seeded(20261021);
+    const differences: string[] = [];
+    let compared = 0;
+    let ties = 0;
+    for (let k = 0; k < 500; k += 1) {
+      const { page, boxes, blocks } = layout(rand);
+      for (const format of ['9x16', '4x5', '16x9'] as const) {
+        for (const piece of ['UiScroll', 'UiFocus'] as const) {
+          for (const box of boxes) {
+            const landed = (piece === 'UiFocus' ? focusLanding : scrollLanding)(box, page, format, boxes, blocks);
+            const { scale } = placeShot(page, landed.camera, format, boxes);
+            const want = reference(piece, box, scale, page, format, boxes, blocks);
+            const { top, end } = viewOf(page, landed.camera, boxes, format);
+            compared += 1;
+            if (Math.abs(top - want.top) > 1e-6) differences.push(`layout ${k} ${format} ${piece} box ${boxes.indexOf(box)}: top ${top} against ${want.top}`);
+            else if (landed.clean !== want.clean) {
+              if (onTolerance(top, [...boxes, ...blocks]) || onTolerance(end, boxes)) ties += 1;
+              else differences.push(`layout ${k} ${format} ${piece} box ${boxes.indexOf(box)}: clean ${landed.clean} against ${want.clean}`);
+            }
+          }
+        }
+      }
+    }
+    expect(differences.slice(0, 5)).toEqual([]);
+    expect(compared).toBeGreaterThan(20_000);
+    expect(ties).toBeLessThan(compared / 1000);
   });
 });

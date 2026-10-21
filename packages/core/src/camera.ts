@@ -3,7 +3,8 @@
 // holds a point of the shot at the card's focus point, the middle of the part of the card the platform UI leaves visible.
 // Rules from the prueba (spec 6.5): frame the content and not the margins, zoom a phone shot 1.12x at most, aim at the
 // page's card (block) that holds the target or else a heading at what it titles, never let the top edge slice a box or a
-// block, and take the full page when a one-screen shot cannot center the target.
+// block nor the bottom edge of the frame a heading, a price or a button, and take the full page when a one-screen shot
+// cannot center the target.
 import type { Scene } from './edl';
 import { FORMATS, PREFERRED_VIEWPORT, type Format } from './formats';
 import { blockOf } from './product';
@@ -71,6 +72,9 @@ const BLOCK_FIT = 0.9;
 const TOP_CUT_MARGIN = 24;
 // How far from a window of tops a region can be and still give a top in it (see avoidTopCut): its margin, and a pixel more.
 const SOURCE_REACH = TOP_CUT_MARGIN + 1;
+// The boxes the bottom edge of the frame must not cut: what reads as text. A picture or a card running off the bottom is
+// the bleed the card is drawn with.
+const TEXT_KINDS: ReadonlySet<Box['kind']> = new Set(['heading', 'price', 'cta']);
 
 // ---------- which shot ----------
 
@@ -241,6 +245,13 @@ const holds = (outer: Region, inner: Region): boolean =>
 const cutAt = (region: Region, top: number): boolean =>
   (region.clippedTop === true || region.y < top - EDGE_TOLERANCE) && region.y + region.h > top + EDGE_TOLERANCE;
 
+/**
+ * Whether the bottom edge of the frame, at `end` on a shot `height` pixels tall, cuts through the region: one that
+ * begins above it and ends below it. An edge at the end of the shot, or past it, cuts nothing: the shot ends there.
+ */
+const cutBelow = (region: Region, end: number, height: number): boolean =>
+  end < height - EDGE_TOLERANCE && region.y < end - EDGE_TOLERANCE && region.y + region.h > end + EDGE_TOLERANCE;
+
 /** How many of the sorted `values` are below `limit` (`orEqual`: at most `limit`). */
 const countBelow = (values: readonly number[], limit: number, orEqual = false): number => {
   let low = 0;
@@ -288,6 +299,9 @@ const obstacles = (shot: Shot, boxes: readonly Box[], blocks: readonly Block[], 
   ...blocks.filter((b) => b.shotId === shot.id && !(target && b !== target && holds(b, target))),
 ];
 
+/** What the bottom edge of the frame must not cut: the headings, prices and buttons of the shot (see TEXT_KINDS). */
+const textsOf = (shot: Shot, boxes: readonly Box[]): Box[] => boxes.filter((b) => b.shotId === shot.id && TEXT_KINDS.has(b.kind));
+
 // How a top for the view ranks, best first, compared item by item (see avoidTopCut).
 type TopRank = [cuts: number, notWhole: number, flush: number, hidden: number, distance: number];
 const better = (a: TopRank, b: TopRank): boolean => {
@@ -310,29 +324,35 @@ type TopCut = {
 
 /**
  * Moves the camera so that the top edge of the view cuts through no box (a heading cut mid-glyph reads as a bug) and no
- * block (the last lines of the card above read as a cut card), see obstacles and cutAt, on the view the frame really
- * shows: its top never goes above the top of the shot nor below `lowest`, so a camera aimed lower is measured where
- * placeShot puts it.
+ * block (the last lines of the card above read as a cut card), see obstacles and cutAt, and the bottom edge of the frame
+ * through no heading, price or button (see textsOf and cutBelow: the card runs on under the platform UI to that edge, and
+ * the review sees the whole frame), on the view the frame really shows: its top never goes above the top of the shot nor
+ * below `lowest`, so a camera aimed lower is measured where placeShot puts it.
  *
- * The tops it weighs are where the camera aims (held within those limits), the two limits, and for each box and block of
- * the shot the one that shows it whole and the one that pushes it out of view, 24 px clear of it, or else flush with
- * it (cards closer together than that). Of those, the one that cuts the fewest; then one that keeps `target` whole above
- * the platform UI; then one 24 px clear; then the one that hides the least of the target; then the nearest to where the
- * camera aims. When no clean top keeps the target whole (it sits too near the end of the shot, or is taller than the
- * view), the target gives way, as little as it can.
+ * The tops it weighs are where the camera aims (held within those limits), the two limits, for each box and block of the
+ * shot the one that shows it whole and the one that pushes it out of view, 24 px clear of it, or else flush with it
+ * (cards closer together than that), and the same at the bottom edge for each heading, price and button. Of those, the
+ * one that cuts the fewest, at both edges; then one that keeps `target` whole above the platform UI; then one 24 px
+ * clear; then the one that hides the least of the target; then the nearest to where the camera aims. When no clean top
+ * keeps the target whole (it sits too near the end of the shot, is taller than the view, or every view that shows it
+ * ends in a heading), the target gives way, as little as it can.
  *
  * A long page has hundreds of boxes, so the tops are weighed a window at a time, against the regions near the window
- * alone. A top outside a window that holds every top showing part of the target keeps none of it whole and hides all of
- * it; and one outside a window around where the camera aims is farther from there than the window reaches. So when the
- * best top of a window ranks at least as well as the best a top outside it could, it is the best of all. The first window
- * is the tops that show part of the target (or just where the camera aims, with no target); each next one adds a reach
- * around where the camera aims, doubled each time, until it holds every top.
+ * alone (those near the window moved down by the frame, for the bottom edge). A top outside a window that holds every top
+ * showing part of the target keeps none of it whole and hides all of it; and one outside a window around where the camera
+ * aims is farther from there than the window reaches. So when the best top of a window ranks at least as well as the best
+ * a top outside it could, it is the best of all. The first window is the tops that show part of the target (or just where
+ * the camera aims, with no target); each next one adds a reach around where the camera aims, doubled each time, until it
+ * holds every top.
  */
 const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowest = lowestTop(shot, scale, format) }: TopCut): Camera => {
-  const { focusY } = stageLayout(format);
+  const { cardH, focusY } = stageLayout(format);
   const visible = (2 * focusY) / scale;
+  // How much of the shot the frame shows, down to its bottom edge.
+  const frame = cardH / scale;
   const own: Region[] = [...boxes.filter((r) => r.shotId === shot.id), ...blocks.filter((r) => r.shotId === shot.id)];
   const kept = obstacles(shot, boxes, blocks, target);
+  const texts = textsOf(shot, boxes);
   const aimed = camera.y - focusY / scale;
   const start = Math.min(Math.max(aimed, 0), lowest);
   const hidden = (top: number): number => (target ? Math.min(target.h, Math.max(0, top - target.y) + Math.max(0, target.y + target.h - (top + visible))) : 0);
@@ -344,12 +364,18 @@ const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowes
     Math.abs(top - start),
   ];
   /**
-   * The best top in [from, to], weighing only the regions whose tops can fall there (`sources`, by the margins of the tops
-   * each gives) and the regions a top there can cut (counted by `cuts`). Undefined when no top lies there.
+   * The best top in [from, to], weighing only the regions whose tops can fall there (`sources` for the top edge and
+   * `below` for the bottom edge, by the margins of the tops each gives) and the regions a top there can cut, at either
+   * edge (counted by `cuts`). Undefined when no top lies there.
    */
   const bestIn = (from: number, to: number): { top: number; rank: TopRank } | undefined => {
     const sources = own.filter((r) => r.y + r.h >= from - SOURCE_REACH && r.y <= to + SOURCE_REACH);
-    const cuts = cutCounter(kept.filter((r) => r.y + r.h > from && (r.clippedTop === true || r.y < to)));
+    const below = texts.filter((r) => r.y + r.h >= from + frame - SOURCE_REACH && r.y <= to + frame + SOURCE_REACH);
+    const cutsAtTop = cutCounter(kept.filter((r) => r.y + r.h > from && (r.clippedTop === true || r.y < to)));
+    // The bottom edge of a frame from `top` cuts what its top edge would cut at `top + frame`, but for a text the capture
+    // clipped at the top of the shot: it begins at 0, above any bottom edge, so it is counted as one that begins above it.
+    const cutsAtEnd = cutCounter(texts.filter((r) => r.y + r.h > from + frame && r.y < to + frame));
+    const cuts = (top: number): number => cutsAtTop(top) + (top + frame < shot.height - EDGE_TOLERANCE ? cutsAtEnd(top + frame) : 0);
     const low = Math.max(0, from);
     const high = Math.min(lowest, to);
     let winner: { top: number; rank: TopRank } | undefined;
@@ -366,9 +392,17 @@ const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowes
       weigh(r.y - TOP_CUT_MARGIN, false);
       weigh(r.y + r.h + TOP_CUT_MARGIN, false);
     }
+    for (const r of below) {
+      weigh(r.y - TOP_CUT_MARGIN - frame, false);
+      weigh(r.y + r.h + TOP_CUT_MARGIN - frame, false);
+    }
     for (const r of sources) {
       weigh(r.y, true);
       weigh(r.y + r.h, true);
+    }
+    for (const r of below) {
+      weigh(r.y - frame, true);
+      weigh(r.y + r.h - frame, true);
     }
     return winner;
   };
@@ -395,16 +429,22 @@ const avoidTopCut = ({ camera, scale, shot, format, boxes, blocks, target, lowes
 /**
  * Where a UI scene's camera lands, and whether the landing is clean: on the view the frame shows (see placeShot), the top
  * edge cuts nothing it must not (see obstacles; what the capture clipped at the top of a one-screen shot counts as cut
- * by a view from there), and the target (the card the camera aims at, else the element) is whole above the platform UI.
- * Edges within half a shot pixel count as on the top of the view.
+ * by a view from there), the bottom edge of the frame cuts no heading, price or button (see textsOf and cutBelow), and
+ * the target (the card the camera aims at, else the element) is whole above the platform UI. Edges within half a shot
+ * pixel count as on the edge.
  */
 export type Landing = { camera: Camera; clean: boolean };
 
 const landing = (shot: Shot, camera: Camera, format: Format, boxes: readonly Box[], blocks: readonly Block[], target: Region | undefined): Landing => {
+  const { cardH, focusY } = stageLayout(format);
   const placed = placeShot(shot, camera, format, boxes);
   const top = -placed.y / placed.scale;
-  const visible = (2 * stageLayout(format).focusY) / placed.scale;
-  const clean = obstacles(shot, boxes, blocks, target).every((r) => !cutAt(r, top)) && wholeIn(target, top, visible);
+  const visible = (2 * focusY) / placed.scale;
+  const end = top + cardH / placed.scale;
+  const clean =
+    obstacles(shot, boxes, blocks, target).every((r) => !cutAt(r, top)) &&
+    textsOf(shot, boxes).every((r) => !cutBelow(r, end, shot.height)) &&
+    wholeIn(target, top, visible);
   return { camera, clean };
 };
 
@@ -451,8 +491,9 @@ export const focusLanding = (box: Box | undefined, shot: Shot, format: Format, b
  * whole (see targetBlock), else at the element (see focusRegion). It zooms until the target takes 78% of the card's
  * width or 60% of its height, within the limits of the shot's viewport, and pans sideways only when the view gets
  * narrower than most of the content. The top edge rule (see avoidTopCut) then moves the landing so that the top of the
- * view the frame shows slices no box and no card, and the opening follows the landing. `blocks` are the cards of the
- * capture: a capture without them aims at the element, and the top edge rule has the boxes alone to go by.
+ * view the frame shows slices no box and no card, nor the bottom edge of the frame a heading, a price or a button, and
+ * the opening follows the landing. `blocks` are the cards of the capture: a capture without them aims at the element,
+ * and the top edge rule has the boxes alone to go by.
  */
 export const focusMove = (box: Box | undefined, shot: Shot, format: Format, boxes: readonly Box[] = [], blocks: readonly Block[] = []): Move => {
   const { cardW, cardH } = stageLayout(format);
@@ -506,8 +547,9 @@ export type Framing = 'clean' | 'unclean' | 'missing';
 /**
  * How a UI scene frames its target in `format`, in the frame the review sees: where the piece's move lands, on the take
  * the format films (see focusShot and scrollShot, which may leave the director's shot for its full page), on the view
- * placeShot shows. `clean` as Landing says: the top edge cuts no box and no card, and the target (the card the camera aims
- * at, else the box) is whole above the platform UI; `unclean` otherwise. `missing` when the pick names no box of a shot,
+ * placeShot shows. `clean` as Landing says: the top edge cuts no box and no card, the bottom edge of the frame no heading,
+ * price or button, and the target (the card the camera aims at, else the box) is whole above the platform UI; `unclean`
+ * otherwise. `missing` when the pick names no box of a shot,
  * and for a scroll whose full page has no element like the box (it would land on no target).
  */
 export const framingOf = (site: SiteData, { piece, shotId, boxIndex }: UiPick, format: Format): Framing => {

@@ -144,8 +144,8 @@ const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, bann
 // A UiFocus or a UiScroll films the page: its target is a box of the shot, and the box has to be product UI, because a
 // text card (a feature, a "why us" section) filmed under a caption reads as the product the caption talks about. The
 // camera has to frame it cleanly in the main video, too (see framesCleanly): near the end of a short page the top edge
-// would cut a card or the target would sink under the platform UI, which the key frame review blocks and no fix of the
-// caption can mend.
+// would cut a card or the target would sink under the platform UI, and among stacked headings the bottom edge of the
+// frame would slice one, which the key frame review blocks and no fix of the caption can mend.
 const checkShot = (path: string, scene: Scene, site: SiteData, report: Report): void => {
   const shot = site.shots.find((s) => s.id === scene.shotId);
   const target = shot && scene.boxIndex !== undefined ? site.boxes.filter((b) => b.shotId === shot.id)[scene.boxIndex] : undefined;
@@ -169,7 +169,7 @@ const checkShot = (path: string, scene: Scene, site: SiteData, report: Report): 
     const detail =
       framing === 'missing'
         ? `${scene.piece} cannot scroll to box ${scene.boxIndex} of ${shot.id}: the full page it scrolls in ${MAIN_FORMAT} has no element of the same kind and text; aim at a box of a full page (an id ending in -full) with product: true`
-        : `${scene.piece} cannot frame box ${scene.boxIndex} of ${shot.id} cleanly in ${MAIN_FORMAT} (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`;
+        : `${scene.piece} cannot frame box ${scene.boxIndex} of ${shot.id} cleanly in ${MAIN_FORMAT} (a card would be cut at the top, a heading, price or button at the bottom edge, or the target hidden under the platform UI): aim at another box with product: true`;
     report(path, 'structure', `${detail}${orFocus}`);
   }
 };

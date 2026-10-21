@@ -420,6 +420,21 @@ describe('siteForModel', () => {
       expect(flags(view, 'm-s7')).toEqual([true, true, true, false]);
     });
 
+    it('is false for a product box whose every framing ends in a heading at the bottom edge of the frame', () => {
+      // A price over headings stacked so close that they overlap, on a full phone page: every frame that shows the price
+      // whole would slice one at its bottom edge. With every other heading gone, the same price frames cleanly.
+      const price: SiteData['boxes'][number] = { shotId: 'm-full', sectionId: 's7', kind: 'price', text: '$ 4.500', x: 80, y: 3000, w: 290, h: 40 };
+      const stack = Array.from({ length: 20 }, (_, k): SiteData['boxes'][number] => ({ shotId: 'm-full', sectionId: 's7', kind: 'heading', text: `Paso ${k + 1}`, x: 40, y: 3300 + 50 * k, w: 700, h: 60 }));
+      const page = (boxes: SiteData['boxes']): SiteData => ({
+        ...site,
+        shots: [{ id: 'm-full', file: 'media/m-full.png', viewport: 'mobile', dpr: 2, width: 780, height: 6000 }],
+        boxes,
+      });
+      expect(isProductTarget(page([price, ...stack]), 'm-full', 0)).toBe(true);
+      expect(flags(page([price, ...stack]), 'm-full')[0]).toBe(false);
+      expect(flags(page([price, ...stack.filter((_, k) => k % 2 === 0)]), 'm-full')[0]).toBe(true);
+    });
+
     it('computes the flags once per site object, for every model site an order builds from it', () => {
       const view = textOnly(undefined, [{ shotId: 'm-s7', sectionId: 's7', kind: 'price', text: '$ 4.500', x: 80, y: 700, w: 300, h: 60 }]);
       const flags = productFlags(view);

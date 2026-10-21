@@ -343,7 +343,7 @@ describe('validateEdl: structure', () => {
     const ui = (piece: 'UiFocus' | 'UiScroll', shotId: string, boxIndex: number): Case =>
       inBody({ piece, beats: 4, shotId, boxIndex, lines: [framing('Mirá')] }, store);
     const unframeable = (piece: string, boxIndex: number, shotId: string) =>
-      `${piece} cannot frame box ${boxIndex} of ${shotId} cleanly in 9x16 (a card would be cut at the top or the target hidden under the platform UI): aim at another box with product: true`;
+      `${piece} cannot frame box ${boxIndex} of ${shotId} cleanly in 9x16 (a card would be cut at the top, a heading, price or button at the bottom edge, or the target hidden under the platform UI): aim at another box with product: true`;
 
     it("reports run 5's UiFocus, whose target cannot get above the platform UI without a card cut at the top, with what the corrector can do", () => {
       // "$ 3.000 Agregar" on the screen of s15: UiFocus takes the full page, where its card stays under the platform UI.
@@ -396,6 +396,26 @@ describe('validateEdl: structure', () => {
             'UiScroll cannot scroll to box 0 of x2-m-s1: the full page it scrolls in 9x16 has no element of the same kind and text; aim at a box of a full page (an id ending in -full) with product: true, or make it a UiFocus on this box',
         },
       ]);
+    });
+
+    // A price over headings stacked so close that they overlap: every frame that shows the price whole ends in one of them,
+    // and its bottom edge would slice that heading, as run 9's did "1 sec." and "$0.0004".
+    const stacked: SiteData = {
+      ...siteShop,
+      shots: [...siteShop.shots, { id: 'x3-m-full', file: 'media/x3-m-full.png', viewport: 'mobile', dpr: 2, width: 780, height: 6000 }],
+      boxes: [
+        ...siteShop.boxes,
+        { shotId: 'x3-m-full', sectionId: 's2', kind: 'price', text: '$ 4.500', x: 80, y: 3000, w: 290, h: 40 },
+        ...Array.from({ length: 20 }, (_, k): Box => ({ shotId: 'x3-m-full', sectionId: 's2', kind: 'heading', text: `Step ${k + 1}`, x: 40, y: 3300 + 50 * k, w: 700, h: 60 })),
+      ],
+    };
+
+    it('reports a target no landing frames without a heading cut by the bottom edge of the frame', () => {
+      for (const piece of ['UiFocus', 'UiScroll'] as const) {
+        expect(problemsOf(inBody({ piece, beats: 4, shotId: 'x3-m-full', boxIndex: 0, lines: [framing('Mirá')] }, stacked))).toEqual([
+          { where: 'body[0]', rule: 'structure', detail: unframeable(piece, 0, 'x3-m-full') },
+        ]);
+      }
     });
 
     it('reports a text card once, as marketing, not also as unframeable', () => {
