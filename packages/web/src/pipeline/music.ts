@@ -13,6 +13,7 @@ import {
   MUSIC_MODELS,
   musicPrompt,
   parseWav,
+  retimedVideoSeconds,
   type Edl,
   type MusicModel,
   type RejectReason,
@@ -46,14 +47,16 @@ export type MusicRequest = {
   prompt: string;
   /** The tempo the edit list asks for: the cuts land on its beats. */
   bpm: number;
-  /** The length of the video the track plays under. */
+  /** The length of the video the track plays under, as planned: what Lyria is asked for and the measure looks at. */
   videoSeconds: number;
+  /** The edit list: a track has to last its video moved to the track's own tempo (see retimedVideoSeconds). */
+  edl: Edl;
 };
 
 /** The request for the music of an order, from its edit list. The flow asks here and does not work these out again. */
 export function musicRequest(orderId: string, edl: Edl): MusicRequest {
   const videoSeconds = layoutScenes(edl, 0).total / FPS;
-  return { orderId, prompt: musicPrompt(edl, videoSeconds), bpm: edl.bpm, videoSeconds };
+  return { orderId, prompt: musicPrompt(edl, videoSeconds), bpm: edl.bpm, videoSeconds, edl };
 }
 
 /**
@@ -148,13 +151,14 @@ export type MusicPick = {
   rejected: Rejection[];
 };
 
-// The choice among the candidates that can be measured, and the reasons for the ones that cannot be chosen.
-const choose = (candidates: Candidate[], bpm: number, videoSeconds: number): Pick<MusicPick, 'track' | 'rejected'> => {
+// The choice among the candidates that can be measured, and the reasons for the ones that cannot be chosen. Each track
+// has to last the video the render will make under it: the edit list moved to that track's tempo.
+const choose = (candidates: Candidate[], bpm: number, edl: Edl): Pick<MusicPick, 'track' | 'rejected'> => {
   const measured = candidates.flatMap((candidate) => (candidate.measure === null ? [] : [{ candidate, measure: candidate.measure }]));
   const choice = chooseTrack(
     measured.map(({ measure }) => measure),
     bpm,
-    videoSeconds,
+    (measuredBpm) => retimedVideoSeconds(edl, measuredBpm),
   );
   const unmeasured = candidates
     .filter((candidate) => candidate.measure === null)
@@ -186,11 +190,11 @@ export async function pickTrack(input: MusicRequest & { candidates: Candidate[] 
   const { candidates: given, ...request } = input;
   const candidates = [...given];
 
-  let pick = choose(candidates, request.bpm, request.videoSeconds);
+  let pick = choose(candidates, request.bpm, request.edl);
   const index = Math.max(0, ...candidates.map((candidate) => candidate.index)) + 1;
   if (pick.track === null && index <= MAX_CANDIDATES && canAfford(await deps.store.orderCost(request.orderId), EST.lyria, deps.spendCap)) {
     candidates.push(await attemptCandidate({ ...request, index }, deps));
-    pick = choose(candidates, request.bpm, request.videoSeconds);
+    pick = choose(candidates, request.bpm, request.edl);
   }
   return { ...pick, candidates };
 }

@@ -11,10 +11,9 @@
 import {
   claimsMarkdown,
   EdlSchema,
-  FPS,
-  layoutScenes,
   MAIN_FORMAT,
   musicMarkdown,
+  retimedVideoSeconds,
   retimeForBpm,
   trackCoversVideo,
   type CaptureFile,
@@ -487,8 +486,7 @@ async function lookUpVmPayment(orderId: string): Promise<{ settlement: Settlemen
  */
 async function trackForRender(orderId: string, edl: Edl, track: ChosenTrack): Promise<ChosenTrack | null> {
   'use step';
-  const videoSeconds = layoutScenes(retimeForBpm(edl, track.measuredBpm), 0).total / FPS;
-  if (trackCoversVideo(track, videoSeconds)) return track;
+  if (trackCoversVideo(track, retimedVideoSeconds(edl, track.measuredBpm))) return track;
   console.warn('[music_too_short]', orderId);
   const { store } = await getAdapters();
   await noMusic(store, orderId);

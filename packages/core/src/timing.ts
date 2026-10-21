@@ -334,3 +334,9 @@ export const retimeForBpm = (edl: Edl, measuredBpm: number): Edl => {
   const retimed = retime(tail, undefined, main);
   return { ...edl, bpm: measuredBpm, hooks, body: retimed.slice(0, -1), cta: retimed.at(-1) ?? edl.cta };
 };
+
+/**
+ * The length in seconds of the main video (hook 0), the one the order renders, once the edit list is moved to a track
+ * measured at `measuredBpm`: the video that track has to last. It can run a beat or so past the planned length.
+ */
+export const retimedVideoSeconds = (edl: Edl, measuredBpm: number): number => layoutScenes(retimeForBpm(edl, measuredBpm), 0).total / FPS;

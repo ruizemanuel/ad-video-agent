@@ -1,6 +1,19 @@
 import MusicTempo from 'music-tempo';
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, MAX_TRACK_SHORT_FALL_SECONDS, chooseTrack, layoutScenes, measureTrack, musicPrompt, parseWav, trackCoversVideo, type TrackMeasure } from '../src/index';
+import {
+  EdlSchema,
+  FPS,
+  MAX_TRACK_SHORT_FALL_SECONDS,
+  chooseTrack,
+  layoutScenes,
+  measureTrack,
+  musicPrompt,
+  parseWav,
+  retimeForBpm,
+  retimedVideoSeconds,
+  trackCoversVideo,
+  type TrackMeasure,
+} from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import { clickWav, encodeWav } from './support/wav';
 
@@ -591,6 +604,16 @@ describe('chooseTrack', () => {
     expect(reasons([{ ...ok(-16), seconds: 20, firstBeat: 0.1 }])).toEqual(['too-short']);
   });
 
+  it('measures the video at the tempo of each track when given its length by tempo, as the retime will make it', () => {
+    // 20 s planned, 20.6 s once moved to a track measured at 103 bpm: a track of 20.05 s from its first beat lasts the one
+    // and not the other.
+    const slower = { ...ok(-16), measuredBpm: 103, seconds: 20.15, firstBeat: 0.1 };
+    const lengthAt = (measuredBpm: number) => (measuredBpm === 103 ? 20.6 : 20);
+    expect(chooseTrack([slower], 112, 20).chosen).toBe(0);
+    expect(chooseTrack([slower], 112, lengthAt)).toEqual({ chosen: null, rejected: [{ index: 0, reason: 'too-short' }] });
+    expect(chooseTrack([ok(-16), slower], 112, lengthAt).chosen).toBe(0);
+  });
+
   it('accepts a track that is exactly as long as the video from its first beat', () => {
     expect(chooseTrack([{ ...ok(-16), seconds: 21, firstBeat: 1 }], 112, 20).chosen).toBe(0);
   });
@@ -679,6 +702,15 @@ describe('chooseTrack', () => {
   });
 
   it('chooses nothing from an empty list', () => expect(chooseTrack([], 112, 20)).toEqual({ chosen: null, rejected: [] }));
+});
+
+describe('retimedVideoSeconds', () => {
+  it('is the length of the main video once the edit list is moved to the tempo of a track', () => {
+    for (const measured of [95.2, 102.7, 112, 121.4, 128.8])
+      expect(retimedVideoSeconds(edlShop, measured)).toBe(layoutScenes(retimeForBpm(edlShop, measured), 0).total / FPS);
+    // At 102.7 bpm the shop's 19.3 s video lasts 0.57 s more: the cuts round up, and a scene keeps the beats its texts need.
+    expect(retimedVideoSeconds(edlShop, 102.7) - layoutScenes(edlShop, 0).total / FPS).toBeCloseTo(0.567, 3);
+  });
 });
 
 describe('musicPrompt', () => {

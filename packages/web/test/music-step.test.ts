@@ -83,7 +83,7 @@ beforeEach(() => {
 
 describe('musicRequest', () => {
   it('asks for the prompt, the tempo and the length of the edit list, so the flow does not work them out again', () => {
-    expect(musicRequest('ord_x', edl)).toEqual({ orderId: 'ord_x', prompt: PROMPT, bpm: edl.bpm, videoSeconds: VIDEO_SECONDS });
+    expect(musicRequest('ord_x', edl)).toEqual({ orderId: 'ord_x', prompt: PROMPT, bpm: edl.bpm, videoSeconds: VIDEO_SECONDS, edl });
   });
 });
 
@@ -513,6 +513,19 @@ describe('pickTrack', () => {
     const candidates = [{ ...first, measure: { ...first.measure, maxJumpMs: 40 } }];
     const picked = await pickTrack({ ...base(), candidates }, deps);
     expect(picked.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'jump' }]);
+    expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
+    expect(music.calls).toBe(2);
+  });
+
+  it('never chooses a track the video outlasts once moved to its tempo, and asks for another', async () => {
+    music.queue = [track(113, -6), track(113, -10)];
+    const [first] = await made(1);
+    if (first?.measure == null) throw new Error('the first candidate was not measured');
+    // At 102.7 bpm the retime makes the shop's video 0.57 s longer than planned: a track that lasts the planned video and
+    // 0.05 s more would leave its end without music, and was chosen before.
+    const measure = { ...first.measure, measuredBpm: 102.7, seconds: first.measure.firstBeat + VIDEO_SECONDS + 0.05 };
+    const picked = await pickTrack({ ...base(), candidates: [{ ...first, measure }] }, deps);
+    expect(picked.rejected).toEqual([{ index: 1, model: 'lyria-3.5', reason: 'too-short' }]);
     expect(picked.track?.path).toBe(`orders/${id}/music/cand-2.wav`);
     expect(music.calls).toBe(2);
   });

@@ -145,6 +145,7 @@ describe('@app/core public surface', () => {
         'readingCounts',
         'readingSeconds',
         'retimeForBpm',
+        'retimedVideoSeconds',
         'scenePaths',
         'scrollLanding',
         'scrollMove',

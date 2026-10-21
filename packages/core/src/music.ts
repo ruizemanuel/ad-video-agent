@@ -382,8 +382,11 @@ const MAX_RESIDUAL_MS = 30;
 const MAX_JUMP_MS = 33;
 const MIN_START_RMS_DB = -30;
 
+/** The length of the video a track plays under: a number, or the length at the track's tempo (see retimedVideoSeconds). */
+export type VideoLength = number | ((measuredBpm: number) => number);
+
 // The first check a track fails, if any.
-const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: number): RejectReason | undefined => {
+const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: VideoLength): RejectReason | undefined => {
   if (Math.abs(track.measuredBpm - requestedBpm) / requestedBpm > MAX_BPM_DEVIATION) return 'bpm';
   if (track.beatResidualMs > MAX_RESIDUAL_MS) return 'unsteady';
   // A track measured before the jump was kept has none to check.
@@ -393,13 +396,15 @@ const rejection = (track: TrackMeasure, requestedBpm: number, videoSeconds: numb
   // counts from the first sound, because the silence before it is never heard.
   if (track.firstBeat - (track.audioStart ?? 0) > ((MAX_LEAD_IN_BEATS + LEAD_IN_EDGE_BEATS) * 60) / track.measuredBpm) return 'late-start';
   if (track.startRmsDb < MIN_START_RMS_DB) return 'weak-start';
-  if (track.seconds - track.firstBeat < videoSeconds) return 'too-short';
+  if (track.seconds - track.firstBeat < (typeof videoSeconds === 'number' ? videoSeconds : videoSeconds(track.measuredBpm))) return 'too-short';
   return undefined;
 };
 
 // Picks the index of the track to use: among those that pass every check, the most energetic; on a tie, the
-// one whose tempo is closest to the request; on a tie of that too, the first. `chosen` is null when none pass.
-export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSeconds: number): TrackChoice => {
+// one whose tempo is closest to the request; on a tie of that too, the first. `chosen` is null when none pass. A track
+// has to last the video from its first beat: given by tempo, the video is the one the render makes under that track
+// (the edit list moved to its tempo), so a track chosen is never one that video outlasts.
+export const chooseTrack = (cands: TrackMeasure[], requestedBpm: number, videoSeconds: VideoLength): TrackChoice => {
   const rejected: TrackChoice['rejected'] = [];
   let chosen: number | null = null;
   let best: TrackMeasure | undefined;
