@@ -10,6 +10,7 @@ import {
   WIPE_FRAMES,
   WORD_ROLL,
   beatsToFrames,
+  captionRoom,
   isReadable,
   layoutScenes,
   readableIn,
@@ -122,6 +123,34 @@ describe('the reading rule', () => {
     expect(readableIn(47)).toEqual({ chars: 27, words: 5 });
     expect(readableIn(23)).toEqual({ chars: 14, words: 2 });
     expect(readableIn(22)).toBeUndefined();
+  });
+});
+
+describe('captionRoom', () => {
+  /** Whether a caption of `chars` characters (words of six letters) is read in a UiFocus of `beats` beats with a wipe after it, from `startBeat`. */
+  const reads = (chars: number, beats: number, bpm: number, captions: 1 | 2, startBeat: number): boolean => {
+    const text = 'abcdef '.repeat(chars).slice(0, chars - 1) + '.';
+    const lines = captions === 1 ? [f(text)] : [f(text), f(text, Math.ceil(beats / 2))];
+    return windows({ piece: 'UiFocus', beats, lines }, { bpm, startBeat, wipeOut: true }).every(isReadable);
+  };
+  const STARTS = Array.from({ length: 64 }, (_, i) => i);
+
+  it.each([
+    [4, 98, 1],
+    [4, 112, 1],
+    [6, 128, 1],
+    [8, 112, 2],
+    [7, 98, 2],
+  ] as [number, number, 1 | 2][])('gives the most characters of each caption of a UI scene of %i beats at %i bpm (%i captions) read wherever it starts', (beats, bpm, captions) => {
+    const room = captionRoom(beats, bpm, captions);
+    expect(room).toBeGreaterThan(0);
+    for (const startBeat of STARTS) expect(reads(room, beats, bpm, captions, startBeat), `from beat ${startBeat}`).toBe(true);
+    expect(STARTS.some((startBeat) => !reads(room + 1, beats, bpm, captions, startBeat))).toBe(true);
+  });
+
+  it('gives nothing when not even the shortest caption can be read', () => {
+    expect(captionRoom(2, 112, 1)).toBe(0);
+    expect(captionRoom(4, 112, 2)).toBe(0);
   });
 });
 

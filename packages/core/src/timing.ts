@@ -156,7 +156,8 @@ export const endCardSteps = (timed: TimedScene, bpm: number): { button: number; 
 // adult programs) and 0.3 s per word (BBC Subtitle Guidelines), whichever is longest. A text that builds up (the lines of
 // a headline or a stack, the words of a WordCycle under its prefix) asks it of each new part.
 
-const READING = { minSeconds: 5 / 6, charsPerSecond: 17, secondsPerWord: 0.3 } as const;
+/** The reading rule: a text stays whole on screen max(minSeconds, characters / charsPerSecond, secondsPerWord × words). */
+export const READING_RULE = { minSeconds: 5 / 6, charsPerSecond: 17, secondsPerWord: 0.3 } as const;
 /** A window this many frames short of the need still passes: a text reads a little before its entrance has quite settled. */
 export const READING_TOLERANCE_FRAMES = 2;
 // Ignores the error of floating point (0.3 * 4 * 30 is 36.00000000000001).
@@ -168,7 +169,7 @@ export const readingCounts = (text: string): { chars: number; words: number } =>
 /** The seconds `text` has to stay whole on screen to be read: max(5/6 s, characters / 17, 0.3 s × words). */
 export const readingSeconds = (text: string): number => {
   const { chars, words } = readingCounts(text);
-  return Math.max(READING.minSeconds, chars / READING.charsPerSecond, READING.secondsPerWord * words);
+  return Math.max(READING_RULE.minSeconds, chars / READING_RULE.charsPerSecond, READING_RULE.secondsPerWord * words);
 };
 
 /** A text a scene shows (`line`: its first line in the scene's lines), and the frames of the scene it is fully in at and starts to leave at. */
@@ -180,8 +181,8 @@ export const isReadable = (w: TextWindow): boolean => w.leaves - w.fullyIn + REA
 /** The most characters and words a text can have and be read in a window of `frames` frames; undefined under 5/6 s. */
 export const readableIn = (frames: number): { chars: number; words: number } | undefined => {
   const seconds = (frames + READING_TOLERANCE_FRAMES) / FPS + EPSILON;
-  if (seconds < READING.minSeconds) return undefined;
-  return { chars: Math.floor(seconds * READING.charsPerSecond), words: Math.floor(seconds / READING.secondsPerWord) };
+  if (seconds < READING_RULE.minSeconds) return undefined;
+  return { chars: Math.floor(seconds * READING_RULE.charsPerSecond), words: Math.floor(seconds / READING_RULE.secondsPerWord) };
 };
 
 /**
@@ -260,6 +261,21 @@ export const readingBeats = (scene: Scene, at: Placement, bpm: number, min: numb
     if (swapsCaption(scene) ? atBeats.length > 0 : unreadTexts(sized, at, bpm).length === 0) return { beats, atBeats };
   }
   return undefined;
+};
+
+/**
+ * The most characters each caption of a UiFocus or UiScroll of `beats` beats can have to be read at `bpm` (see
+ * readingSeconds), wherever the scene starts and with a wipe into the next scene, the tighter case: its one caption, or each
+ * of two, the second replacing the first at half the scene rounded up. 0 when not even the shortest caption can be read.
+ */
+export const captionRoom = (beats: number, bpm: number, captions: 1 | 2): number => {
+  const caption: Line = { text: '', kind: 'framing' };
+  const scene: Scene = { piece: 'UiFocus', beats, lines: captions === 1 ? [caption] : [caption, { ...caption, atBeat: Math.ceil(beats / 2) }] };
+  // A cut falls a frame earlier or later depending on the beat the scene starts on: 64 beats go through every case.
+  const rooms = Array.from({ length: 64 }, (_, startBeat) =>
+    textWindows(placeScene(scene, 'body', 1, startBeat, bpm), bpm, true).map((w) => readableIn(w.leaves - w.fullyIn)?.chars ?? 0),
+  );
+  return Math.min(...rooms.flat());
 };
 
 // ---------- the retime ----------

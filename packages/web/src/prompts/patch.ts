@@ -36,6 +36,8 @@ How to fix each rule:
   a call to action that asserts nothing, or a claim with a quote that backs it.
 - structure: make the scene follow the rules of its piece and the timing below. If you turn a
   \`UiFocus\` or \`UiScroll\` into another piece, drop \`atBeat\` from its lines: only those two take it.
+  A text refused because it is not on screen long enough to be read names the fixes that work: apply
+  one of them.
 - visual: the key frame of the scene failed a visual check (text out of the safe zone, too small,
   low contrast, cut or illegible): shorten or split the text, or choose another shot or box (a new
   \`boxIndex\` must be a box with \`product: true\`).

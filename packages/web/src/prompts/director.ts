@@ -1,12 +1,39 @@
 // The director's instructions: the prompt of the quality test, with three hooks of different kinds, the 2a pieces
 // (TypeIn, WordCycle, the two-step EndCard and the caption that changes on a beat), the rhythm in beats and the limits
-// validateEdl checks. The corrector works under the same rules, so it reads the same sections.
-import { BANNED_PHRASES, type SiteData } from '@app/core';
+// validateEdl checks, how long a text stays on screen among them. The corrector works under the same rules, so it reads
+// the same sections.
+import {
+  BANNED_PHRASES,
+  CAPTION_DELAY,
+  captionRoom,
+  FPS,
+  MIN_SWAP_BEATS,
+  READING_RULE,
+  REVEAL_FRAMES,
+  WIPE_FRAMES,
+  type SiteData,
+} from '@app/core';
 import { siteForModel, type ModelSite } from '../pipeline/site-for-model';
 import type { DirectorImage } from '../ports';
 import { jsonBlock } from './json-block';
 
 const BANNED = [...BANNED_PHRASES.es, ...BANNED_PHRASES.en].map((phrase) => `"${phrase}"`).join(', ');
+
+const seconds = (frames: number): string => (frames / FPS).toFixed(1);
+// The table of the most characters per caption, from the reading rule itself (captionRoom), so that it never drifts from
+// what validateEdl checks: one caption by the scene's beats, and each of two, at three tempos of the range.
+const ONE_CAPTION_BEATS = [3, 4, 5, 6, 8];
+const TWO_CAPTION_BEATS = [7, 8];
+const CAPTION_TABLE = [
+  `| bpm | ${[...ONE_CAPTION_BEATS.map((beats) => `${beats} beats`), ...TWO_CAPTION_BEATS.map((beats) => `${beats} beats, 2 captions`)].join(' | ')} |`,
+  `|${' --- |'.repeat(1 + ONE_CAPTION_BEATS.length + TWO_CAPTION_BEATS.length)}`,
+  ...[98, 112, 128].map(
+    (bpm) =>
+      `| ${bpm} | ${[...ONE_CAPTION_BEATS.map((beats) => String(captionRoom(beats, bpm, 1) || '–')), ...TWO_CAPTION_BEATS.map((beats) => `${captionRoom(beats, bpm, 2)} each`)].join(' | ')} |`,
+  ),
+]
+  .map((row) => `  ${row}`)
+  .join('\n');
 
 export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 
@@ -39,43 +66,54 @@ export const STRUCTURE_RULES = `# Structure and timing
 - Pick \`bpm\` from the energy of the site (calm: 98-110, bold: 112-128).
 - Durations are in beats: seconds = beats × 60 / bpm. Every hook plus body plus cta should last
   18 to 22 seconds (at 112 bpm that is 34 to 41 beats), and never under 15 or over 30.
-- Rhythm: hook scenes last 2 to 4 beats, with 1 or 2 beats per group of words; body scenes 4 to 6
-  (a \`WordCycle\` takes two beats per word plus one, up to 7); the cta 6. No scene lasts under 2 or
-  over 8 beats. Give text-heavy scenes more beats (a reader needs about 0.35 s per word, plus 1 s).
+- Rhythm: hook scenes last 3 or 4 beats (a \`TypeIn\` may take 2), with 1 or 2 beats per group of
+  words; body scenes 4 to 6 (a \`WordCycle\` takes two beats per word plus one, up to 7); the cta 6.
+  No scene lasts under 2 or over 8 beats.
+- Every text stays whole on screen long enough to be read: from when it is fully in to when it
+  starts to leave, it needs 1 s per ${READING_RULE.charsPerSecond} characters, or ${READING_RULE.secondsPerWord} s per word if that is more, and ${READING_RULE.minSeconds.toFixed(2)} s
+  at least. This is checked. Its time starts once it is in (a line of type rises in ${seconds(REVEAL_FRAMES)} s, a
+  caption in ${seconds(CAPTION_DELAY + REVEAL_FRAMES)} s) and ends where the wipe into the next scene starts (${seconds(WIPE_FRAMES / 2)} s before the cut), so a
+  scene with text lasts 3 beats or more, and the last line of a headline or a stack keeps 3 beats.
+  The most characters a caption of a \`UiFocus\` or \`UiScroll\` can have, by the scene's beats, with a
+  wipe after it (a cut leaves a few more):
+
+${CAPTION_TABLE}
 - \`transitionIn\`: "cut" by default. Use "wipe" at most twice, e.g. into the first body scene and
   into the cta.
 - \`style.energy\` and \`style.density\` describe the site: "bold" for strong colors and big type,
   "calm" otherwise; "airy" for lots of white space, "dense" otherwise.
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
-  get the same ad: a bold site cuts every 2 beats in its hooks and leans on \`TypeIn\` there and on
+  get the same ad: a bold site cuts every 3 beats in its hooks and leans on \`TypeIn\` there and on
   \`WordCycle\` in its body; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
   \`UiScroll\`; a dense site can stack its points in a \`ClaimStack\`; an airy one keeps one short
   line per scene.`;
 
 export const PIECE_RULES = `# Pieces (the renderer only has these)
 
-- **KineticHeadline**: 1 to 3 lines of very large type, revealed line by line. Each line is
+- **KineticHeadline**: 1 to 3 lines of very large type, revealed one line per beat. Each line is
   ideally at most 18 characters (never more than 24). One idea. At most one \`accent\` in the scene.
 - **UiFocus**: a real screenshot in a large card, with a caption above it; the camera eases in to
   one element. Needs \`shotId\` and \`boxIndex\` (required): the element the caption is about, a box
-  with \`product: true\`. One caption line, at most 40 characters.
+  with \`product: true\`. One caption line, at most 40 characters and as many as its beats allow (see
+  the table): a hook caption stays short, about 22 to 25 characters.
 - **UiScroll**: the camera glides down a full-page screenshot (ids ending in \`-full\`) and lands on
-  \`boxIndex\` (required), a box with \`product: true\`. One caption line, at most 40 characters.
+  \`boxIndex\` (required), a box with \`product: true\`. One caption line, as for \`UiFocus\`.
 - A box has \`product: true\` when there is an image or a price in its section or card (a percentage
   or a button over text does not count) and the camera can frame it cleanly. This is checked: a
   \`UiFocus\` or \`UiScroll\` on a box with \`product: false\` is rejected. State that claim in a type
   scene instead.
-- In a \`UiFocus\` or a \`UiScroll\`, the caption can change once, so that the idea changes about every
-  2 seconds: a second line with \`atBeat\`, the beat of the scene at which it replaces the first.
-  \`atBeat\` is 2 or later and less than the scene's \`beats\`, and it goes on that second line only.
+- In a \`UiFocus\` or a \`UiScroll\`, the caption can change once: a second line with \`atBeat\`, the
+  beat of the scene at which it replaces the first. \`atBeat\` is 2 or later and less than the scene's
+  \`beats\`, and it goes on that second line only. A second caption needs a scene of ${MIN_SWAP_BEATS} beats or more,
+  whose time the two captions share (see the table: \`atBeat\` at half the scene, rounded up).
 - **ClaimStack**: 2 or 3 short lines (at most 22 characters each) that land one per beat and stack
-  up. Give it at least 2 beats per line.
+  up. Give it at least 2 beats per line, and its last line 3.
 - **WordCycle**: a fixed prefix over a word that changes on the beat, for a short list the site
   states (payment methods, channels, who it is for). \`lines[0]\` is the prefix, a framing line; then
   2 or 3 lines of one word (or two) each, and every word that says something about the product is a
   claim with its quote. The words are spread evenly over the scene, two beats each at least, so the
   scene lasts at least two beats per word plus one (5 beats for 2 words, 7 for 3), too long for a hook
-  scene (2 to 4 beats): it goes in the body.
+  scene (3 or 4 beats): it goes in the body. Above 120 bpm a word needs 3 beats (7 beats for 2 words).
 - **TypeIn**: a field where 1 line is typed, then a button is pressed. Exactly 1 line, framing, and
   a \`variant\`: "url" types the site's address, which is exactly the \`host\` of the site data (no
   "www.", no "https://", no path); "prompt" types a short question the audience would ask.
