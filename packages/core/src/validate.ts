@@ -304,7 +304,7 @@ const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placeme
     report(
       `${path}.lines[${w.line}]`,
       'structure',
-      `${textName(scene, w, windows.length)} "${w.text}" (${readingCounts(w.text).chars} characters) is readable ${readable} s of the ${readingSeconds(w.text).toFixed(2)} s it needs: ${options.length ? options.join(', or ') : 'give it a scene of its own'}`,
+      `${textName(scene, w, windows.length)} "${w.text}" (${readingCounts(w.text).chars} characters) is readable ${readable} s of the ${readingSeconds(w.text).toFixed(2)} s it needs: ${options.length ? options.join(', or ') : `split the scene: its texts cannot all be read in ${SCENE_BEATS.max} beats or fewer`}`,
     );
   }
 };

@@ -10,6 +10,7 @@ import {
   TYPED_BY,
   WIPE_FRAMES,
   WORD_ROLL,
+  EdlSchema,
   beatsToFrames,
   captionRoom,
   isReadable,
@@ -21,10 +22,13 @@ import {
   type Edl,
   type Line,
   type Scene,
+  type SiteData,
   type TextWindow,
   type TimedScene,
 } from '../src/index';
+import edlShopJson from './fixtures/edl-shop.json';
 import { claim, framing, paidRunsSite, run4, run7 } from './fixtures/paid-runs';
+import siteShopJson from './fixtures/site-shop.json';
 
 /** A scene placed at `startBeat` of a video at `bpm`, as layoutScenes places it. */
 const placed = (scene: Scene, bpm: number, startBeat = 0, index = 1): TimedScene => {
@@ -278,4 +282,60 @@ describe('validateEdl: every text stays on screen long enough to read', () => {
       expect(isReadable({ line: 0, text: 'Creá tu tienda gratis', fullyIn: 0, leaves: frames })).toBe(false);
     });
   });
+});
+
+// What the corrector reads: every way a refusal can name its text and its fix, on a scene in body[0] of the shop (a wipe
+// follows it) or in its close.
+describe('the refusal names the text and what fixes it', () => {
+  const shop = EdlSchema.parse(edlShopJson);
+  const refusals = (edl: Edl): string[] =>
+    validateEdl(edl, siteShopJson as SiteData)
+      .filter((p) => p.detail.includes(' is readable '))
+      .map((p) => `${p.where}: ${p.detail}`);
+  const inBody = (scene: Scene, bpm = 112): string[] => refusals({ ...shop, bpm, body: shop.body.map((s, i) => (i === 0 ? scene : s)) });
+  const ui = (beats: number, atBeat: number): Scene => ({ piece: 'UiFocus', beats, shotId: 's1-mobile', boxIndex: 0, lines: [f('Tu tienda, lista en minutos.'), f('Sin comisiones.', atBeat)] });
+  const cycle = (beats: number): Scene => ({ piece: 'WordCycle', beats, lines: [f('Pagá con'), f('Tarjeta'), f('Efectivo'), f('Débito')] });
+
+  it('moves the atBeat when the scene is long enough for both captions', () =>
+    expect(inBody(ui(8, 3))).toEqual([
+      'body[0].lines[0]: caption 1 "Tu tienda, lista en minutos." (28 characters) is readable 1.03 s of the 1.65 s it needs: drop the second caption, or move atBeat to 5, or cut it to 18 characters and 3 words',
+    ]));
+
+  it('names the beats and the atBeat when it is not', () =>
+    expect(inBody(ui(7, 4))).toEqual([
+      'body[0].lines[0]: caption 1 "Tu tienda, lista en minutos." (28 characters) is readable 1.57 s of the 1.65 s it needs: drop the second caption, or give the scene 8 beats with atBeat 5, or cut it to 27 characters',
+    ]));
+
+  it('says what the first caption then needs when dropping the second is not enough', () =>
+    expect(inBody(ui(3, 2), 128)[0]).toBe(
+      'body[0].lines[0]: caption 1 "Tu tienda, lista en minutos." (28 characters) is readable 0.37 s of the 1.65 s it needs: drop the second caption and give the scene 6 beats, or give the scene 8 beats with atBeat 5',
+    ));
+
+  it('drops a word of a WordCycle when no length a scene may have reads three, with the beats two then need', () => {
+    expect(inBody(cycle(8), 128)).toEqual(['body[0].lines[2]: word 2 "Efectivo" (8 characters) is readable 0.73 s of the 0.83 s it needs: drop a word']);
+    expect(inBody(cycle(5), 128)[0]).toBe('body[0].lines[1]: word 1 "Tarjeta" (7 characters) is readable 0.30 s of the 0.83 s it needs: drop a word and give the scene 6 beats');
+  });
+
+  it('drops a line of a ClaimStack whose last line no length reads', () =>
+    expect(inBody({ piece: 'ClaimStack', beats: 8, lines: [f('Mercado Pago.'), f('Transferencia.'), f('Efectivo al retirar en el local.')] }, 128)).toEqual([
+      'body[0].lines[2]: stack line 3 "Efectivo al retirar en el local." (32 characters) is readable 1.13 s of the 1.88 s it needs: drop a line, or cut it to 20 characters and 4 words',
+    ]));
+
+  it('names the prefix and the words of a WordCycle', () =>
+    expect(inBody({ piece: 'WordCycle', beats: 5, lines: [f('Cobrás todas tus ventas en tu cuenta con'), f('Tarjeta'), f('Efectivo')] })).toEqual([
+      'body[0].lines[0]: the prefix "Cobrás todas tus ventas en tu cuenta con" (40 characters) is readable 1.97 s of the 2.40 s it needs: give the scene 6 beats, or cut it to 34 characters and 6 words',
+      'body[0].lines[2]: word 2 "Efectivo" (8 characters) is readable 0.67 s of the 0.83 s it needs: give the scene 6 beats',
+    ]));
+
+  it('says to split a scene whose texts no length a scene may have reads, naming each line of a headline', () =>
+    expect(inBody({ piece: 'KineticHeadline', beats: 3, lines: [f('Vendé'), f('por WhatsApp'), f('sin pagar comisiones por cada venta que hacés en tu tienda.')] })).toEqual([
+      'body[0].lines[1]: headline line 2 "por WhatsApp" (12 characters) is readable 0.37 s of the 0.83 s it needs: split the scene: its texts cannot all be read in 8 beats or fewer',
+      'body[0].lines[2]: headline line 3 "sin pagar comisiones por cada venta que hacés en tu tienda." (59 characters) is readable 0.00 s of the 3.47 s it needs: split the scene: its texts cannot all be read in 8 beats or fewer',
+    ]));
+
+  it('names the button and the tagline of the close', () =>
+    expect(refusals({ ...shop, bpm: 128, cta: { ...shop.cta, beats: 4, lines: [f('Creá tu tienda gratis hoy'), f('Tu tienda, lista en un link y sin vueltas.')] } })).toEqual([
+      'cta.lines[0]: the button "Creá tu tienda gratis hoy" (25 characters) is readable 0.70 s of the 1.50 s it needs: give the scene 8 beats',
+      'cta.lines[1]: the tagline "Tu tienda, lista en un link y sin vueltas." (42 characters) is readable 1.03 s of the 2.70 s it needs: give the scene 8 beats, or cut it to 18 characters and 3 words',
+    ]));
 });
