@@ -6,6 +6,7 @@
 import type {
   CaptureFile,
   Claim,
+  ClaimItem,
   Edl,
   FramingItem,
   JudgeItem,
@@ -68,6 +69,12 @@ export type Steps = Partial<Record<StepName, StepState>>;
 /** A file the client can download: `name` is what the link says, `path` where the blob store keeps it. */
 export type Deliverable = { name: string; path: string; bytes: number };
 
+/**
+ * What the status shows of a delivery besides its files: the claims the video makes with the words on the site that back
+ * them (the ones in claims.md), and the track's model (by its name) and tempo, when the video has music.
+ */
+export type DeliverySummary = { claims: ClaimItem[]; music: { model: string; bpm: number } | null };
+
 export type Order = {
   /** `ord_` and 24 random base32 characters. */
   id: string;
@@ -87,6 +94,8 @@ export type Order = {
   runId: string | null;
   steps: Steps;
   deliverables: Deliverable[];
+  /** Set with the delivery, in the same write; null before it and for an order delivered before it was kept. */
+  summary: DeliverySummary | null;
   warnings: string[];
   failureReason: string | null;
   // The VM's permit: only its hash is kept.

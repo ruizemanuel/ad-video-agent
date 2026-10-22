@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, MUSIC_MODELS, claimsMarkdown, musicMarkdown, type Edl, type Scene, type SiteData } from '../src/index';
+import { EdlSchema, MUSIC_MODELS, claimItems, claimsMarkdown, musicMarkdown, musicModelName, type Edl, type Scene, type SiteData } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
@@ -65,6 +65,57 @@ describe('claimsMarkdown', () => {
 
   it('refuses a hook the edit list does not have', () => {
     expect(() => claimsMarkdown(edlShop, siteShop, 3)).toThrow(RangeError);
+  });
+});
+
+describe('claimItems', () => {
+  it('lists the same claims as claimsMarkdown, unescaped', () => {
+    const listed = claimItems(edlShop, siteShop);
+    // As many as the markdown has, in its order: the markdown is built from them.
+    expect(listed.map(({ onScreen }) => onScreen)).toEqual(items(claimsMarkdown(edlShop, siteShop)).map((entry) => /^- \*\*(.*)\*\*/.exec(entry)?.[1]));
+    expect(listed).toEqual([
+      { onScreen: 'Tus clientes piden por WhatsApp.', quote: 'piden por WhatsApp y vos confirmás el pedido', url: SITE, section: 'Mirá una tienda de ejemplo' },
+      { onScreen: '0% de comisión.', quote: '0% de comisión', url: SITE, section: 'Precios' },
+      { onScreen: 'Mercado Pago. Transferencia. Efectivo al retirar.', quote: 'Mercado Pago, transferencia y efectivo al retirar', url: SITE, section: 'Medios de pago' },
+      { onScreen: 'Plan Pro $4.990 por mes.', quote: 'Plan Pro a $4.990 por mes', url: SITE, section: 'Precios' },
+      { onScreen: 'Crear mi tienda', quote: 'Crear mi tienda', url: SITE, section: 'Vendé por WhatsApp sin comisiones' },
+    ]);
+
+    // What Markdown would read as formatting comes out as it is; whitespace is folded into single spaces.
+    const site: SiteData = { ...siteShop, sections: siteShop.sections.map((s) => (s.id === 's2' ? { ...s, heading: 'Los *precios*\n_reales_', text: `${s.text} Plan *Pro* <b>\nnuevo` } : s)) };
+    const edl: Edl = {
+      ...edlShop,
+      body: edlShop.body.map((scene, k) => (k === 1 ? { ...scene, lines: [{ text: '0% de *comisión*.', kind: 'claim', claimId: 'c3' }] } : scene)),
+      claims: edlShop.claims.map((c) => (c.id === 'c3' ? { ...c, quote: 'Plan *Pro* <b>\nnuevo' } : c)),
+    };
+    const claim = claimItems(edl, site).find((entry) => entry.onScreen.startsWith('0% de'));
+    expect(claim).toEqual({ onScreen: '0% de *comisión*.', quote: 'Plan *Pro* <b> nuevo', url: SITE, section: 'Los *precios* _reales_' });
+  });
+
+  it('is empty when the video claims nothing', () => {
+    const framingOnly: Edl = { ...edlShop, hooks: [edlShop.hooks[0] ?? []], body: [], cta: { ...edlShop.cta, lines: [{ text: 'Probalo', kind: 'framing' }] }, claims: [] };
+    expect(claimItems(framingOnly, siteShop)).toEqual([]);
+  });
+
+  it('lists a claim once when two scenes say it the same way, and each wording when they differ', () => {
+    const again: Scene = { piece: 'KineticHeadline', beats: 4, lines: [{ text: '0% de comisión.', kind: 'claim', claimId: 'c3' }] };
+    const reworded: Scene = { piece: 'KineticHeadline', beats: 4, lines: [{ text: 'Cero comisión: 0%.', kind: 'claim', claimId: 'c3' }] };
+    const wordings = claimItems({ ...edlShop, body: [...edlShop.body, again, reworded] }, siteShop)
+      .filter((entry) => entry.quote === '0% de comisión')
+      .map((entry) => entry.onScreen);
+    expect(wordings).toEqual(['0% de comisión.', 'Cero comisión: 0%.']);
+  });
+
+  it('lists the claims of the hook it is asked for, and refuses one the edit list does not have', () => {
+    expect(claimItems(edlShop, siteShop, 1)[0]).toMatchObject({ onScreen: 'Vendé por WhatsApp sin comisiones.', quote: 'Vendé por WhatsApp sin comisiones' });
+    expect(() => claimItems(edlShop, siteShop, 3)).toThrow(RangeError);
+  });
+});
+
+describe('musicModelName', () => {
+  it('names each model the way music.md does', () => {
+    expect(musicModelName('lyria-3.5')).toBe('Google Lyria 3.5');
+    expect(musicModelName('lyria-3-pro-preview')).toBe('Google Lyria 3 Pro');
   });
 });
 

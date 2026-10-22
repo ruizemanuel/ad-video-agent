@@ -9,10 +9,12 @@
 // the flow refunds the order for it (as the failure of the part it was making, or as `internal`). Nothing a step returns
 // carries a secret: the VM's permit exists only in its script.
 import {
+  claimItems,
   claimsMarkdown,
   EdlSchema,
   MAIN_FORMAT,
   musicMarkdown,
+  musicModelName,
   retimedVideoSeconds,
   retimeForBpm,
   trackCoversVideo,
@@ -41,6 +43,7 @@ import {
   SETTLEMENT_GRACE_SECONDS,
   type BlobPort,
   type Deliverable,
+  type DeliverySummary,
   type LlmPort,
   type OrderRequest,
   type OrderStore,
@@ -754,11 +757,15 @@ async function deliver(
   if (withMusic !== null) files.push({ name: 'hook-a-9x16.mp4', path: videos.withMusic, bytes: withMusic });
   files.push({ name: 'hook-a-9x16-muted.mp4', path: videos.muted, bytes: video.mutedBytes });
   files.push(await put('claims.md', claimsMarkdown(edl, capture.site)));
-  if (track !== null && withMusic !== null) files.push(await put('music.md', musicMarkdown({ measuredBpm: track.measuredBpm, musicPrompt: edl.musicPrompt, model: track.model })));
-  else if (track !== null) await noMusic(store, orderId);
+  // What the status shows of the delivery: the claims of claims.md, and the music of music.md when it is written.
+  const summary: DeliverySummary = { claims: claimItems(edl, capture.site), music: null };
+  if (track !== null && withMusic !== null) {
+    files.push(await put('music.md', musicMarkdown({ measuredBpm: track.measuredBpm, musicPrompt: edl.musicPrompt, model: track.model })));
+    summary.music = { model: musicModelName(track.model), bpm: Math.round(track.measuredBpm * 10) / 10 };
+  } else if (track !== null) await noMusic(store, orderId);
 
-  // A second try of this step finds the order delivered by the first.
-  if (!(await store.transition(orderId, 'delivered', { deliverables: files }))) {
+  // A second try of this step finds the order delivered by the first, and leaves it as it is.
+  if (!(await store.transition(orderId, 'delivered', { deliverables: files, summary }))) {
     const status = (await store.getOrder(orderId))?.status;
     if (status !== 'delivered') throw new Error(`The order cannot be delivered from ${status ?? 'nowhere'}.`);
   }

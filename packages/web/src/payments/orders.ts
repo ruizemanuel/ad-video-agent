@@ -1,6 +1,7 @@
 // What happens to an order around its payment, and what its status says to whoever polls it. The paying request
 // makes the order (`awaiting_settlement`); once the facilitator settles, `markPaidAndStart` moves it to `paid` and
 // starts its run. The reconciliation does the same for a settlement nobody reported.
+import type { ClaimItem } from '@app/core';
 import { getRun, start, type Run } from 'workflow/api';
 import { WorkflowRunNotFoundError } from 'workflow/errors';
 import type { Env } from '../env';
@@ -71,6 +72,10 @@ export type StatusJson = {
   steps: StatusStep[];
   /** Only once the order is delivered: each file with its signed download link. */
   files?: { name: string; url: string; bytes: number }[];
+  /** Only once the order is delivered: each claim the video makes, with the words on the site that back it. */
+  claims?: ClaimItem[];
+  /** Only once the order is delivered with music: the model that made the track (its name) and the tempo measured on it. */
+  music?: { model: string; bpm: number };
   warnings: string[];
   refund?: { status: RefundStatus; txHash: string | null };
   /** When the order and its files are deleted (ISO 8601). Gone once the order has expired. */
@@ -93,6 +98,10 @@ export function statusView(order: Order, refund: RefundRecord | null, settings: 
       url: signFileLink({ orderId: order.id, name, exp }, settings.LINK_SIGNING_SECRET, settings.PUBLIC_BASE_URL),
       bytes,
     }));
+  }
+  if (order.status === 'delivered' && order.summary !== null) {
+    view.claims = order.summary.claims;
+    if (order.summary.music !== null) view.music = order.summary.music;
   }
   if (refund !== null) view.refund = { status: refund.status, txHash: refund.txHash };
   if (order.status !== 'expired') view.expiresAt = new Date(order.createdAt.getTime() + ORDER_DAYS * DAY_MS).toISOString();

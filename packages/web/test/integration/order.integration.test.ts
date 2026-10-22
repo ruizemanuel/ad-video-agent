@@ -1,5 +1,5 @@
 // The order workflow from the paid order to the delivery or the refund, on the fake adapters, with the test as the VM.
-import { claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, validateEdl, type Edl, type MusicModel, type RenderInput } from '@app/core';
+import { claimItems, claimsMarkdown, EdlSchema, judgeItems, retimeForBpm, validateEdl, type Edl, type MusicModel, type RenderInput } from '@app/core';
 import { clickWav } from '@app/core/testing';
 import { waitForHook, waitForSleep } from '@workflow/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -122,6 +122,9 @@ describe('an order that goes through', () => {
       { name: 'music.md', path: `orders/${id}/out/music.md`, bytes: expect.any(Number) },
     ]);
     expect(await text(`orders/${id}/out/claims.md`)).toBe(claimsMarkdown(edlShop, siteShop));
+    // The summary the status shows is written with the delivery: the claims claims.md lists, and the track's model and tempo.
+    expect(order?.summary?.claims.length).toBeGreaterThan(0);
+    expect(order?.summary?.claims).toEqual(claimItems(edlShop, siteShop));
 
     // The render gets the edit list moved to the tempo measured on the chosen track, and the track.
     const render = queued[2]?.input as RenderInput;
@@ -136,6 +139,7 @@ describe('an order that goes through', () => {
     const note = await text(`orders/${id}/out/music.md`);
     expect(note).toContain('made for this video by Google Lyria 3.5, an AI music model');
     expect(note).not.toContain('3 Pro');
+    expect(order?.summary?.music).toEqual({ model: 'Google Lyria 3.5', bpm: Math.round(render.edl.bpm * 10) / 10 });
     // The key frames are of the edit list as the director wrote it and the checks passed it.
     expect(queued[1]?.input).toEqual({ edl: edlShop, hook: 0, format: '9x16', round: 0 });
     expect(queued[0]?.input).toEqual({ url: 'https://tiendita.example', extraUrls: [], followDemoLinks: 2 });
@@ -154,6 +158,7 @@ describe('an order that goes through', () => {
     const note = await text(`orders/${id}/out/music.md`);
     expect(note).toContain('made for this video by Google Lyria 3 Pro, an AI music model');
     expect(note).not.toContain('3.5');
+    expect((await fakes.store.getOrder(id))?.summary?.music).toMatchObject({ model: 'Google Lyria 3 Pro' });
     // The watermark and the use of the track are the same whichever model made it.
     expect(note).toContain('SynthID');
     expect(note).toContain('paid ads');
@@ -235,6 +240,10 @@ describe('an order that goes through', () => {
     await actAsVm(run, silent, 'render', 0, null, RENDERED_MUTED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: MUTED_FILES, warnings: [] });
     expect(fakes.music.calls).toBe(calls);
+    // No music, so none in the summary; the claims are there all the same.
+    const summary = (await fakes.store.getOrder(silent))?.summary;
+    expect(summary?.music).toBeNull();
+    expect(summary?.claims).toEqual(claimItems(edlShop, siteShop));
     const render = (await tasks(fakes.store, silent)).find((t) => t.kind === 'render')?.input as RenderInput;
     expect(render).toEqual({ edl: edlShop, hook: 0, format: '9x16', music: null });
     expect((await fakes.store.getOrder(silent))?.steps.music).toBe('skipped');
@@ -247,6 +256,7 @@ describe('an order that goes through', () => {
     await actAsVm(run, id, 'render', 0, null, RENDERED_MUTED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: MUTED_FILES, warnings: ['music_unavailable'] });
     expect((await fakes.store.getOrder(id))?.steps.music).toBe('failed');
+    expect((await fakes.store.getOrder(id))?.summary).toEqual({ claims: claimItems(edlShop, siteShop), music: null });
     // Each of the first two candidates is tried twice; the third, asked for when they give nothing, once.
     expect(fakes.music.calls).toBe(5);
     // A candidate tried again asks for the same model (two of each in the first four calls), and the third is a Lyria 3.5.
@@ -268,6 +278,8 @@ describe('an order that goes through', () => {
     await actAsVm(run, id, 'render', 0, null, RENDERED_MUTED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: MUTED_FILES, warnings: ['music_unavailable'] });
     expect((await fakes.store.getOrder(id))?.steps.music).toBe('failed');
+    // music.md is not written, so the summary has no music either.
+    expect((await fakes.store.getOrder(id))?.summary?.music).toBeNull();
   });
 
   it('corrects what the review blocks on, makes key frames of the correction and delivers the corrected edit list', async () => {
@@ -295,6 +307,7 @@ describe('an order that goes through', () => {
     const render = queued[3]?.input as RenderInput;
     expect(render.edl).toEqual(retimeForBpm(corrected, render.edl.bpm));
     expect(await text(`orders/${id}/out/claims.md`)).toBe(claimsMarkdown(corrected, siteShop));
+    expect((await fakes.store.getOrder(id))?.summary?.claims).toEqual(claimItems(corrected, siteShop));
   });
 
   it('renders without music, and says so, when a correction makes the video outlast the track: music never refunds', async () => {

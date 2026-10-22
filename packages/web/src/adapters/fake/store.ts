@@ -199,6 +199,7 @@ export class FileStore implements OrderStore {
         runId: null,
         steps: {},
         deliverables: [],
+        summary: null,
         warnings: [],
         failureReason: null,
         vmTokenHash: null,

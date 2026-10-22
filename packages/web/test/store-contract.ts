@@ -125,6 +125,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           runId: null,
           steps: {},
           deliverables: [],
+          summary: null,
           warnings: [],
           failureReason: null,
           vmTokenHash: null,
@@ -219,6 +220,31 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.transition(order.id, 'running', { runId: 'wrun_1' })).toBe(true);
         expect(await s.transition(order.id, 'refunding', { failureReason: 'render' })).toBe(true);
         expect(await s.getOrder(order.id)).toMatchObject({ status: 'refunding', runId: 'wrun_1', failureReason: 'render' });
+      });
+
+      it('keeps the delivery summary set when the order is delivered', async () => {
+        const order = await orderIn('running');
+        expect(order.summary).toBeNull();
+        const deliverables = [{ name: 'claims.md', path: `orders/${order.id}/out/claims.md`, bytes: 42 }];
+        const summary = {
+          claims: [{ onScreen: '0% de *comisión*.', quote: 'Cero comisión', url: 'https://tiendita.example', section: 'Precios' }],
+          music: { model: 'Google Lyria 3 Pro', bpm: 112.5 },
+        };
+        expect(await s.transition(order.id, 'delivered', { deliverables, summary })).toBe(true);
+        expect(await s.getOrder(order.id)).toMatchObject({ status: 'delivered', deliverables, summary });
+        // A delivery without music keeps that as null, not as a missing key.
+        const silent = await orderIn('running');
+        const withoutMusic = { claims: [], music: null };
+        expect(await s.transition(silent.id, 'delivered', { summary: withoutMusic })).toBe(true);
+        expect((await s.getOrder(silent.id))?.summary).toEqual(withoutMusic);
+      });
+
+      it('never rewrites the summary of an order that is already delivered', async () => {
+        const order = await orderIn('running');
+        const first = { claims: [], music: { model: 'Google Lyria 3.5', bpm: 112 } };
+        expect(await s.transition(order.id, 'delivered', { summary: first })).toBe(true);
+        expect(await s.transition(order.id, 'delivered', { summary: { claims: [], music: null } })).toBe(false);
+        expect((await s.getOrder(order.id))?.summary).toEqual(first);
       });
 
       it('leaves the order untouched when the transition is refused', async () => {

@@ -98,6 +98,34 @@ describe('GET /v1/videos/<id>', () => {
     }
   });
 
+  it('shows the claims and the music of a delivered order', async () => {
+    const order = await runningOrder();
+    const claim = { onScreen: '0% de comisión.', quote: '0% de comisión', url: 'https://tiendita.example', section: 'Precios' };
+    // A running order carries neither, whatever it will deliver.
+    const running = await body(await get(order.id));
+    expect(running).not.toHaveProperty('claims');
+    expect(running).not.toHaveProperty('music');
+
+    await store.transition(order.id, 'delivered', { summary: { claims: [claim], music: { model: 'Google Lyria 3 Pro', bpm: 120 } } });
+    const delivered = await body(await get(order.id));
+    expect(delivered.claims).toEqual([claim]);
+    expect(delivered.music).toEqual({ model: 'Google Lyria 3 Pro', bpm: 120 });
+  });
+
+  it('leaves the music out, not null, when the delivery has none, and both out when there is no summary', async () => {
+    const silent = await runningOrder();
+    await store.transition(silent.id, 'delivered', { summary: { claims: [], music: null } });
+    const withoutMusic = await body(await get(silent.id));
+    expect(withoutMusic.claims).toEqual([]);
+    expect(withoutMusic).not.toHaveProperty('music');
+
+    const old = await runningOrder();
+    await store.transition(old.id, 'delivered');
+    const withoutSummary = await body(await get(old.id));
+    expect(withoutSummary).not.toHaveProperty('claims');
+    expect(withoutSummary).not.toHaveProperty('music');
+  });
+
   it('says when the order and its files are deleted: 30 days after it was made', async () => {
     const order = await runningOrder();
     expect((await body(await get(order.id))).expiresAt).toBe(new Date(order.createdAt.getTime() + 30 * DAY_S * 1000).toISOString());

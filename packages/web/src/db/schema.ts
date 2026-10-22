@@ -4,6 +4,7 @@ import type { VmTaskKind } from '@app/core';
 import type {
   CostKind,
   Deliverable,
+  DeliverySummary,
   OrderRequest,
   OrderStatus,
   PaymentAuthorization,
@@ -41,6 +42,7 @@ export const orders = pgTable(
     runId: text('run_id'),
     steps: jsonb('steps').$type<Steps>().notNull().default({}),
     deliverables: jsonb('deliverables').$type<Deliverable[]>().notNull().default([]),
+    summary: jsonb('summary').$type<DeliverySummary>(),
     warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
     failureReason: text('failure_reason'),
     /** The VM's permit: only its sha256 is kept. */
