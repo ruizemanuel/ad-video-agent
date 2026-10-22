@@ -43,6 +43,7 @@ The service runs on Vercel. This is what it depends on.
 - **Git connection:** connect the GitHub repository. Each push to `main` deploys Production, and the crons in `packages/web/vercel.ts` (the reconciliation and the clean-up, once a day each) come with it.
 - **The code the rented machine runs:** the machine has no copy of the repository. Its start-up script downloads it from `codeload.github.com` at the commit of the deployment (`VERCEL_GIT_COMMIT_SHA`), or at `VM_CODE_REF` when the deployment has none. The download sends no credentials, so `GITHUB_REPO` (`owner/name`) must be a public repository that has that commit. In production the service refuses to run with neither a commit nor `VM_CODE_REF`.
 - **No Deployment Protection on Production.** The rented machine calls the service's task API (`/api/vm/tasks/...`) with only its order's permit, which lasts 75 minutes, and paying clients and their delivery links work without a Vercel login. A protection page in front of the service would stop all of them. The routes guard themselves: with the payment, the order's permit, a signed link, the cron secret or the order's id.
+- **The agent's registration file:** the service serves its ERC-8004 registration file at `/.well-known/agent-registration.json`, the `agentURI` to register on the Identity Registry; once it is mined, set `AGENT_ID` and redeploy, and the same URL lists the id.
 - **The models need no key.** The calls to Claude go through the Vercel AI Gateway, which signs in with the deployment's own token and bills your Vercel account. Only the music (Lyria, through the Gemini API) has a key: `GEMINI_API_KEY`.
 
 ### Database
@@ -93,6 +94,7 @@ Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks
 | `REFUND_WALLET_PRIVATE_KEY` | Yes | Yes | The refund wallet's key (`0x` and 64 hex characters). |
 | `CELO_RPC_URL` | No, default `https://forno.celo.org` | If it carries a key | The Celo node the service reads and sends transactions through. |
 | `ERC8021_CODE` | No | No | The builder-code tag a hackathon assigns (1 to 32 lowercase letters, digits or underscores). When set, it goes in the payment offer and at the end of every refund; without it, nothing is tagged. |
+| `AGENT_ID` | No | No | The ERC-8004 agent id, set after registering; the file at `/.well-known/agent-registration.json` lists it. A positive whole number in decimal. |
 | `DATABASE_URL` | Yes | Yes | The Neon connection URL. |
 | `DATABASE_URL_UNPOOLED` | No | Yes | Used only by `db:migrate`, in place of `DATABASE_URL`. |
 | `BLOB_READ_WRITE_TOKEN` | Yes | Yes | The token of the private Blob store. |
