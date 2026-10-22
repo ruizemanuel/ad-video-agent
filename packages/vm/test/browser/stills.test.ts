@@ -4,10 +4,11 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkStills, FORMATS, layoutScenes, theme, timedScenePath, validateEdl, type Edl, type Format, type SiteData, type Still } from '@app/core';
+import { CAPTION_GAP, CAPTION_LINE, checkStills, FORMATS, layoutScenes, stageLayout, theme, timedScenePath, validateEdl, type Edl, type Format, type SiteData, type Still } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { capture, type CapturedSite } from '../../src/capture';
 import { getServeUrl } from '../../src/render/bundle';
+import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { serveFixtureSite } from './support/fixture-site';
 
@@ -173,6 +174,11 @@ const markSvg = (width: number, height: number): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="#c81e6b"/><rect x="130" y="38" width="170" height="44" rx="22" fill="#1a1614"/></svg>`;
 const SMALL_MARK_FILE = 'media/small-mark.svg';
 
+// A phone page of one flat color, written into the capture before the bundle copies it: where the card of a UI scene that
+// films it starts can be read off the pixels of a still.
+const FLAT_FILE = 'media/flat-page.png';
+const FLAT = [0x1f, 0x8a, 0x4c] as const;
+
 const jpegWidth = (base64: string): number => {
   const jpeg = Buffer.from(base64, 'base64');
   // The width is in the start-of-frame segment (marker, length, precision, height, width).
@@ -194,6 +200,8 @@ beforeAll(async () => {
   // The bundle copies the run folder when it is made: the extra logo goes in before the first render.
   writeFileSync(join(dir, MARK_FILE), markSvg(320, 120));
   writeFileSync(join(dir, SMALL_MARK_FILE), markSvg(100, 60));
+  const hex = FLAT.map((c) => c.toString(16).padStart(2, '0')).join('');
+  await runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x${hex}:s=780x3000`, '-frames:v', '1', join(dir, FLAT_FILE)], 'make a flat page');
   edl = makeFixtureEdl(site);
 });
 afterAll(async () => {
@@ -336,5 +344,110 @@ describe('the new pieces and the rhythm', () => {
     const hook1 = await renderKeyframes({ edl: pieces, site, runDir: dir, format: '9x16', hook: 1 });
     expect(checkStills(hook1, pieces, site, '9x16', 1).filter((c) => !c.pass)).toEqual([]);
     expect(textsOf(hook1, 'hooks[1][0]').join(' ')).toBe('Where do my customers pay me?');
+  });
+});
+
+describe('the stage of the UI scenes', () => {
+  // The flat page as the phone page of the site, with a price halfway down and one at its very end. A caption of one line
+  // leaves room above itself in the caption block: the card rises into it, the caption still on it, and its first line
+  // starts at the caption line. Two lines at the full size leave little. A landing at the end of the page cannot show the
+  // rows a risen card gains: that scene keeps today's stage.
+  const flatSite = (from: SiteData): SiteData => ({
+    ...from,
+    shots: [{ id: 'm-full', file: FLAT_FILE, viewport: 'mobile', dpr: 2, width: 780, height: 3000 }],
+    boxes: [
+      { shotId: 'm-full', kind: 'price', text: '$4.990 / mes', x: 80, y: 1200, w: 300, h: 50 },
+      { shotId: 'm-full', kind: 'price', text: '$9.990 / mes', x: 80, y: 2940, w: 300, h: 50 },
+    ],
+    blocks: [],
+  });
+  const stageEdl: Edl = {
+    lang: 'en',
+    bpm: 112,
+    style: { energy: 'bold', density: 'airy' },
+    hooks: [[{ piece: 'UiFocus', beats: 6, lines: [{ text: 'One plan', kind: 'framing' }], shotId: 'm-full', boxIndex: 0 }]],
+    body: [
+      {
+        piece: 'UiScroll',
+        beats: 7,
+        lines: [
+          { text: 'Every order', kind: 'framing' },
+          { text: 'in one list', kind: 'framing' },
+        ],
+        shotId: 'm-full',
+        boxIndex: 0,
+      },
+      { piece: 'UiFocus', beats: 6, lines: [{ text: 'Pay as you go', kind: 'framing' }], shotId: 'm-full', boxIndex: 1 },
+    ],
+    cta: { piece: 'EndCard', beats: 5, lines: [{ text: 'Start free', kind: 'framing' }], transitionIn: 'wipe' },
+    claims: [],
+    musicPrompt: 'Upbeat electronic pop, bright synths, steady four-on-the-floor drums.',
+  };
+  const today = stageLayout('9x16');
+  let flat: SiteData;
+  let stills: Still[];
+  let work: string;
+  beforeAll(async () => {
+    flat = flatSite(site);
+    stills = await renderKeyframes({ edl: stageEdl, site: flat, runDir: dir, format: '9x16', hook: 0 });
+    work = mkdtempSync(join(tmpdir(), 'stage-'));
+  });
+  afterAll(() => {
+    if (work) rmSync(work, { recursive: true, force: true });
+  });
+
+  /** Where the card starts in the still of a scene, in px of the frame: the first row of the flat page down its middle. */
+  const cardTopOf = async (path: string): Promise<number> => {
+    const still = stills.find((s) => s.path === path)!;
+    const [jpg, raw] = [join(work, 'still.jpg'), join(work, 'still.rgb')];
+    writeFileSync(jpg, Buffer.from(still.jpegBase64, 'base64'));
+    await runFfmpeg(['-v', 'error', '-y', '-i', jpg, '-f', 'rawvideo', '-pix_fmt', 'rgb24', raw], 'read the pixels of a still');
+    const rgb = readFileSync(raw);
+    const width = jpegWidth(still.jpegBase64);
+    for (let y = 0; (y + 1) * width * 3 <= rgb.length; y += 1) {
+      const at = (y * width + width / 2) * 3;
+      if (FLAT.every((c, i) => Math.abs(rgb[at + i]! - c) < 30)) return (y * FORMATS['9x16'].width) / width;
+    }
+    throw new Error(`The still of ${path} shows no card.`);
+  };
+  /** The probed lines of the still of a scene, and where the box of its last line ends (see TypeLines). */
+  const captionOf = (path: string) => {
+    const lines = stills.find((s) => s.path === path)!.text;
+    const last = lines[lines.length - 1]!;
+    const lineHeight = theme(flat).display.lineHeight * last.fontSize;
+    // The content box the probe measures is centered on the line's box, give or take the pixel the page rounds it to.
+    return { lines, bottom: last.y + last.h / 2 + lineHeight / 2 };
+  };
+  // A pixel of the JPEG, 720 px wide, is 1.5 px of the frame; and the page rounds the line's box to the pixel.
+  const NEAR = 3;
+
+  it('raises the card of a scene with a caption of one line, and starts that line at the caption line', async () => {
+    const { lines, bottom } = captionOf('hooks[0][0]');
+    expect(lines.map((l) => l.text)).toEqual(['One plan']);
+    expect(lines[0]!.y).toBeGreaterThanOrEqual(CAPTION_LINE['9x16']!);
+    expect(lines[0]!.y).toBeLessThan(CAPTION_LINE['9x16']! + 1);
+    const cardTop = await cardTopOf('hooks[0][0]');
+    expect(cardTop).toBeLessThan(today.cardTop - 60);
+    // The caption sits on the card as it does on today's stage.
+    expect(Math.abs(cardTop - CAPTION_GAP - bottom)).toBeLessThanOrEqual(NEAR);
+  });
+
+  it('raises the card of a scene with two lines at the full size by a little at most', async () => {
+    const { lines, bottom } = captionOf('body[0]');
+    expect(lines.map((l) => l.text)).toEqual(['Every order', 'in one list']);
+    const cardTop = await cardTopOf('body[0]');
+    expect(cardTop).toBeGreaterThan(today.cardTop - 40);
+    expect(cardTop).toBeLessThanOrEqual(today.cardTop + NEAR);
+    expect(Math.abs(cardTop - CAPTION_GAP - bottom)).toBeLessThanOrEqual(NEAR);
+  });
+
+  it("keeps today's stage for a scene whose landing is at the end of the page: the card where it was, the caption on it", async () => {
+    const { bottom } = captionOf('body[1]');
+    expect(Math.abs((await cardTopOf('body[1]')) - today.cardTop)).toBeLessThanOrEqual(NEAR);
+    expect(Math.abs(bottom - (today.captionTop + today.captionHeight))).toBeLessThanOrEqual(NEAR);
+  });
+
+  it('passes the code checks', () => {
+    expect(checkStills(stills, stageEdl, flat, '9x16').filter((c) => !c.pass)).toEqual([]);
   });
 });

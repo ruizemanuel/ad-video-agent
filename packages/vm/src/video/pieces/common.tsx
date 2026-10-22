@@ -6,6 +6,8 @@ import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentF
 import {
   alpha,
   CAPTION_DELAY,
+  CAPTION_GAP,
+  CAPTION_LINE,
   CAPTION_SWAP,
   captionSwapFrame,
   FORMATS,
@@ -20,6 +22,7 @@ import {
   type Scene,
   type Shot,
   type SiteData,
+  type Stage,
   type Theme,
   type TimedScene,
 } from '@app/core';
@@ -95,6 +98,25 @@ export const inkWith = (font: FontSpec): InkMeasure => {
       fontDescent: (m?.fontBoundingBoxDescent ?? 0) / INK_SIZE,
     };
   };
+};
+
+/**
+ * How far, in px, the content box of a line of `text` set at `size` in `font` reaches above the line's own box, as the
+ * page lays it out: the box the probe measures, the font's ascent and descent as the page rounds them to the pixel,
+ * around the line. 0 when it stays inside the line. Measured in the page, once the font is loaded: the canvas's metrics
+ * (see inkWith) miss that rounding, by a pixel and a half on one of run 8's captions.
+ */
+export const contentOverhang = (font: FontSpec, size: number, text: string): number => {
+  const line = document.createElement('div');
+  Object.assign(line.style, { position: 'absolute', top: '-10000px', whiteSpace: 'pre', fontFamily: font.family, fontWeight: String(font.weight), fontSize: `${size}px`, lineHeight: String(font.lineHeight) });
+  if (font.stretch) line.style.fontStretch = font.stretch;
+  line.textContent = text;
+  document.body.appendChild(line);
+  const range = document.createRange();
+  range.selectNodeContents(line);
+  const above = line.getBoundingClientRect().top - range.getBoundingClientRect().top;
+  line.remove();
+  return Math.max(0, above);
 };
 
 /**
@@ -235,38 +257,74 @@ export const captionFade = (frame: number, swap: number | undefined): { out: num
     ? { out: 0, come: 0 }
     : { out: progress(frame, swap, swap + CAPTION_SWAP.out), come: progress(frame, swap + CAPTION_SWAP.in.from, swap + CAPTION_SWAP.in.to) };
 
+/** A caption of a UI scene as it is set: its lines, at one size. */
+export type CaptionSet = { lines: TypeLine[]; size: number };
+
 /**
- * The caption on top, in a block of fixed height so that captions of one or two lines never move the card, and the real
- * UI below it in a large card that rises in and bleeds off the bottom edge. A second line with an atBeat is a caption
- * of its own: it replaces the first on that beat, with a short fade, and both are set at one size.
+ * The top of the card of a UI scene whose captions are `captions` (one, or two that replace one another, at one size:
+ * the taller decides), in lines `lineHeight` tall whose content box reaches `overhang` px above the first (see
+ * contentOverhang): as high as lets the content box of the first line, with the caption anchored to the bottom of its
+ * block (see UiStage), start at the format's caption line (see CAPTION_LINE) or under it, and never lower than today's
+ * stage puts it (see stageLayout). Undefined in a format with no caption line: there the card stays where it is.
  */
-export const UiStage: FC<{ scene: Scene; timed: TimedScene; shot: Shot; placed: { x: number; y: number; scale: number } }> = ({ scene, timed, shot, placed }) => {
+export const raisedCardTop = (format: Format, captions: readonly CaptionSet[], lineHeight: number, overhang: number): number | undefined => {
+  const line = CAPTION_LINE[format];
+  if (line === undefined) return undefined;
+  const block = Math.max(0, ...captions.map(({ lines, size }) => (lines.length * lineHeight + (lines.length - 1) * LINE_GAP) * size));
+  return Math.min(stageLayout(format).cardTop, Math.ceil(line + overhang + block + CAPTION_GAP));
+};
+
+/** The captions of a UI scene (see UiStage), the frame of the beat the second replaces the first on, and the card top they leave room for (see raisedCardTop). */
+export type UiCaptions = { sets: CaptionSet[]; swap: number | undefined; cardTop: number | undefined };
+
+// The caption lines up with the card's left edge, never outside the safe zone.
+const captionLeft = (format: Format): number => Math.max(FORMATS[format].safe.left, stageLayout(format).cardLeft);
+const captionWidth = (format: Format): number => Math.min(safeWidth(format), stageLayout(format).cardW);
+
+/**
+ * The captions of a UI scene, set as UiStage shows them: as large as two lines fit the caption block of today's stage
+ * (see stageLayout), whatever card top they then leave room for; the piece films the scene on that card's stage (see
+ * raisedMove). The content box of the first line of each caption is measured in the page (see contentOverhang).
+ */
+export const useUiCaptions = (scene: Scene, timed: TimedScene): UiCaptions => {
   const { theme, format, edl } = useAd();
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const type = TYPE[format];
-  const stage = stageLayout(format);
-  const { safe } = FORMATS[format];
-  // The caption lines up with the card's left edge, never outside the safe zone.
-  const captionLeft = Math.max(safe.left, stage.cardLeft);
-  const captionWidth = Math.min(safeWidth(format), stage.cardW);
   const swap = captionSwapFrame(scene.lines, timed, edl.bpm);
-  const captions = useMemo(() => {
+  return useMemo(() => {
+    const type = TYPE[format];
     const fit = {
-      width: captionWidth,
+      width: captionWidth(format),
       max: type.caption,
       min: type.min,
       maxLines: 2,
       measure: measureWith(theme.display),
-      box: { height: stage.captionHeight, lineHeight: theme.display.lineHeight },
+      box: { height: stageLayout(format).captionHeight, lineHeight: theme.display.lineHeight },
     };
-    if (swap === undefined) return [layoutLines(scene.lines.map(toWords), fit)];
-    const { lines, size } = layoutCaptions([scene.lines.slice(0, 1).map(toWords), scene.lines.slice(1).map(toWords)], fit);
-    return lines.map((caption) => ({ lines: caption, size }));
-  }, [scene, swap, captionWidth, type, theme, stage.captionHeight]);
+    let sets: CaptionSet[];
+    if (swap === undefined) sets = [layoutLines(scene.lines.map(toWords), fit)];
+    else {
+      const { lines, size } = layoutCaptions([scene.lines.slice(0, 1).map(toWords), scene.lines.slice(1).map(toWords)], fit);
+      sets = lines.map((caption) => ({ lines: caption, size }));
+    }
+    const overhang = Math.max(0, ...sets.map(({ lines, size }) => contentOverhang(theme.display, size, lineText(lines[0] ?? []))));
+    return { sets, swap, cardTop: raisedCardTop(format, sets, theme.display.lineHeight, overhang) };
+  }, [scene, swap, format, theme]);
+};
+
+/**
+ * The caption on top, anchored to the bottom of its block, and the real UI below it in a large card that rises in and
+ * bleeds off the bottom edge, on `stage`: today's, whose block holds two lines at the caption size so that captions of
+ * one or two lines never move the card, or one whose card has risen into the room a shorter caption leaves (see
+ * raisedMove). A second line with an atBeat is a caption of its own: it replaces the first on that beat, with a short
+ * fade, and both are set at one size (see useUiCaptions).
+ */
+export const UiStage: FC<{ captions: UiCaptions; stage: Stage; shot: Shot; placed: { x: number; y: number; scale: number } }> = ({ captions, stage, shot, placed }) => {
+  const { theme, format } = useAd();
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const { sets, swap } = captions;
   const rise = spring({ frame, fps, config: { damping: 200 }, durationInFrames: 18 });
   const { out, come } = captionFade(frame, swap);
-  const [first, second] = captions;
+  const [first, second] = sets;
   const drift = (first?.size ?? 0) * CAPTION_DRIFT;
   const caption = (children: ReactNode, opacity: number, y: number) => (
     <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, opacity, transform: `translateY(${y}px)` }}>{children}</div>
@@ -274,7 +332,7 @@ export const UiStage: FC<{ scene: Scene; timed: TimedScene; shot: Shot; placed: 
   const text = { font: theme.display, color: theme.fg, accent: theme.accentText };
   return (
     <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(theme.bg, theme.primary, 0.1)} 0%, ${theme.bg} 70%)` }}>
-      <div style={{ position: 'absolute', left: captionLeft, top: stage.captionTop, width: captionWidth, height: stage.captionHeight }}>
+      <div style={{ position: 'absolute', left: captionLeft(format), top: stage.captionTop, width: captionWidth(format), height: stage.captionHeight }}>
         {/* Each caption is on screen, and probed, only while it can be seen. */}
         {first && out < 1 && caption(<RevealLines lines={first.lines} size={first.size} {...text} delay={CAPTION_DELAY} />, 1 - out, -out * drift)}
         {second && come > 0 && caption(<TypeLines lines={second.lines} size={second.size} {...text} />, come, (1 - come) * drift)}
