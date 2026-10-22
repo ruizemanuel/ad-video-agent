@@ -202,6 +202,7 @@ export class DrizzleStore implements OrderStore {
   }
 
   // One statement: the subquery picks the oldest pending task and locks it, skipping one that another claim holds.
+  // The outer condition also requires 'pending', so a task that is no longer pending is never claimed again.
   async claimNextTask(orderId: string): Promise<VmTask | null> {
     const oldest = sql`(
       select ${vmTasks.id} from ${vmTasks}
@@ -211,7 +212,7 @@ export class DrizzleStore implements OrderStore {
     const [claimed] = await this.db
       .update(vmTasks)
       .set({ status: 'claimed', claimedAt: new Date() })
-      .where(sql`${vmTasks.id} = ${oldest}`)
+      .where(and(sql`${vmTasks.id} = ${oldest}`, eq(vmTasks.status, 'pending')))
       .returning();
     return claimed ? toTask(claimed) : null;
   }
