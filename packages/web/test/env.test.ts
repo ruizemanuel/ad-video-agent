@@ -163,8 +163,36 @@ describe('parseEnv', () => {
     ['ERC8021_CODE', 'celo-event'],
     ['ERC8021_CODE', 'celo event'],
     ['ERC8021_CODE', 'a'.repeat(33)],
+    ['AGENT_ID', '0'],
+    ['AGENT_ID', '-1'],
+    ['AGENT_ID', '+1'],
+    ['AGENT_ID', '01'],
+    ['AGENT_ID', '1.5'],
+    ['AGENT_ID', '1e3'],
+    ['AGENT_ID', '0x2a'],
+    ['AGENT_ID', 'abc'],
+    ['AGENT_ID', '12a'],
+    ['AGENT_ID', ' 7'],
+    ['AGENT_ID', '1'.repeat(79)],
   ])('rejects %s = %s', (name, value) => {
     expect(() => parseEnv({ ...real, [name]: value })).toThrow(name);
+  });
+
+  // The id the ERC-8004 Identity Registry gave the agent: unknown until the registration is mined, so it starts unset.
+  it('leaves the ERC-8004 agent id unset until it is given, and counts an empty one as missing', () => {
+    expect(parseEnv(real).AGENT_ID).toBeUndefined();
+    expect(parseEnv({ ...real, AGENT_ID: '' }).AGENT_ID).toBeUndefined();
+  });
+
+  it('reads the ERC-8004 agent id as a whole number', () => {
+    expect(parseEnv({ ...real, AGENT_ID: '1' }).AGENT_ID).toBe(1n);
+    expect(parseEnv({ ...real, AGENT_ID: '42' }).AGENT_ID).toBe(42n);
+    expect(parseEnv({ ...real, AGENT_ID: '9'.repeat(78) }).AGENT_ID).toBe(10n ** 78n - 1n);
+  });
+
+  it('says what an agent id must look like, without printing the one it got', () => {
+    expect(() => parseEnv({ ...real, AGENT_ID: '0xdeadbeef' })).toThrow(/AGENT_ID: .*no sign or leading zeros/);
+    expect(() => parseEnv({ ...real, AGENT_ID: '0xdeadbeef' })).not.toThrow(/deadbeef/);
   });
 
   // The format both the x402 builder-code extension and @celo/attribution-tags accept: 1 to 32 of [a-z0-9_].

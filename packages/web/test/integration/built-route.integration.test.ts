@@ -112,3 +112,21 @@ describe('POST /v1/videos, built and served by next start', () => {
     expect(await res.json()).toMatchObject({ error: 'invalid_url' });
   });
 });
+
+// A folder that starts with a dot and a segment that ends in .json: only the built app shows they are routes.
+describe('GET /.well-known/agent-registration.json, built and served by next start', () => {
+  it('serves the registration file with the address it was asked at, since PUBLIC_BASE_URL is not set here', async () => {
+    const res = await fetch(`${base}/.well-known/agent-registration.json`);
+    expect(res.status, serverOutput()).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(await res.json()).toMatchObject({
+      type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+      services: [
+        { name: 'web', endpoint: base },
+        { name: 'x402', endpoint: `${base}/v1/videos` },
+      ],
+      registrations: [],
+    });
+  });
+});

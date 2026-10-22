@@ -82,6 +82,17 @@ const schema = z
         .regex(/^[a-z0-9_]{1,32}$/, 'must be 1 to 32 lowercase letters, digits or underscores')
         .optional(),
     ),
+    /**
+     * The ERC-8004 agent id the Identity Registry gave this agent, set once the registration is mined. Without it,
+     * the registration file at /.well-known/agent-registration.json lists no registration.
+     */
+    AGENT_ID: blank(
+      z
+        .string()
+        .regex(/^[1-9][0-9]{0,77}$/, 'must be a positive whole number in decimal, with no sign or leading zeros')
+        .transform((value) => BigInt(value))
+        .optional(),
+    ),
     /** `real` for the service; `fake` only in tests. */
     AD_AGENT_ADAPTERS: blank(z.enum(['real', 'fake']).default('real')),
     /** The folder the fake adapters keep their files in: the tests make a temporary one. */
