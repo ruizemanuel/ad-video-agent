@@ -1,6 +1,7 @@
 import { blockOf, FORMATS, type Block, type Box, type Format, type Scene, type Shot, type SiteData } from '../src/index';
 import { describe, expect, it } from 'vitest';
 import {
+  CAPTION_GAP,
   cameraAt,
   focusCamera,
   focusLanding,
@@ -9,6 +10,7 @@ import {
   focusShot,
   framesCleanly,
   placeShot,
+  raisedMove,
   resolveShot,
   scrollLanding,
   scrollMove,
@@ -65,12 +67,13 @@ const inFrame = (target: Shot, at: { x: number; y: number }, camera: ReturnType<
 
 /**
  * The part of the shot the card shows above the platform UI, with the camera there: its top and bottom, in shot pixels;
- * and `end`, where the bottom edge of the frame falls on the shot (the card runs on under the platform UI to it).
+ * and `end`, where the bottom edge of the frame falls on the shot (the card runs on under the platform UI to it). With a
+ * `cardTop`, on the stage whose card starts there (see raisedMove).
  */
-const viewOf = (target: Shot, camera: Camera, boxes: Box[], format: '9x16' | '16x9' | '4x5' = '9x16') => {
-  const placed = placeShot(target, camera, format, boxes);
+const viewOf = (target: Shot, camera: Camera, boxes: Box[], format: '9x16' | '16x9' | '4x5' = '9x16', cardTop?: number) => {
+  const placed = placeShot(target, camera, format, boxes, cardTop);
   const top = -placed.y / placed.scale;
-  const stage = stageLayout(format);
+  const stage = stageLayout(format, cardTop);
   return { top, bottom: top + (2 * stage.focusY) / placed.scale, end: top + stage.cardH / placed.scale };
 };
 // A view that comes back from placeShot is off by float noise (562.0000000000001 for a top flush on 562).
@@ -995,5 +998,117 @@ describe('the edge rules, against a search of every top', () => {
     expect(differences.slice(0, 5)).toEqual([]);
     expect(compared).toBeGreaterThan(20_000);
     expect(ties).toBeLessThan(compared / 1000);
+  });
+});
+
+describe("the card raised into the caption's slack", () => {
+  // A caption of one line leaves most of its block empty: the card rises into that room (the VM works out how far from
+  // the caption it sets), and the page in it keeps the top row the web judged clean; the rows the card gains show at the
+  // bottom of the frame, under the platform UI. 436 is where run 9's one-line captions put the card.
+  const pieces = ['UiFocus', 'UiScroll'] as const;
+  type Piece = (typeof pieces)[number];
+  const moveOf = (piece: Piece) => (piece === 'UiFocus' ? focusMove : scrollMove);
+  const landingOf = (piece: Piece) => (piece === 'UiFocus' ? focusLanding : scrollLanding);
+  const today = stageLayout('9x16');
+  const RAISED = 436;
+  const price = box('m-full', 'price', '$ 4.500', 244, 2400, 212, 40);
+  const heading = box('m-full', 'heading', 'Simple pricing', 56, 2240, 668, 100);
+  const boxes = [heading, price];
+
+  it('lays out the stage from a card top: the caption block ends the gap above the card, the focus halfway to the platform UI', () => {
+    const { height, safe } = FORMATS['9x16'];
+    expect(today).toMatchObject({ captionTop: safe.top, captionHeight: 300, cardTop: 564, cardH: 1356, focusY: 468 });
+    expect(today.cardTop - today.captionTop - today.captionHeight).toBe(CAPTION_GAP);
+    expect(stageLayout('9x16', RAISED)).toEqual({
+      ...today,
+      captionHeight: RAISED - CAPTION_GAP - safe.top,
+      cardTop: RAISED,
+      cardH: height - RAISED,
+      focusY: (height - safe.bottom - RAISED) / 2,
+    });
+    expect(stageLayout('9x16', today.cardTop)).toEqual(today);
+  });
+
+  for (const piece of pieces) {
+    it(`${piece}: keeps the top row of the landing and of the opening, at the same scale and x, and shows the rows the card rose at the bottom`, () => {
+      const was = moveOf(piece)(price, phonePage, '9x16', boxes);
+      const { move, stage } = raisedMove(was, phonePage, '9x16', boxes, RAISED);
+      expect(stage).toEqual(stageLayout('9x16', RAISED));
+      for (const at of ['from', 'to'] as const) {
+        const before = placeShot(phonePage, was[at], '9x16', boxes);
+        const after = placeShot(phonePage, move[at], '9x16', boxes, RAISED);
+        expect([move[at].scale, move[at].x], at).toEqual([was[at].scale, was[at].x]);
+        expect([after.scale, after.x], at).toEqual([before.scale, before.x]);
+        expect(after.y, at).toBeCloseTo(before.y, 9);
+        const rows = viewOf(phonePage, move[at], boxes, '9x16', RAISED).end - viewOf(phonePage, was[at], boxes).end;
+        expect(rows, at).toBeCloseTo((today.cardTop - RAISED) / after.scale, 9);
+      }
+      // The camera moves down to the landing as it did, from the same row: UiScroll still opens on the top of the page.
+      if (piece === 'UiScroll') expect(viewOf(phonePage, move.from, boxes, '9x16', RAISED).top).toBeCloseTo(0, 9);
+    });
+  }
+
+  it('lands as cleanly on the raised stage: no box cut at the top edge, no text at the bottom edge, the target whole above the platform UI', () => {
+    for (const piece of pieces) {
+      expect(landingOf(piece)(price, phonePage, '9x16', boxes).clean, piece).toBe(true);
+      const was = viewOf(phonePage, moveOf(piece)(price, phonePage, '9x16', boxes).to, boxes);
+      // A button under today's frame, which the taller frame shows whole.
+      const button = box('m-full', 'cta', 'Start free', 56, was.end + 20, 400, 60);
+      const all = [...boxes, button];
+      const { move } = raisedMove(moveOf(piece)(price, phonePage, '9x16', all), phonePage, '9x16', all, RAISED);
+      const view = viewOf(phonePage, move.to, all, '9x16', RAISED);
+      expect(all.filter((b) => slices(view, b) || slicesEnd(view, b)), piece).toEqual([]);
+      expect([shows(view, price), shows({ top: view.top, bottom: view.end }, button)], piece).toEqual([true, true]);
+    }
+  });
+
+  it('keeps today’s move and stage when the bottom edge of the raised frame would cut a heading, a price or a button', () => {
+    for (const piece of pieces) {
+      const was = moveOf(piece)(price, phonePage, '9x16', boxes);
+      const end = viewOf(phonePage, raisedMove(was, phonePage, '9x16', boxes, RAISED).move.to, boxes, '9x16', RAISED).end;
+      for (const kind of ['heading', 'price', 'cta'] as const) {
+        // Across the raised frame's bottom edge, and under today's: today's landing does not move for it.
+        const all = [...boxes, box('m-full', kind, 'Start free', 56, end - 20, 400, 60)];
+        expect(moveOf(piece)(price, phonePage, '9x16', all), `${piece} ${kind}`).toEqual(was);
+        expect(raisedMove(was, phonePage, '9x16', all, RAISED), `${piece} ${kind}`).toEqual({ move: was, stage: today });
+      }
+      // A picture or a card there is the bleed the card is drawn with: the card rises.
+      const bleed = raisedMove(was, phonePage, '9x16', [...boxes, box('m-full', 'image', '', 56, end - 20, 400, 300)], RAISED);
+      expect(bleed.stage.cardTop, piece).toBe(RAISED);
+    }
+  });
+
+  it('keeps today’s move and stage when the shot ends before the bottom of the raised card', () => {
+    /** Where the bottom edge of a frame from the same row as the camera's view today falls on the raised stage. */
+    const raisedEnd = (target: Shot, camera: Camera, regions: Box[]): number => {
+      const placed = placeShot(target, camera, '9x16', regions);
+      return (stageLayout('9x16', RAISED).cardH - placed.y) / placed.scale;
+    };
+    for (const piece of pieces) {
+      // A price at the end of the page: today's frame ends where the shot does.
+      const last = box('m-full', 'price', '$ 4.500', 244, 5900, 212, 40);
+      const was = moveOf(piece)(last, phonePage, '9x16', [last]);
+      expect(viewOf(phonePage, was.to, [last]).end, piece).toBeCloseTo(phonePage.height, 9);
+      expect(raisedMove(was, phonePage, '9x16', [last], RAISED), piece).toEqual({ move: was, stage: today });
+      // A page shorter than the raised card: the card would show past its end.
+      const short = shot('m-full', 'mobile', 1000);
+      const top = box('m-full', 'price', '$ 4.500', 244, 300, 212, 40);
+      const onShort = moveOf(piece)(top, short, '9x16', [top]);
+      expect(raisedEnd(short, onShort.to, [top]), piece).toBeGreaterThan(short.height);
+      expect(raisedMove(onShort, short, '9x16', [top], RAISED), piece).toEqual({ move: onShort, stage: today });
+    }
+    // A page that runs on past the bottom of the raised card under the landing, zoomed in, but not under the opening,
+    // wider: placeShot would pull the opening up off its row.
+    const page = shot('m-full', 'mobile', 1150);
+    const top = box('m-full', 'price', '$ 4.500', 244, 300, 212, 40);
+    const was = focusMove(top, page, '9x16', [top]);
+    expect(raisedEnd(page, was.to, [top])).toBeLessThan(page.height);
+    expect(raisedEnd(page, was.from, [top])).toBeGreaterThan(page.height);
+    expect(raisedMove(was, page, '9x16', [top], RAISED)).toEqual({ move: was, stage: today });
+  });
+
+  it('keeps today’s move and stage with no card top, or one no higher than today’s', () => {
+    const was = focusMove(price, phonePage, '9x16', boxes);
+    for (const cardTop of [undefined, today.cardTop, today.cardTop + 40]) expect(raisedMove(was, phonePage, '9x16', boxes, cardTop)).toEqual({ move: was, stage: today });
   });
 });

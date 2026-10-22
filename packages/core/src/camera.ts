@@ -24,16 +24,22 @@ export type Stage = {
   radius: number;
 };
 
+// The caption block of each format: tall enough for two lines at the caption size (see TYPE).
 const CAPTION_HEIGHT: Record<Format, number> = { '9x16': 300, '16x9': 190, '4x5': 220 };
 const CARD_SIDE: Record<Format, number> = { '9x16': 60, '16x9': 150, '4x5': 60 };
-const CAPTION_GAP = 44;
+/** Between the bottom of the caption block and the top of the card, in px. */
+export const CAPTION_GAP = 44;
 
-export const stageLayout = (format: Format): Stage => {
+/**
+ * The stage of a UI scene in `format`: by default the card under a caption block of the format's full height, so that
+ * captions of one or two lines never move it; with a `cardTop`, the card starts there instead (see raisedMove), and the
+ * caption block, from the top of the safe zone, ends CAPTION_GAP above it.
+ */
+export const stageLayout = (format: Format, cardTop = FORMATS[format].safe.top + CAPTION_HEIGHT[format] + CAPTION_GAP): Stage => {
   const { width, height, safe } = FORMATS[format];
-  const cardTop = safe.top + CAPTION_HEIGHT[format] + CAPTION_GAP;
   return {
     captionTop: safe.top,
-    captionHeight: CAPTION_HEIGHT[format],
+    captionHeight: cardTop - CAPTION_GAP - safe.top,
     cardLeft: CARD_SIDE[format],
     cardTop,
     cardW: width - 2 * CARD_SIDE[format],
@@ -213,10 +219,10 @@ const targetBlock = (box: Box, shot: Shot, format: Format, blocks: readonly Bloc
 /**
  * Where the shot goes in the card: translate by (x, y) card pixels, then scale. The point (camera.x, camera.y) lands on
  * the focus point, except that the card never shows past the edges of the shot: a shot narrower than the card is
- * centered, and one shorter than the card sits at its top.
+ * centered, and one shorter than the card sits at its top. `cardTop`: the card of a raised stage (see raisedMove).
  */
-export const placeShot = (shot: Shot, camera: Camera, format: Format, boxes: readonly Box[]): { x: number; y: number; scale: number } => {
-  const { cardW, cardH, focusY } = stageLayout(format);
+export const placeShot = (shot: Shot, camera: Camera, format: Format, boxes: readonly Box[], cardTop?: number): { x: number; y: number; scale: number } => {
+  const { cardW, cardH, focusY } = stageLayout(format, cardTop);
   const scale = baseScale(shot, cardW, boxes) * camera.scale;
   const width = shot.width * scale;
   const height = shot.height * scale;
@@ -544,6 +550,31 @@ export const scrollMove = (box: Box | undefined, shot: Shot, format: Format, box
   const { cardW, focusY } = stageLayout(format);
   const base = baseScale(shot, cardW, boxes);
   return { from: { scale: 1, x: contentMiddle(shot, boxes), y: focusY / base }, to: scrollLanding(box, shot, format, boxes, blocks).camera };
+};
+
+/**
+ * A UI scene's move on a stage whose card starts at `cardTop`, higher than today's (see stageLayout): its caption is
+ * shorter than the block, and the card rises into the room left. The camera keeps its scale and x, and goes as much
+ * lower as the focus point does, so that the view starts on the same row of the shot, at the opening and at the
+ * landing: the frame shows the page from where the web judged it, and the rows the card gains at the bottom, under the
+ * platform UI. Its top edge and its target are where they were, so the raised frame is as clean as today's (see
+ * Landing) when its bottom edge cuts no heading, price or button (see textsOf), and it is used only then, and while the
+ * shot runs on to the bottom of the raised card at the opening and at the landing (where it ends sooner, placeShot would
+ * pull the view up off that row). Otherwise, and with no `cardTop` or one no higher than today's, today's move on
+ * today's stage.
+ */
+export const raisedMove = (move: Move, shot: Shot, format: Format, boxes: readonly Box[], cardTop?: number): { move: Move; stage: Stage } => {
+  const today = stageLayout(format);
+  if (cardTop === undefined || cardTop >= today.cardTop) return { move, stage: today };
+  const stage = stageLayout(format, cardTop);
+  const raise = (camera: Camera): { camera: Camera; end: number } => {
+    const placed = placeShot(shot, camera, format, boxes);
+    return { camera: { ...camera, y: camera.y + (stage.focusY - today.focusY) / placed.scale }, end: (stage.cardH - placed.y) / placed.scale };
+  };
+  const from = raise(move.from);
+  const to = raise(move.to);
+  const clean = [from, to].every(({ end }) => end <= shot.height) && textsOf(shot, boxes).every((r) => !cutBelow(r, to.end, shot.height));
+  return clean ? { move: { from: from.camera, to: to.camera }, stage } : { move, stage: today };
 };
 
 /** The camera at progress `p` (0 to 1) of a move: the zoom grows by the same factor at each step, the pan in equal steps. */
