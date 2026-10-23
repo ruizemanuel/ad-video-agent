@@ -1,15 +1,16 @@
 'use client';
 // The order form of the home. One press of its button runs the whole order: the free quote, the wallet (connected and
 // moved to Celo), that wallet's own quote and price, the token it holds enough of, one signature, and the order page.
-// A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on.
+// A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on. A press
+// never pays more than its button showed: a dearer price is shown first, and the next press pays it.
 // Wherever the order cannot go on, it stops, keeps everything the person typed and says why. It is rendered in the
 // browser only: everything it does needs the person's wallet, which the server cannot see.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { ResourceUnavailableRpcError, UserRejectedRequestError, type Address } from 'viem';
+import { parseUnits, ResourceUnavailableRpcError, UserRejectedRequestError, type Address } from 'viem';
 import { useConfig, useConnection } from 'wagmi';
-import type { TokenSymbol } from '../payments/tokens';
+import { TOKENS, type TokenSymbol } from '../payments/tokens';
 import { ORDER_FORM } from './copy';
 import styles from './OrderForm.module.css';
 import { chooseToken, PaymentNotConfirmed, payOrder } from './pay';
@@ -95,6 +96,18 @@ function stoppedText(error: unknown, stage: Stage): string {
   return ORDER_FORM.errors.generic;
 }
 
+/**
+ * A price as the page shows it ("0.05") in atomic units of either token (both have 6 decimals); 0 for text that is no
+ * price, so that nothing is ever paid on it.
+ */
+function atomicAmount(price: string): bigint {
+  try {
+    return parseUnits(price, TOKENS.USDT.decimals);
+  } catch {
+    return 0n;
+  }
+}
+
 const progress = (text: string): Notice => ({ tone: 'progress', text });
 const stopped = (text: string): Notice => ({ tone: 'error', text });
 
@@ -145,8 +158,12 @@ function Form({ price, promoSlots }: Props) {
     return quote.kind === 'priced';
   }
 
-  /** The whole order. True once it is placed and the page is on its way to it. */
-  async function placeOrder(): Promise<boolean> {
+  /**
+   * The whole order, from a press of the button that showed `shownPrice`: the wallet never signs for more than that.
+   * True once the order is placed and the page is on its way to it.
+   */
+  async function placeOrder(shownPrice: string): Promise<boolean> {
+    const shownAtomic = atomicAmount(shownPrice);
     const built = orderInput(fields);
     if (!built.ok) {
       showInvalid(built.invalid);
@@ -184,6 +201,12 @@ function Form({ price, promoSlots }: Props) {
       const quote = await requestQuote(input, address);
       if (!priced(quote)) return false;
       setWalletPrice({ address, price: quote.price });
+      // Dearer than the button said (the promo ran out, the price changed): the button shows the new price now, and
+      // only the next press pays it. A lower price, as the promo's, goes on.
+      if (quote.amountAtomic > shownAtomic) {
+        setNotice(stopped(ORDER_FORM.errors.priceRaised(quote.price)));
+        return false;
+      }
 
       stage = 'balances';
       const token = chooseToken(await tokenBalances(config, address), quote.amountAtomic);
@@ -204,10 +227,12 @@ function Form({ price, promoSlots }: Props) {
           return signature;
         },
       };
-      const result = await payOrder({ input, required: quote.required, token, signer });
+      const result = await payOrder({ input, required: quote.required, token, signer, maxAmountAtomic: shownAtomic });
       if (!result.ok) {
         setNotice(stopped(result.reason));
-        // The promo may have just run out: the banner and the next quote say so.
+        // The promo may have just run out: the wallet's last price no longer holds, so the button goes back to the full
+        // price, which the banner and the next quote bring up to date.
+        setWalletPrice(null);
         void queryClient.invalidateQueries({ queryKey: OFFER_KEY });
         return false;
       }
@@ -218,6 +243,8 @@ function Form({ price, promoSlots }: Props) {
       return true;
     } catch (error) {
       setNotice(stopped(stoppedText(error, stage)));
+      // A payment that may not have gone through leaves no price to trust either.
+      if (error instanceof PaymentNotConfirmed) setWalletPrice(null);
       return false;
     }
   }
@@ -230,7 +257,8 @@ function Form({ price, promoSlots }: Props) {
     setBusy(true);
     let leaving = false;
     try {
-      leaving = await placeOrder();
+      // The price on the button as it was pressed.
+      leaving = await placeOrder(shownPrice);
     } finally {
       if (!leaving) {
         inFlight.current = false;

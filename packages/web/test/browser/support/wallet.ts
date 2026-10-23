@@ -41,6 +41,8 @@ export type StubWallet = {
   readonly address: Address;
   /** How many times the page asked it to sign, whatever the person answered. */
   signatureRequests(): number;
+  /** From now on the person turns down every request to sign (true), or signs (false). */
+  setRejectSignature(reject: boolean): void;
 };
 
 /** The EIP-1193 provider the page sees, for typing the code a test runs in the page. */
@@ -128,6 +130,7 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
   const known = new Set([ETHEREUM_CHAIN_ID, chainId]);
   let connected = false;
   let signatureRequests = 0;
+  let rejectSignature = options.rejectSignature === true;
 
   const switchTo = (next: number): RpcAnswer => {
     if (next === chainId) return { result: null };
@@ -163,7 +166,7 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
       }
       case 'eth_signTypedData_v4': {
         signatureRequests += 1;
-        if (options.rejectSignature === true) return userRejected;
+        if (rejectSignature) return userRejected;
         const [signer, raw] = list as [string, unknown];
         if (!sameAddress(signer, account.address)) return { error: { code: 4100, message: 'The requested account has not been authorized by the user.' } };
         // The typed data comes as JSON, with its numbers as text: viem reads them back as numbers.
@@ -178,7 +181,14 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
   const answer = (method: string, params: unknown): Promise<RpcAnswer> =>
     answerOrThrow(method, params).catch((error: unknown) => ({ error: { code: -32603, message: error instanceof Error ? error.message : String(error) } }));
 
-  return { wallet: { address: account.address, signatureRequests: () => signatureRequests }, answer, read };
+  const wallet: StubWallet = {
+    address: account.address,
+    signatureRequests: () => signatureRequests,
+    setRejectSignature: (reject) => {
+      rejectSignature = reject;
+    },
+  };
+  return { wallet, answer, read };
 }
 
 /**

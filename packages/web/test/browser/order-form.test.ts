@@ -9,6 +9,7 @@ import { FileStore } from '../../src/adapters/fake/store';
 import { TOKENS } from '../../src/payments/tokens';
 import type { Order } from '../../src/ports';
 import { launchPage, startApp, type App, type LaunchedPage } from './support/app';
+import { seedOrder } from './support/seed';
 import type { Eip1193Provider, WalletOptions } from './support/wallet';
 
 /** How long any one thing may take to show: a first compile of the page included. */
@@ -87,6 +88,17 @@ async function recordButton(page: Page): Promise<string[]> {
 /** Asks the wallet in the page directly, as the page would. */
 const askWallet = (page: Page, method: string): Promise<unknown> =>
   page.evaluate((m) => (window as unknown as { ethereum: Eip1193Provider }).ethereum.request({ method: m }), method);
+
+/** The pay button as the person sees it. */
+const buttonState = (page: Page): Promise<{ disabled: boolean; text: string | null }> =>
+  page.$eval(BUTTON, (button) => ({ disabled: (button as HTMLButtonElement).disabled, text: button.textContent }));
+
+/** Waits until the pay button says `text`. */
+const waitForButton = (page: Page, text: string): Promise<unknown> =>
+  page.waitForFunction((selector, wanted) => document.querySelector(selector)?.textContent === wanted, WAIT, BUTTON, text);
+
+/** What the service says when the first-video price is gone by the time the payment arrives (409 promo_unavailable). */
+const PROMO_GONE = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
 
 const expectPlainWords = (text: string): void => {
   for (const word of PROTOCOL_WORDS) expect(text.toLowerCase(), word).not.toContain(word.toLowerCase());
@@ -334,6 +346,85 @@ describe('the order form with the first-video promo on', () => {
         expect(orders.map((order) => order.id)).toEqual([id]);
         expect(orders[0]).toMatchObject({ amount: 10_000n, promoSlot: 1, payer: wallet.address, asset: TOKENS.USDT.address });
         expect(wallet.signatureRequests()).toBe(1);
+        expect(blockedRequests()).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('shows a dearer price before paying it, when the promo runs out after the wallet saw it', async () => {
+    const app = await startApp({ PROMO_SLOTS: '1' });
+    try {
+      const { browser, page, wallet, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY }, rejectSignature: true });
+      try {
+        await waitForText(page, 'First wallet: 0.01 USDT · 1 left');
+        await fill(page, { url: 'https://race.tiendita.example/' });
+        await page.click(BUTTON);
+        await waitForText(page, 'You cancelled the signature. Nothing was charged.');
+        expect(await buttonState(page)).toEqual({ disabled: false, text: 'Pay 0.01 USDT' });
+        expect(wallet.signatureRequests()).toBe(1);
+
+        // Meanwhile another wallet takes the last slot, and this person now means to sign.
+        const taker = await seedOrder(app.fakeDir, 'running', { promoSlot: 1 });
+        wallet.setRejectSignature(false);
+
+        // The press that said 0.01 does not pay 0.05: it stops before the wallet, with the new price on the button.
+        await page.click(BUTTON);
+        await waitForText(page, 'The price for your wallet is now 0.05 USDT or USDC. Nothing was charged. Press the button again to pay it.');
+        expect(await buttonState(page)).toEqual({ disabled: false, text: 'Pay 0.05 USDT' });
+        expect(wallet.signatureRequests()).toBe(1);
+        expect((await storedOrders(app.fakeDir)).map((order) => order.id)).toEqual([taker]);
+
+        // The next press, on the button that says 0.05, pays it.
+        await page.click(BUTTON);
+        const id = await waitForOrderPage(page);
+        expect((await storedOrders(app.fakeDir)).find((order) => order.id === id)).toMatchObject({ amount: 50_000n, promoSlot: null, payer: wallet.address });
+        expect(wallet.signatureRequests()).toBe(2);
+        expect(blockedRequests()).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('shows the full price after the promo is lost at the moment of paying', async () => {
+    const app = await startApp({ PROMO_SLOTS: '1' });
+    try {
+      const { browser, page, wallet, blockedRequests, answerForApp } = await openForm(app, { balances: { USDT: PLENTY } });
+      try {
+        // The race at the moment of paying: another wallet's payment takes the last slot between this wallet's quote
+        // and its order, and the service answers 409 without taking the payment. The two payments cannot be timed from
+        // here, so the service's answer is given in its place (the route's own tests cover how it comes to give it),
+        // with the slot taken in the store as the other payment leaves it.
+        let taker: string | undefined;
+        answerForApp(async (request) => {
+          const paying = request.method() === 'POST' && new URL(request.url()).pathname === '/v1/videos' && request.headers()['payment-signature'] !== undefined;
+          if (!paying || taker !== undefined) return null;
+          taker = await seedOrder(app.fakeDir, 'running', { promoSlot: 1 });
+          return { status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'promo_unavailable', reason: PROMO_GONE }) };
+        });
+
+        await waitForText(page, 'First wallet: 0.01 USDT · 1 left');
+        await fill(page, { url: 'https://lost.tiendita.example/' });
+        await page.click(BUTTON);
+        await waitForText(page, PROMO_GONE);
+        expect(wallet.signatureRequests()).toBe(1);
+        // The wallet's 0.01 no longer holds: the button says the full price, and the banner is gone with the last slot.
+        await waitForButton(page, 'Pay 0.05 USDT');
+        await page.waitForFunction(() => document.querySelector<HTMLElement>('#order')?.innerText.includes('First wallet') === false, WAIT);
+        expect(await buttonState(page)).toEqual({ disabled: false, text: 'Pay 0.05 USDT' });
+        expect((await storedOrders(app.fakeDir)).map((order) => order.id)).toEqual([taker]);
+
+        // The next press quotes again and pays the price its button showed.
+        await page.click(BUTTON);
+        const id = await waitForOrderPage(page);
+        expect((await storedOrders(app.fakeDir)).find((order) => order.id === id)).toMatchObject({ amount: 50_000n, promoSlot: null, payer: wallet.address });
+        expect(wallet.signatureRequests()).toBe(2);
         expect(blockedRequests()).toEqual([]);
       } finally {
         await browser.close();

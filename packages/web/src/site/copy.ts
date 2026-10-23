@@ -73,7 +73,7 @@ export const ORDER_FORM = {
   },
   audio: { legend: 'Audio', music: 'With music', none: 'No audio' },
   /** The first-video promo, while it has slots left. */
-  promo: (slots: number, price: string, left: number) => `First ${slots} wallets: ${price} USDT · ${left} left`,
+  promo: (slots: number, price: string, left: number) => `${slots === 1 ? 'First wallet' : `First ${slots} wallets`}: ${price} USDT · ${left} left`,
   button: {
     connectAndPay: (price: string, token: string) => `Connect wallet and pay ${price} ${token}`,
     pay: (price: string, token: string) => `Pay ${price} ${token}`,
@@ -100,6 +100,8 @@ export const ORDER_FORM = {
     refused: 'We can’t make a video of this site. Nothing was charged.',
     unavailable: (retryAfterSeconds: number) => `We can’t check sites right now. Try again ${againIn(retryAfterSeconds)}.`,
     noFunds: (price: string) => `You need ${price} USDT or USDC on Celo.`,
+    /** The wallet's quote asks more than the button said (the promo ran out, the price changed): nothing was signed. */
+    priceRaised: (price: string) => `The price for your wallet is now ${price} USDT or USDC. Nothing was charged. Press the button again to pay it.`,
     signatureCancelled: 'You cancelled the signature. Nothing was charged.',
     connectCancelled: 'You didn’t connect a wallet. Nothing was charged.',
     wrongNetwork: 'Your wallet has to be on Celo to pay. Nothing was charged.',

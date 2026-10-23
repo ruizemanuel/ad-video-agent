@@ -70,7 +70,7 @@ describe('payOrder', () => {
     const signer = privateKeyToAccount(generatePrivateKey());
     const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_abc', statusUrl: 'https://ad-video-agent.example/v1/videos/ord_abc' }));
 
-    expect(await payOrder({ input: INPUT, required: required(), token: 'USDC', signer, fetcher })).toEqual({ ok: true, orderId: 'ord_abc' });
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDC', signer, maxAmountAtomic: 50_000n, fetcher })).toEqual({ ok: true, orderId: 'ord_abc' });
 
     expect(sent).toHaveLength(1);
     const [request] = sent;
@@ -98,17 +98,17 @@ describe('payOrder', () => {
     const signer = privateKeyToAccount(generatePrivateKey());
     const reason = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
     const gone = fakeFetch(() => json(409, { error: 'promo_unavailable', reason }));
-    expect(await payOrder({ input: INPUT, required: required('10000'), token: 'USDT', signer, fetcher: gone.fetcher })).toEqual({ ok: false, reason });
+    expect(await payOrder({ input: INPUT, required: required('10000'), token: 'USDT', signer, maxAmountAtomic: 10_000n, fetcher: gone.fetcher })).toEqual({ ok: false, reason });
 
     const invalid = fakeFetch(() => json(400, { error: 'invalid_payment', reason: 'The payment must be a USDT or USDC authorization.' }));
-    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher: invalid.fetcher })).toEqual({
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: invalid.fetcher })).toEqual({
       ok: false,
       reason: 'The payment must be a USDT or USDC authorization.',
     });
 
     // A payment the service turned down before taking it says no reason of its own: nothing was charged.
     const turnedDown = fakeFetch(() => json(402, { precheck: { thinSite: false }, price: { amount: '0.05', assets: ['USDT', 'USDC'] } }, { 'payment-required': encodePaymentRequiredHeader(required()) }));
-    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher: turnedDown.fetcher })).toEqual({
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: turnedDown.fetcher })).toEqual({
       ok: false,
       reason: ORDER_FORM.errors.paymentRefused,
     });
@@ -119,11 +119,11 @@ describe('payOrder', () => {
     // The settlement failed or ended in doubt after the order was made: the order page says how it ends.
     for (const status of [402, 500, 502]) {
       const { fetcher } = fakeFetch(() => json(status, { error: 'settlement_failed', orderId: 'ord_doubt', statusUrl: 'https://ad-video-agent.example/v1/videos/ord_doubt' }));
-      expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher }), String(status)).toEqual({ ok: true, orderId: 'ord_doubt' });
+      expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher }), String(status)).toEqual({ ok: true, orderId: 'ord_doubt' });
     }
     // An error with no order named: the payment may have gone, so nothing is said to have been charged or not.
     const unknown = fakeFetch(() => new Response('<h1>Bad Gateway</h1>', { status: 502 }));
-    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher: unknown.fetcher })).toEqual({
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: unknown.fetcher })).toEqual({
       ok: false,
       reason: ORDER_FORM.errors.notConfirmed,
     });
@@ -134,23 +134,40 @@ describe('payOrder', () => {
     const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
     const signer = { address: account.address, signTypedData: () => Promise.reject(rejection) };
     const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_never' }));
-    await expect(payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher })).rejects.toBe(rejection);
+    await expect(payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher })).rejects.toBe(rejection);
     expect(sent).toEqual([]);
   });
 
   it('payOrder says the payment is not confirmed when its answer never comes back', async () => {
     const signer = privateKeyToAccount(generatePrivateKey());
     const { fetcher, sent } = fakeFetch(() => Promise.reject(new TypeError('Failed to fetch')));
-    await expect(payOrder({ input: INPUT, required: required(), token: 'USDT', signer, fetcher })).rejects.toBeInstanceOf(PaymentNotConfirmed);
+    await expect(payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher })).rejects.toBeInstanceOf(PaymentNotConfirmed);
     // Sent once, and never again.
     expect(sent).toHaveLength(1);
   });
 
-  it('payOrder never signs for more than the page asks a wallet to pay', async () => {
+  it('payOrder refuses to sign above the cap it is given', async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    let asked = 0;
+    const signer = { address: account.address, signTypedData: (typed: Parameters<typeof account.signTypedData>[0]) => ((asked += 1), account.signTypedData(typed)) };
+    const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_dear' }));
+    // The button said 0.01; the quote asks 0.05, in either token.
+    for (const token of ['USDT', 'USDC'] as const) {
+      await expect(payOrder({ input: INPUT, required: required('50000'), token, signer, maxAmountAtomic: 10_000n, fetcher }), token).rejects.toThrow();
+    }
+    expect(asked).toBe(0);
+    expect(sent).toEqual([]);
+
+    // Up to the cap, it signs.
+    expect(await payOrder({ input: INPUT, required: required('10000'), token: 'USDT', signer, maxAmountAtomic: 10_000n, fetcher })).toEqual({ ok: true, orderId: 'ord_dear' });
+    expect(asked).toBe(1);
+  });
+
+  it('payOrder never signs for more than the page asks a wallet to pay, whatever cap it is given', async () => {
     const signer = privateKeyToAccount(generatePrivateKey());
     const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_dear' }));
-    // 1000 USDT: no price the page shows comes near it.
-    await expect(payOrder({ input: INPUT, required: required('1000000000'), token: 'USDT', signer, fetcher })).rejects.toThrow();
+    // 1000 USDT: no price the page shows comes near it, even with a cap that would allow it.
+    await expect(payOrder({ input: INPUT, required: required('1000000000'), token: 'USDT', signer, maxAmountAtomic: 2_000_000_000n, fetcher })).rejects.toThrow();
     expect(sent).toEqual([]);
   });
 });

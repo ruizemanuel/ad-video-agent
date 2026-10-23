@@ -179,12 +179,21 @@ const TYPES: Record<string, string> = {
   '.wav': 'audio/wav',
 };
 
+/** An answer given in the app's place: a status, a JSON or text body, and headers. */
+export type AppAnswer = { status: number; contentType: string; body: string; headers?: Record<string, string> };
+
 export type LaunchedPage = {
   browser: Browser;
   page: Page;
   wallet: StubWallet;
   /** Every request the page made that was cut off, by URL, in order. */
   blockedRequests(): string[];
+  /**
+   * From now on, the page's requests to the app that `answer` takes (it gives null for the rest) are answered by it in
+   * the app's place, and never reach the app: for an answer the app cannot be brought to give on cue, such as the loser
+   * of a race. The rest go through as before.
+   */
+  answerForApp(answer: (request: HTTPRequest) => Promise<AppAnswer | null> | AppAnswer | null): void;
 };
 
 /** Answers a JSON-RPC POST to Celo's node with the wallet's reads, a batch included. */
@@ -227,7 +236,7 @@ async function serveBlob(request: HTTPRequest, fakeDir: string): Promise<void> {
 /**
  * Opens a page of `app` in Chrome Headless Shell (downloaded on the first run, as the VM's is), 1280 px wide, with a
  * stub wallet (see wallet.ts) put in it before any script of the page runs. The page reaches nothing past this machine:
- * - the app's own address goes through;
+ * - the app's own address goes through (save what the test answers itself, see `answerForApp`);
  * - Celo's node (https://forno.celo.org) is answered with the wallet's own reads;
  * - the fake blob store's links (https://fake-blob.invalid/...), where the app's download links redirect, are answered
  *   with the file under `<fakeDir>/blob`;
@@ -251,8 +260,13 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
     await page.evaluateOnNewDocument(inPageWallet, WALLET_BINDING, walletInfo());
 
     const blocked: string[] = [];
+    let inAppsPlace: Parameters<LaunchedPage['answerForApp']>[0] | undefined;
     const route = async (request: HTTPRequest): Promise<void> => {
       const url = new URL(request.url());
+      if (url.origin === appUrl.origin && inAppsPlace !== undefined) {
+        const answer = await inAppsPlace(request);
+        if (answer !== null) return request.respond(answer);
+      }
       if (url.origin === appUrl.origin || url.protocol === 'data:' || url.protocol === 'blob:') return request.continue();
       if (url.origin === CELO_NODE) return answerNode(request, read);
       if (url.hostname === FAKE_BLOB_HOST) return serveBlob(request, app.fakeDir);
@@ -267,7 +281,15 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
         await request.abort('failed').catch(() => undefined);
       });
     });
-    return { browser, page, wallet, blockedRequests: () => [...blocked] };
+    return {
+      browser,
+      page,
+      wallet,
+      blockedRequests: () => [...blocked],
+      answerForApp: (answer) => {
+        inAppsPlace = answer;
+      },
+    };
   } catch (error) {
     await browser.close();
     throw error;
