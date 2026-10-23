@@ -257,6 +257,19 @@ describe('payOrder', () => {
     expect(asked).toBe(1);
   });
 
+  it('payOrder pays the opening price, 2 USDT or USDC, through its spend controls', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    // Above x402's own default of $1 a payment, which the page lifts for the chosen token only.
+    for (const token of ['USDT', 'USDC'] as const) {
+      const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_opening' }));
+      expect(await payOrder({ input: INPUT, required: required('2000000'), token, signer, maxAmountAtomic: 2_000_000n, fetcher }), token).toEqual({ ok: true, orderId: 'ord_opening' });
+      expect(sent, token).toHaveLength(1);
+      const payment = decodePaymentSignatureHeader(sent[0]?.headers.get('payment-signature') ?? '');
+      expect(payment.accepted, token).toMatchObject({ asset: TOKENS[token].address, amount: '2000000' });
+      expect((payment.payload as { authorization: Authorization }).authorization.value, token).toBe('2000000');
+    }
+  });
+
   it('payOrder never signs for more than the page asks a wallet to pay, whatever cap it is given', async () => {
     const signer = privateKeyToAccount(generatePrivateKey());
     const { fetcher, sent } = fakeFetch(() => json(202, { orderId: 'ord_dear' }));
