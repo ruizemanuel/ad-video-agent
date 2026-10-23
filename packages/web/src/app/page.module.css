@@ -1,0 +1,377 @@
+/* The home. At a computer's width: the headline and the order on the left, the two examples on the right, then how it
+   works and the API, each under its own rule with the title in a left column. On a phone, one column, with the
+   examples straight after the headline. */
+.page {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 48px var(--gutter) 112px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 470px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    'intro examples'
+    'buy examples';
+  column-gap: 64px;
+  align-items: start;
+}
+
+.intro {
+  grid-area: intro;
+}
+
+.title {
+  font: 400 64px/1.02 var(--serif);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.lede {
+  color: var(--muted);
+  font-size: 18px;
+  margin-top: 16px;
+  max-width: 520px;
+  text-wrap: pretty;
+}
+
+/* What an order includes and costs, the order and its fine print. */
+.buy {
+  grid-area: buy;
+  margin-top: 36px;
+  max-width: 634px;
+}
+
+.included {
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0 14px;
+}
+
+.includedHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 24px;
+}
+
+.includedHead h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.price {
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.price strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.items {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.items li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* Each item is marked with a small 9:16 phone, the shape of the brand's mark. */
+.items li::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 11px;
+  border-radius: 1.5px;
+  background: var(--accent);
+}
+
+.order {
+  margin-top: 28px;
+}
+
+.order h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.fine {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 18px;
+  max-width: 600px;
+  text-wrap: pretty;
+}
+
+.fine a {
+  color: var(--ink);
+}
+
+/* The examples, in phone frames. The second one sits lower, so they read as two separate videos. */
+.examples {
+  grid-area: examples;
+}
+
+.examplesTitle {
+  font: italic 400 24px/1.2 var(--serif);
+  margin-bottom: 18px;
+}
+
+.phones {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+
+.example:nth-child(2) {
+  margin-top: 44px;
+}
+
+.phone {
+  padding: 6px;
+  border-radius: 28px;
+  background: var(--ink);
+  box-shadow: 0 26px 50px -24px rgba(20, 20, 20, 0.45);
+}
+
+.phone video {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  border-radius: 22px;
+  background: var(--ink);
+}
+
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 12px;
+  padding-left: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.site {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.note {
+  flex-basis: 100%;
+}
+
+/* How it works, and the API: a rule, the title on the left, the content on the right. */
+.section {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px 64px;
+  margin-top: 96px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 24px;
+}
+
+.sectionTitle {
+  font: 400 40px/1.1 var(--serif);
+  letter-spacing: -0.01em;
+}
+
+.sectionLede {
+  color: var(--muted);
+  font-size: 15px;
+  margin-top: 12px;
+  max-width: 300px;
+}
+
+.steps {
+  list-style: none;
+  counter-reset: step;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px 40px;
+}
+
+.steps li {
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  display: block;
+  font: 400 48px/1 var(--serif);
+  margin-bottom: 14px;
+}
+
+.steps h3,
+.apiSteps h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.steps p {
+  color: var(--muted);
+  font-size: 14px;
+  max-width: 260px;
+}
+
+.api {
+  min-width: 0;
+}
+
+.apiSteps {
+  list-style: none;
+  counter-reset: step;
+}
+
+.apiSteps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 4px 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.apiSteps li:first-child {
+  padding-top: 4px;
+}
+
+.apiSteps h3::before {
+  content: counter(step) '. ';
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.apiSteps p {
+  font-size: 14px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.apiSteps code {
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.exampleIntro {
+  margin-top: 24px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.code {
+  margin-top: 10px;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* A narrow window: one column, the examples straight after the headline. */
+@media (max-width: 960px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      'intro'
+      'examples'
+      'buy';
+  }
+
+  .examples {
+    margin-top: 36px;
+    max-width: 470px;
+  }
+
+  .section {
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 72px;
+  }
+
+  .sectionLede {
+    max-width: 520px;
+  }
+}
+
+/* A phone. */
+@media (max-width: 640px) {
+  .page {
+    padding-top: 32px;
+    padding-bottom: 80px;
+  }
+
+  .title {
+    font-size: 46px;
+  }
+
+  .lede {
+    font-size: 17px;
+  }
+
+  .examplesTitle {
+    font-size: 21px;
+  }
+
+  .phones {
+    gap: 16px;
+  }
+
+  .example:nth-child(2) {
+    margin-top: 28px;
+  }
+
+  .phone {
+    padding: 5px;
+    border-radius: 22px;
+  }
+
+  .phone video {
+    border-radius: 17px;
+  }
+
+  .sectionTitle {
+    font-size: 34px;
+  }
+
+  .steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .steps li {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    column-gap: 12px;
+  }
+
+  .steps li::before {
+    grid-row: span 2;
+    font-size: 40px;
+    margin-bottom: 0;
+  }
+
+  .apiSteps li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,0 +1,168 @@
+/* The design tokens and the base every page stands on: a warm paper background, ink, one green, Instrument Serif for
+   headings and IBM Plex for the text. The fonts reach here as variables set by next/font in layout.tsx. */
+:root {
+  --bg: #f4f2ec;
+  --card: #fbfaf7;
+  --ink: #141414;
+  --muted: #6c6a64;
+  --line: #dedad0;
+  --accent: #1f6f4a;
+  --soft: #e9e6dd;
+
+  --serif: var(--font-serif), Georgia, 'Times New Roman', serif;
+  --sans: var(--font-sans), system-ui, sans-serif;
+  --mono: var(--font-mono), ui-monospace, Menlo, Consolas, monospace;
+
+  /* The widest the content gets, and its side margin. */
+  --page: 1280px;
+  --gutter: 56px;
+
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+img,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+pre {
+  font-family: var(--mono);
+}
+
+/* The header of every page. */
+.site-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.site-header-inner {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 22px var(--gutter);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px 28px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.brand i {
+  width: 14px;
+  height: 24px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.site-nav a {
+  text-decoration: none;
+}
+
+.site-nav a:hover {
+  color: var(--ink);
+}
+
+/* A plain document, such as the terms. */
+.doc {
+  max-width: calc(40rem + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: 56px var(--gutter) 96px;
+}
+
+.doc h1 {
+  font: 400 52px/1.04 var(--serif);
+  letter-spacing: -0.01em;
+  margin-bottom: 16px;
+}
+
+.doc h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 32px 0 6px;
+}
+
+.doc p {
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 20px;
+  }
+
+  .site-header-inner {
+    padding-block: 16px;
+  }
+
+  .site-nav {
+    gap: 4px 20px;
+  }
+
+  .doc {
+    padding-top: 40px;
+  }
+
+  .doc h1 {
+    font-size: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

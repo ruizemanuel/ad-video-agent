@@ -7,3 +7,5 @@ next-env.d.ts
 /.workflow-data
 # The browser tests' clip (27 KB, made with ffmpeg) is kept, past the root's "*.mp4".
 !/test/browser/fixtures/*.mp4
+# The two example videos of the home (2.5 and 2.2 MB, real deliveries) are kept, past the root's "*.mp4".
+!/public/examples/*.mp4

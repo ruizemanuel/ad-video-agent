@@ -1,4 +1,5 @@
-// The terms a client accepts by paying. The 402 of POST /v1/videos points here.
+// The terms a client accepts by paying. The 402 of POST /v1/videos points here. A plain document (`doc` in
+// globals.css), under the layout's header.
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -8,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <main style={{ maxWidth: '42rem', margin: '0 auto', padding: '3rem 1rem' }}>
+    <main className="doc">
       <h1>Terms of service</h1>
       <p>By paying for an order you agree to the following.</p>
 
