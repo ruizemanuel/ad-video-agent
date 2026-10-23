@@ -170,14 +170,15 @@ describe('the order page', () => {
       expect((await said(page)).replace(/’/g, "'")).toContain("We couldn't make a video that passes our check. Your payment is on its way back. Refund: on its way.");
       expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'now']);
 
-      // It is not over, so the page goes on asking, and shows the end when it comes.
+      // It is not over, so the page goes on asking, and shows the end when it comes. The order is moved and its refund
+      // step is left `running`, as the reconciliation leaves a refund it settles: the order's status is the last word.
       await waitForFirstPoll(page);
       await store.updateRefund(id, txHash, { status: 'confirmed' });
       await store.transition(id, 'refunded');
-      await store.setStep(id, 'refund', 'done');
       await waitForText(page, 'Refund: sent.', FOLLOWS);
       expect(await page.$$eval('a', (links) => links.map((link) => link.href))).toContain(`https://celoscan.io/tx/${txHash}`);
       expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'done']);
+      expect(await page.$(CURRENT)).toBeNull();
       expect(blockedRequests()).toEqual([]);
     } finally {
       await browser.close();

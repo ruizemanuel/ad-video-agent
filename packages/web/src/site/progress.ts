@@ -15,12 +15,29 @@ export type ProgressRow = { label: string; state: RowState };
 /** How often the page asks for the order's status while the order is not over. */
 export const POLL_MS = 5000;
 
-/** The states an order does not leave. (`refunding` is not one: its refund is still on its way.) */
-const ENDS: readonly OrderState[] = ['delivered', 'unpaid', 'refunded', 'refund_failed', 'expired'];
-/** The states in which the video is being made: a step not yet begun is the one that comes next. */
-const MAKING: readonly OrderState[] = ['awaiting_settlement', 'paid', 'running'];
+/** What the page shows of an order: its making, the refund of one that could not be made, or the end it came to. */
+export type Phase = 'making' | 'refund' | 'unpaid' | 'expired' | 'delivered';
 
-export const isTerminal = (status: OrderState): boolean => ENDS.includes(status);
+/**
+ * What the page does with each status of an order: what it shows, and whether the order is over (it will not change
+ * again, so the page stops asking and the status is the last word on the steps). The one list of them, a record over
+ * every status: one added to the service does not compile until it is placed here. (`refunding` is not over: its
+ * refund is still on its way.)
+ */
+const STATUSES: Record<OrderState, { phase: Phase; over: boolean }> = {
+  awaiting_settlement: { phase: 'making', over: false },
+  paid: { phase: 'making', over: false },
+  running: { phase: 'making', over: false },
+  delivered: { phase: 'delivered', over: true },
+  unpaid: { phase: 'unpaid', over: true },
+  refunding: { phase: 'refund', over: false },
+  refunded: { phase: 'refund', over: true },
+  refund_failed: { phase: 'refund', over: true },
+  expired: { phase: 'expired', over: true },
+};
+
+export const isTerminal = (status: OrderState): boolean => STATUSES[status].over;
+export const phaseOf = (status: OrderState): Phase => STATUSES[status].phase;
 
 /** What a row stands on: a step in the flow's words, where a skipped step counts as done. */
 type Seen = 'done' | 'running' | 'failed' | 'pending';
@@ -41,23 +58,48 @@ function folded(status: StatusJson, first: StepName, last: StepName): Seen {
   return a === 'done' ? b : a;
 }
 
-/** The rows of the order's progress, in the order they happen. `now` is on one row at most. */
+/**
+ * The music step fails only when the music could not be made: the order goes on without it and is delivered, never
+ * refunded for it. So it is shown as a step that is over, with a name that says what happened.
+ */
+function musicRow(status: StatusJson): { label: string; seen: Seen } {
+  const state = seen(status, 'music');
+  return state === 'failed' ? { label: ORDER_PAGE.steps.noMusic, seen: 'done' } : { label: ORDER_PAGE.steps.music, seen: state };
+}
+
+/**
+ * What the refund step stands on. An order that is over says how its refund ended, whatever the step says: the flow and
+ * the reconciliation move the order's status and its step in two writes, or the step not at all.
+ */
+function refundSeen(status: StatusJson): Seen {
+  if (status.status === 'refunded') return 'done';
+  if (status.status === 'refund_failed') return 'failed';
+  return seen(status, 'refund');
+}
+
+/**
+ * The rows of the order's progress, in the order they happen. `now` is on one row at most, and on none once the order
+ * is over: from then on the status is the last word, so a step the order left running is not being done.
+ */
 export function progressRows(status: StatusJson, audio: 'music' | 'none'): ProgressRow[] {
   const { steps } = ORDER_PAGE;
   const rows: { label: string; seen: Seen }[] = [
     { label: steps.payment, seen: seen(status, 'payment') },
     { label: steps.capture, seen: folded(status, 'vm', 'capture') },
     { label: steps.script, seen: seen(status, 'script') },
-    ...(audio === 'music' ? [{ label: steps.music, seen: seen(status, 'music') }] : []),
+    ...(audio === 'music' ? [musicRow(status)] : []),
     { label: steps.preview, seen: seen(status, 'preview') },
     { label: steps.review, seen: seen(status, 'review') },
     { label: steps.render, seen: folded(status, 'render', 'delivery') },
-    ...(status.steps.some((step) => step.name === 'refund') ? [{ label: steps.refund, seen: seen(status, 'refund') }] : []),
+    ...(status.steps.some((step) => step.name === 'refund') ? [{ label: steps.refund, seen: refundSeen(status) }] : []),
   ];
 
   // The step being done; or, while the video is being made and none has begun, the one that comes next.
-  let now = rows.findIndex((row) => row.seen === 'running');
-  if (now === -1 && MAKING.includes(status.status)) now = rows.findIndex((row) => row.seen === 'pending');
+  let now = -1;
+  if (!isTerminal(status.status)) {
+    now = rows.findIndex((row) => row.seen === 'running');
+    if (now === -1 && phaseOf(status.status) === 'making') now = rows.findIndex((row) => row.seen === 'pending');
+  }
   return rows.map(({ label, seen: state }, index) => ({
     label,
     state: state === 'done' ? 'done' : state === 'failed' ? 'failed' : index === now ? 'now' : 'todo',

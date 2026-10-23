@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatusJson } from '../src/payments/orders';
-import type { StepName, StepState } from '../src/ports';
-import { followStatus, isTerminal, POLL_MS, progressRows } from '../src/site/progress';
+import { ORDER_STATUSES, type StepName, type StepState } from '../src/ports';
+import { followStatus, isTerminal, phaseOf, POLL_MS, progressRows } from '../src/site/progress';
 
 /** Every step of the status, in order; those not in `steps` are `pending`, and `refund` is there only when it is given. */
 function status(steps: Partial<Record<StepName, StepState>> = {}, over: Partial<StatusJson> = {}): StatusJson {
@@ -96,6 +96,38 @@ describe('progressRows', () => {
     expect(stuck.at(-1)).toEqual({ label: 'Refund sent', state: 'failed' });
   });
 
+  it('lets an order that has ended say how its refund ended, whatever the step says', () => {
+    // The flow moves the order to `refunded` and then its step; the reconciliation moves the order and not the step.
+    const sent = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refunded' }), 'music');
+    expect(sent.at(-1)).toEqual({ label: 'Refund sent', state: 'done' });
+    expect(states(sent)).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'done']);
+
+    const delayed = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refund_failed' }), 'music');
+    expect(delayed.at(-1)).toEqual({ label: 'Refund sent', state: 'failed' });
+    expect(states(delayed)).not.toContain('now');
+  });
+
+  it('has no step now once the order is over, even one the order left running', () => {
+    for (const end of ORDER_STATUSES.filter(isTerminal)) {
+      const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'running', refund: 'running' }, { status: end }), 'music');
+      expect(states(rows), end).not.toContain('now');
+      expect(rows[1]?.state, end).toBe('todo');
+    }
+    // While the refund is on its way, it is the step being done.
+    expect(progressRows(status({ payment: 'done', capture: 'failed', refund: 'running' }, { status: 'refunding' }), 'music').at(-1)?.state).toBe('now');
+  });
+
+  it('shows music that could not be made as a step that is over, in every status', () => {
+    for (const order of ORDER_STATUSES) {
+      const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'failed' }, { status: order }), 'music');
+      expect(rows[3], order).toEqual({ label: 'No music this time', state: 'done' });
+    }
+    // The video goes on: the step after it is the one being done, and nothing is red.
+    const going = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'failed', preview: 'running' }), 'music');
+    expect(states(going)).toEqual(['done', 'done', 'done', 'done', 'now', 'todo', 'todo']);
+    expect(labels(progressRows(status({ music: 'failed' }), 'none'))).not.toContain('No music this time');
+  });
+
   it('marks nothing as now for an order that never got going', () => {
     expect(states(progressRows(status({}, { status: 'unpaid' }), 'music'))).not.toContain('now');
     expect(states(progressRows(status({}, { status: 'expired' }), 'music'))).not.toContain('now');
@@ -109,6 +141,22 @@ describe('isTerminal', () => {
 
   it.each(['awaiting_settlement', 'paid', 'running', 'refunding'] as const)('goes on at %s', (going) => {
     expect(isTerminal(going)).toBe(false);
+  });
+});
+
+describe('the statuses of an order', () => {
+  it('says for every one whether it is over, and what the page shows', () => {
+    expect(Object.fromEntries(ORDER_STATUSES.map((order) => [order, [isTerminal(order), phaseOf(order)]]))).toEqual({
+      awaiting_settlement: [false, 'making'],
+      paid: [false, 'making'],
+      running: [false, 'making'],
+      delivered: [true, 'delivered'],
+      unpaid: [true, 'unpaid'],
+      refunding: [false, 'refund'],
+      refunded: [true, 'refund'],
+      refund_failed: [true, 'refund'],
+      expired: [true, 'expired'],
+    });
   });
 });
 

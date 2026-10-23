@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { StatusJson } from '../payments/orders';
 import { ORDER_PAGE } from './copy';
 import styles from './OrderView.module.css';
-import { followStatus, progressRows, type ProgressRow } from './progress';
+import { followStatus, phaseOf, progressRows, type ProgressRow } from './progress';
 
 export type OrderViewProps = {
   /** The order's status as the server read it. */
@@ -21,20 +21,6 @@ export type OrderViewProps = {
   link: string;
 };
 
-type Phase = 'making' | 'refund' | 'unpaid' | 'expired' | 'delivered';
-
-const PHASE: Record<StatusJson['status'], Phase> = {
-  awaiting_settlement: 'making',
-  paid: 'making',
-  running: 'making',
-  refunding: 'refund',
-  refunded: 'refund',
-  refund_failed: 'refund',
-  unpaid: 'unpaid',
-  expired: 'expired',
-  delivered: 'delivered',
-};
-
 /** One look at the order's status; null when the answer is not one. */
 async function lookAtOrder(id: string, signal: AbortSignal): Promise<StatusJson | null> {
   const res = await fetch(`/v1/videos/${encodeURIComponent(id)}`, { cache: 'no-store', signal });
@@ -46,7 +32,7 @@ export function OrderView({ initial, audio, site, shortId, link }: OrderViewProp
   // From what the server read, once: it stops by itself at an end, so the answers it brings do not start it again.
   useEffect(() => followStatus(initial.status, (signal) => lookAtOrder(initial.id, signal), setStatus), [initial.id, initial.status]);
 
-  const phase = PHASE[status.status];
+  const phase = phaseOf(status.status);
   const rows = progressRows(status, audio);
   return (
     <main className={styles.page}>

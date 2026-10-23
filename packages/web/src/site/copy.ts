@@ -170,6 +170,8 @@ export const ORDER_PAGE = {
     capture: 'Site captured',
     script: 'Script written, every line sourced',
     music: 'Music chosen',
+    /** The music could not be made: the video goes on without it. */
+    noMusic: 'No music this time',
     preview: 'Key frames ready',
     review: 'Quality check',
     render: 'Final video',

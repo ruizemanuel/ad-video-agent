@@ -8,6 +8,7 @@ import { getAdapters } from '../src/adapters';
 import OrderPage, { dynamic, metadata } from '../src/app/o/[id]/page';
 import { GET } from '../src/app/v1/videos/[id]/route';
 import { readStatus, type StatusJson } from '../src/payments/orders';
+import { ORDER_STATUSES } from '../src/ports';
 import { OrderView } from '../src/site/OrderView';
 import { seedOrder, SEEDED_PAYER, type SeedState } from './browser/support/seed';
 
@@ -155,7 +156,7 @@ describe('the order page', () => {
 
 describe('the refund of an order', () => {
   const HASH = `0x${'ab'.repeat(32)}`;
-  const view = (status: StatusJson['status'], refund?: StatusJson['refund']): string =>
+  const view = (status: StatusJson['status'], refund?: StatusJson['refund'], refundStep?: 'running' | 'done' | 'failed'): string =>
     renderToStaticMarkup(
       createElement(OrderView, {
         initial: {
@@ -164,7 +165,7 @@ describe('the refund of an order', () => {
           steps: [
             { name: 'payment', state: 'done' },
             { name: 'capture', state: 'failed' },
-            { name: 'refund', state: status === 'refunded' ? 'done' : status === 'refund_failed' ? 'failed' : 'running' },
+            { name: 'refund', state: refundStep ?? (status === 'refunded' ? 'done' : status === 'refund_failed' ? 'failed' : 'running') },
           ],
           warnings: [],
           ...(refund === undefined ? {} : { refund }),
@@ -193,6 +194,26 @@ describe('the refund of an order', () => {
   it('says it is delayed, and that it will still reach the wallet that paid', () => {
     const html = view('refund_failed', { status: 'reverted', txHash: null });
     expect(words(html)).toContain(`${REFUND_REASON} Refund: delayed. It will still reach the wallet you paid from.`);
+  });
+
+  it('shows the refund step as ended once the order says so, whatever the step says', () => {
+    // The step can still say `running` when the order is already over, and the page does not poll again to find out.
+    const sent = view('refunded', { status: 'confirmed', txHash: HASH }, 'running');
+    expect(rows(sent).at(-1)).toEqual({ state: 'done', words: expect.stringContaining('Refund sent') });
+    expect(rows(sent).map(({ state }) => state)).not.toContain('now');
+    expect(sent).not.toContain('aria-current');
+
+    const delayed = view('refund_failed', { status: 'reverted', txHash: null }, 'running');
+    expect(rows(delayed).at(-1)).toEqual({ state: 'failed', words: expect.stringContaining('Refund sent') });
+    expect(delayed).not.toContain('aria-current');
+  });
+
+  it('shows a page for every status of an order', () => {
+    for (const order of ORDER_STATUSES) {
+      const html = view(order, undefined, 'running').replace(/<main[^>]*>/, '');
+      expect(words(html).trim(), order).not.toBe('');
+      expect(html, order).toMatch(/<h1[ >]/);
+    }
   });
 
   it('shows which step failed and the refund step', () => {
