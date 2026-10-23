@@ -89,7 +89,7 @@ Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks
 | --- | --- | --- | --- |
 | `PAYTO_ADDRESS` | Yes | No | The address that receives the payments. |
 | `PRICE_ATOMIC` | No, default `5000000` | No | The price of an order in the smallest unit of USDT and USDC, which have 6 decimals: `5000000` is 5. |
-| `PROMO_SLOTS` | No, default `0` | No | How many wallets get their first video at 0.01 USDT or USDC; `0` turns the promo off. A wallet is offered that price when the quote names it in the `x-payer` header and it has no video yet, and the payment must come from that wallet. Its order holds a slot while its video is on the way or delivered, and gives it back if the order ends unpaid or refunded. |
+| `PROMO_SLOTS` | No, default `0` | No | How many wallets get their first video at 0.01 USDT or USDC; `0` turns the promo off. A wallet is offered that price when the quote names it in the `x-payer` header and it has no video yet, and the payment must come from that wallet. Its order holds a slot while its video is on the way or delivered, and gives it back if the order ends unpaid or refunded. `GET /v1/offer` says how many are left. |
 | `TEAM_WALLETS` | No | No | The team's wallets, separated by commas (`0x` and 40 hex characters each): they are never offered the first-video price. |
 | `X402_API_KEY` | Yes | Yes | The key for Celo's x402 facilitator, which checks and settles the payments. A person makes it at x402.celo.org. |
 | `SPEND_WALLET_PRIVATE_KEY` | Yes | Yes | The spend wallet's key (`0x` and 64 hex characters). |
