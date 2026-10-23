@@ -5,3 +5,5 @@ next-env.d.ts
 # Written by the workflow integration tests (@workflow/vitest): the test build of the workflows and its run data.
 /.workflow-vitest
 /.workflow-data
+# The browser tests' clip (27 KB, made with ffmpeg) is kept, past the root's "*.mp4".
+!/test/browser/fixtures/*.mp4

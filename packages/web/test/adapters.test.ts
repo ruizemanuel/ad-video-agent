@@ -167,6 +167,40 @@ describe('getAdapters', () => {
     expect(await deps.llm.classifySite({ url: 'https://example.com/', title: 'Example', text: 'A shop.' })).toMatchObject({ admissible: true });
   });
 
+  it('gives the videos route the fake facilitator and the fake page fetcher on the fake adapters, so a quote or a payment stays here', async () => {
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
+    vi.stubEnv('FAKE_DIR', await tempDir());
+    for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
+    const { videosDeps } = await import('../src/app/v1/videos/deps');
+    const { FakeFacilitator } = await import('../src/adapters/fake/facilitator');
+    const { fakeFetchPage } = await import('../src/adapters/fake/fetch-page');
+    const deps = await videosDeps();
+    expect(deps.facilitator).toBeInstanceOf(FakeFacilitator);
+    expect(deps.fetchPage).toBe(fakeFetchPage);
+    expect(await videosDeps()).toBe(deps);
+  });
+
+  it('leaves the videos route on Celo’s facilitator and the real page fetcher on the real adapters', async () => {
+    const real = {
+      ...common,
+      DATABASE_URL: 'memory',
+      BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_secretpart',
+      X402_API_KEY: 'x402_abc',
+      SPEND_WALLET_PRIVATE_KEY: `0x${'2'.repeat(64)}`,
+      REFUND_WALLET_PRIVATE_KEY: `0x${'3'.repeat(64)}`,
+      GEMINI_API_KEY: 'gemini-key',
+      PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
+      GITHUB_REPO: 'ruizemanuel/ad-video-agent',
+    };
+    for (const [name, value] of Object.entries(real)) vi.stubEnv(name, value);
+    vi.stubEnv('AD_AGENT_ADAPTERS', 'real');
+    const { videosDeps } = await import('../src/app/v1/videos/deps');
+    const { fakeFetchPage } = await import('../src/adapters/fake/fetch-page');
+    const deps = await videosDeps();
+    expect(deps.facilitator).toBeUndefined();
+    expect(deps.fetchPage).not.toBe(fakeFetchPage);
+  });
+
   it('rejects, instead of throwing, when the environment is wrong', async () => {
     vi.stubEnv('AD_AGENT_ADAPTERS', 'fake');
     vi.stubEnv('PAYTO_ADDRESS', 'not-an-address');

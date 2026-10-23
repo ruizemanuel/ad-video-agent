@@ -193,7 +193,8 @@ describe('GET /api/vm/tasks/next', () => {
     const order = await runningOrder();
     const task = await queue(order, 'capture');
     const expired = await permitFor(order, aMinuteAgo());
-    for (const headers of [{}, { authorization: 'Bearer' }, { authorization: 'Basic abc' }, { authorization: `Bearer ${issueVmToken().token}` }, { authorization: `Bearer ${expired}` }, { authorization: `Bearer ${expired} extra` }]) {
+    const headerSets: Record<string, string>[] = [{}, { authorization: 'Bearer' }, { authorization: 'Basic abc' }, { authorization: `Bearer ${issueVmToken().token}` }, { authorization: `Bearer ${expired}` }, { authorization: `Bearer ${expired} extra` }];
+    for (const headers of headerSets) {
       const res = await NEXT(new Request(`${BASE}/api/vm/tasks/next`, { headers }));
       expect(res.status).toBe(401);
       expect(res.headers.get('www-authenticate')).toBe('Bearer');

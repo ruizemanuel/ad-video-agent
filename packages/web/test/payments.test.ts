@@ -6,12 +6,12 @@ import { x402HTTPResourceServer, type HTTPAdapter } from '@x402/core/server';
 import type { PaymentRequirements } from '@x402/core/types';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
+import { FakeFacilitator } from '../src/adapters/fake/facilitator';
 import { FileStore } from '../src/adapters/fake/store';
 import type { NewOrder } from '../src/ports';
 import { markPaidAndStart, startRun } from '../src/payments/orders';
 import { createResourceServer, formatPrice, PROMO_PRICE_ATOMIC, promoGate, routeConfig, TOKENS, type PromoGate } from '../src/payments/x402';
 import { orderWorkflow } from '../src/workflows/order';
-import { FakeFacilitator } from './support/fake-facilitator';
 
 vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_unit' })) }));
 

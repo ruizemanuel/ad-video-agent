@@ -1,7 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["es2023"],
+    // The `dom` types are for the code that runs in a browser: the functions the browser tests send to the page.
+    "lib": ["es2023", "dom"],
     "types": ["node"]
   },
   "include": ["src", "test", "scripts", "*.ts"]

@@ -8,6 +8,7 @@
     "build": "next build",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -36,12 +37,14 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@remotion/renderer": "4.0.536",
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vercel/config": "0.12.0",
     "@workflow/vitest": "5.0.5",
     "drizzle-kit": "0.31.11",
+    "puppeteer-core": "25.14.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.0.5"

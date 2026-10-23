@@ -8,6 +8,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { getAdapters } from '../src/adapters';
+import { FAKE_SETTLE_TX, FakeFacilitator } from '../src/adapters/fake/facilitator';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
@@ -16,7 +17,6 @@ import { ModelCallFailed, ModelOutputInvalid, type NewOrder, type OrderStore } f
 import { PROMO_PRICE_ATOMIC, TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
-import { FAKE_SETTLE_TX, FakeFacilitator } from './support/fake-facilitator';
 import { requestFromNext } from './support/next-request';
 import { pay as payFor, type PaymentHeaders, type PayOptions } from './support/pay';
 
@@ -26,7 +26,7 @@ const BASE = 'https://ad-video-agent.example.com';
 const U = 'https://tiendita.example/';
 const PAYTO = `0x${'1'.repeat(40)}`;
 const THIN_HINT = 'Your site shows little of the product. Adding up to 3 public pages of the app as extraUrls makes a better video.';
-const fixture = (name: string): string => readFileSync(new URL(`./precheck/fixtures/${name}`, import.meta.url), 'utf8');
+const fixture = (name: string): string => readFileSync(new URL(`../src/adapters/fake/pages/${name}`, import.meta.url), 'utf8');
 const thinHtml = fixture('thin.html');
 const loginHtml = fixture('login.html');
 const richHtml = fixture('rich.html');

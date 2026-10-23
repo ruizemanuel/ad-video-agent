@@ -12,10 +12,12 @@ import { UrlRejected } from '../../src/precheck/url-guard';
 import { ModelOutputInvalid } from '../../src/ports';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+// The pages the fake page fetcher serves, which these tests read too.
+const fakePage = (name: string): string => readFileSync(new URL(`../../src/adapters/fake/pages/${name}`, import.meta.url), 'utf8');
 const U = 'https://tiendita.example/';
-const thinHtml = fixture('thin.html');
-const loginHtml = fixture('login.html');
-const richHtml = fixture('rich.html');
+const thinHtml = fakePage('thin.html');
+const loginHtml = fakePage('login.html');
+const richHtml = fakePage('rich.html');
 const challengeHtml = fixture('challenge.html');
 
 const dirs: string[] = [];

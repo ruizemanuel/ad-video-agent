@@ -28,6 +28,7 @@ pnpm test                # unit tests of every package
 pnpm test:integration    # the order workflow on the Workflow runtime, and the payment route built and served by next start, with fake adapters
 pnpm --filter @app/core test
 pnpm --filter @app/vm test:browser   # opt-in: a real Chrome (downloaded on the first run) against a local site, and the real ffmpeg
+pnpm --filter @app/web test:browser  # opt-in, on its own: the page in Chrome with a stub wallet, against next dev on fake adapters; nothing leaves the machine
 ```
 
 Tests that spend money (paid VMs, models, music) are opt-in and never run in CI.

@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { analyzeHtml } from '../../src/precheck/analyze';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+// The pages the fake page fetcher serves, which these tests read too.
+const fakePage = (name: string): string => readFileSync(new URL(`../../src/adapters/fake/pages/${name}`, import.meta.url), 'utf8');
 const U = 'https://tiendita.example/';
-const thinHtml = fixture('thin.html');
-const loginHtml = fixture('login.html');
+const thinHtml = fakePage('thin.html');
+const loginHtml = fakePage('login.html');
 const spaShell = fixture('spa-shell.html');
-const richHtml = fixture('rich.html');
+const richHtml = fakePage('rich.html');
 
 const words = (n: number): string => Array.from({ length: n }, (_, i) => `palabra${i}`).join(' ');
 const headings = (n: number): string => Array.from({ length: n }, (_, i) => `<h2>Título ${i}</h2>`).join('');

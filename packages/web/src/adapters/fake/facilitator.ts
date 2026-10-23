@@ -1,6 +1,7 @@
 // A facilitator that never touches a chain: it says every payment is valid and settles it at once, unless a test asks
 // it to refuse the payment, to fail the settlement, or to time out while settling (an outcome nobody knows). It
-// counts the calls, so a test can say a payment was (or was not) looked at.
+// counts the calls, so a test can say a payment was (or was not) looked at. The route's tests hand it over themselves;
+// the app takes it when AD_AGENT_ADAPTERS is `fake` (see app/v1/videos/deps.ts), so no payment reaches Celo's.
 import { FacilitatorTimeoutError, type FacilitatorClient } from '@x402/core/server';
 import type { PaymentPayload, PaymentRequirements, SettleResponse, SupportedResponse, VerifyResponse } from '@x402/core/types';
 
