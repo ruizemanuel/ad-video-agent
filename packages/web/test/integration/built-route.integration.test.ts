@@ -1,8 +1,9 @@
 // POST /v1/videos as the built service answers it: `next build`, then `next start`. The unit tests call the route's
 // handler themselves; only here does a request go through Next's own route module, which gives the handler its own
 // NextRequest wrapped in a Proxy. A route that made a new request from that one answered 500 to every body in
-// production while its unit tests passed. The server runs on the fake adapters, and every body sent here is refused
-// before the pre-check fetches a page or asks a model: nothing leaves this machine.
+// production while its unit tests passed. The headers of next.config.ts are only on the built service's answers too.
+// The server runs on the fake adapters: its pre-check fetches no page and asks no model but the doubles, and nothing
+// leaves this machine.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -110,6 +111,41 @@ describe('POST /v1/videos, built and served by next start', () => {
     expect(res.status, serverOutput()).toBe(422);
     expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
     expect(await res.json()).toMatchObject({ error: 'invalid_url' });
+  });
+});
+
+describe('the security headers, built and served by next start', () => {
+  // Nothing may frame a page, a type is never guessed, and no address (an order's is its credential) goes out as a referrer.
+  const SECURITY_HEADERS = {
+    'x-frame-options': 'DENY',
+    'content-security-policy': "frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  };
+  const securityHeaders = (res: Response) => Object.fromEntries(Object.keys(SECURITY_HEADERS).map((name) => [name, res.headers.get(name)]));
+
+  it('are on every page and every answer of the API', async () => {
+    const answers: [string, Response][] = [
+      ['the home', await fetch(`${base}/`)],
+      ['an order page', await fetch(`${base}/o/ord_abcdefghijklmnopqrstuvwx`)],
+      ['the terms', await fetch(`${base}/terms`)],
+      ['the offer', await fetch(`${base}/v1/offer`)],
+      ['a refused order', await post(JSON.stringify({ url: 'nope' }))],
+      ['an unknown order', await fetch(`${base}/v1/videos/ord_abcdefghijklmnopqrstuvwx`)],
+    ];
+    for (const [label, res] of answers) {
+      expect(securityHeaders(res), `${label}: ${res.status}\n${serverOutput()}`).toEqual(SECURITY_HEADERS);
+      await res.body?.cancel();
+    }
+  });
+
+  it('leave the price of a quote and its x402 header as they are', async () => {
+    const res = await post(JSON.stringify({ url: 'https://rich.tiendita.example/' }));
+    expect(res.status, serverOutput()).toBe(402);
+    expect(securityHeaders(res)).toEqual(SECURITY_HEADERS);
+    expect(res.headers.get('PAYMENT-REQUIRED')).not.toBeNull();
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await res.json()).toMatchObject({ price: { amount: '0.05', assets: ['USDT', 'USDC'] } });
   });
 });
 
