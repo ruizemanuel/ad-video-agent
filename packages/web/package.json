@@ -22,6 +22,7 @@
     "@electric-sql/pglite": "0.5.10",
     "@google/genai": "2.30.0",
     "@neondatabase/serverless": "1.2.0",
+    "@tanstack/react-query": "5.104.5",
     "@vercel/blob": "2.8.2",
     "@x402/core": "2.28.0",
     "@x402/evm": "2.28.0",
@@ -33,6 +34,7 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "viem": "2.57.7",
+    "wagmi": "3.7.9",
     "workflow": "5.2.2",
     "zod": "4.6.7"
   },

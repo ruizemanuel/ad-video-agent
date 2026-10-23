@@ -1,0 +1,235 @@
+/* The order form: the site's address in a strong field, the optional parts as quiet rows that open, the audio as a
+   two-way switch with the promo beside it, and one dark button. Messages sit right under the button. */
+.form {
+  --error: #a3352b;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* What the server leaves in the form's place until the page runs in the browser: the form's own height, closed. */
+.placeholder {
+  min-height: 296px;
+  margin-top: 14px;
+}
+
+@media (max-width: 640px) {
+  .placeholder {
+    min-height: 380px;
+  }
+}
+
+/* Read by screen readers, not shown. */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.url,
+.field {
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: 400 15px/1.4 var(--sans);
+}
+
+.url {
+  padding: 14px 16px;
+  border-color: var(--ink);
+  font-family: var(--mono);
+}
+
+.field {
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.url::placeholder,
+.field::placeholder {
+  color: var(--muted);
+}
+
+textarea.field {
+  display: block;
+  resize: vertical;
+  min-height: 64px;
+}
+
+.url[aria-invalid='true'],
+.field[aria-invalid='true'] {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
+}
+
+.fieldError {
+  color: var(--error);
+  font-size: 13px;
+  margin-top: -4px;
+}
+
+/* An optional part: a row that opens, ruled with a dashed line. */
+.more {
+  border-bottom: 1px dashed var(--line);
+}
+
+.more summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 16px;
+  padding: 10px 0;
+  font-size: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.more summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The sign hangs in the margin, so a label that wraps lines up under its first word. */
+.more summary > span:first-child {
+  padding-left: 1em;
+  text-indent: -1em;
+}
+
+.more summary > span:first-child::before {
+  content: '+';
+  display: inline-block;
+  width: 1em;
+  text-indent: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.more[open] summary > span:first-child::before {
+  content: '−';
+}
+
+.note {
+  color: var(--muted);
+}
+
+.moreBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 14px;
+}
+
+.count {
+  align-self: flex-end;
+  color: var(--muted);
+  font: 400 12px/1 var(--mono);
+}
+
+/* The suggestion for a site that shows little: a note, not an error. */
+.hint {
+  background: var(--soft);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 6px;
+}
+
+/* The audio: two choices in a pill, the chosen one in ink. */
+.audio {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.choice {
+  position: relative;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* The radio itself covers its label, unseen: it keeps the keyboard and the screen reader's behaviour of a radio. */
+.choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.choice:has(input:checked) {
+  background: var(--ink);
+  color: #fff;
+}
+
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.promo {
+  background: #dcebe2;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pay {
+  width: 100%;
+  margin-top: 4px;
+  padding: 15px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  color: #fff;
+  font: 600 16px/1.3 var(--sans);
+  cursor: pointer;
+}
+
+.pay:hover:not(:disabled) {
+  background: #2b2b2b;
+}
+
+.pay:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+/* What is going on, or why the order stopped. It is there even when empty, so screen readers hear what it says next. */
+.notice {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.notice a {
+  color: var(--ink);
+}
+
+.error {
+  color: var(--error);
+}

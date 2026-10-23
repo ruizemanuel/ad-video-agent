@@ -44,6 +44,72 @@ export const HOME = {
   },
 } as const;
 
+/** How long to wait before trying again, as a person reads it: "in a minute", "in 5 minutes", "in 3 hours". */
+function againIn(seconds: number): string {
+  if (seconds <= 90) return 'in a minute';
+  if (seconds < 3600) return `in ${Math.ceil(seconds / 60)} minutes`;
+  const hours = Math.ceil(seconds / 3600);
+  return hours === 1 ? 'in an hour' : `in ${hours} hours`;
+}
+
+/**
+ * The order form. The price comes as text ("0.05"), the token as its symbol. A reason the service gives for refusing
+ * an order is shown as it comes, not from here.
+ */
+export const ORDER_FORM = {
+  url: { label: 'Your site’s address', placeholder: 'https://yourproject.xyz' },
+  brief: {
+    label: 'What should it highlight?',
+    note: 'optional · audience, tone, language',
+    placeholder: 'For freelancers, in a friendly tone, in Spanish',
+    /** The characters used of the 200 the brief may have. */
+    count: (used: number, max: number) => `${used}/${max}`,
+  },
+  pages: {
+    label: 'Product behind “Connect wallet”? Add up to 3 public pages',
+    note: 'optional',
+    placeholder: 'https://yourproject.xyz/app',
+    pageLabel: (n: number) => `Public page ${n}`,
+  },
+  audio: { legend: 'Audio', music: 'With music', none: 'No audio' },
+  /** The first-video promo, while it has slots left. */
+  promo: (slots: number, price: string, left: number) => `First ${slots} wallets: ${price} USDT · ${left} left`,
+  button: {
+    connectAndPay: (price: string, token: string) => `Connect wallet and pay ${price} ${token}`,
+    pay: (price: string, token: string) => `Pay ${price} ${token}`,
+  },
+  /** What is going on while the button waits. */
+  progress: {
+    checking: 'Checking your site…',
+    connecting: 'Connect your wallet to go on…',
+    switching: 'Switch your wallet to Celo to go on…',
+    signing: 'Confirm the payment in your wallet. It’s one signature, with no gas.',
+    placing: 'Placing your order…',
+    placed: 'Order placed. Opening it…',
+    openOrder: 'Open your order',
+  },
+  thin: 'Your site shows little of the product. Adding up to 3 public pages makes a better video.',
+  errors: {
+    url: 'Enter your site’s address, like yourproject.xyz.',
+    page: 'Enter a public page’s address, like yourproject.xyz/app.',
+    /** The service refused the order without saying why (it always says why). */
+    refused: 'We can’t make a video of this site. Nothing was charged.',
+    unavailable: (retryAfterSeconds: number) => `We can’t check sites right now. Try again ${againIn(retryAfterSeconds)}.`,
+    noFunds: (price: string) => `You need ${price} USDT or USDC on Celo.`,
+    signatureCancelled: 'You cancelled the signature. Nothing was charged.',
+    connectCancelled: 'You didn’t connect a wallet. Nothing was charged.',
+    wrongNetwork: 'Your wallet has to be on Celo to pay. Nothing was charged.',
+    noWallet: 'We found no wallet in this browser. Add one, like MetaMask or Rabby, to pay.',
+    walletBusy: 'Your wallet has a request open. Finish it there, then try again. Nothing was charged.',
+    /** The service turned the payment down and gave no reason of its own: it took nothing. */
+    paymentRefused: 'The payment didn’t go through. Nothing was charged. Try again.',
+    /** The payment left the page and no answer came back: it may or may not have gone through. */
+    notConfirmed: 'We couldn’t confirm your order. Check your wallet before you try again, so you don’t pay twice.',
+    /** Anything else that went wrong before a payment was sent. */
+    generic: 'Something went wrong. Nothing was charged. Try again.',
+  },
+} as const;
+
 /** The section for agents: the same service, as an API paid per call. Text between backticks is shown as code. */
 export const AGENTS = {
   title: 'For agents',

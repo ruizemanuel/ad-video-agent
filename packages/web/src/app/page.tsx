@@ -1,9 +1,10 @@
-// The home: what the service makes, two real examples, what an order includes and costs, how it works, and the same
-// service as an API for agents. The order form goes in the order section.
+// The home: what the service makes, two real examples, what an order includes and costs with the order form, how it
+// works, and the same service as an API for agents.
 import type { ReactNode } from 'react';
 import { env } from '../env';
 import { formatPrice } from '../payments/x402';
 import { AGENTS, HOME } from '../site/copy';
+import { OrderForm } from '../site/OrderForm';
 import styles from './page.module.css';
 
 // The price comes from the settings, read when a request comes in: building the app needs none of them.
@@ -20,7 +21,9 @@ const withCode = (text: string): ReactNode[] =>
   text.split('`').map((part, index) => (index % 2 === 1 ? <code key={index}>{part}</code> : part));
 
 export default function HomePage() {
-  const price = `${formatPrice(env().PRICE_ATOMIC)} USDT or USDC`;
+  const settings = env();
+  const amount = formatPrice(settings.PRICE_ATOMIC);
+  const price = `${amount} USDT or USDC`;
   return (
     <main className={styles.page}>
       <div className={styles.hero}>
@@ -31,6 +34,35 @@ export default function HomePage() {
             {HOME.title[1]}
           </h1>
           <p className={styles.lede}>{HOME.lede}</p>
+        </div>
+
+        {/* Before the examples in the markup, so the keyboard reaches the order first; a phone's screen still shows the
+            examples first (the grid places both). */}
+        <div className={styles.buy}>
+          <div className={styles.included}>
+            <div className={styles.includedHead}>
+              <h2>{HOME.included.title}</h2>
+              <p className={styles.price}>
+                <strong>{price}</strong> {HOME.included.perVideo}
+              </p>
+            </div>
+            <ul className={styles.items}>
+              {HOME.included.items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+
+          <section id="order" className={styles.order} aria-labelledby="order-title">
+            <h2 id="order-title">{HOME.order.title}</h2>
+            <OrderForm price={amount} promoSlots={settings.PROMO_SLOTS} />
+          </section>
+
+          <p className={styles.fine}>
+            {HOME.finePrint} {HOME.terms.before}
+            <a href="/terms">{HOME.terms.link}</a>
+            {HOME.terms.after}
+          </p>
         </div>
 
         <section id="examples" className={styles.examples} aria-labelledby="examples-title">
@@ -60,32 +92,6 @@ export default function HomePage() {
             ))}
           </div>
         </section>
-
-        <div className={styles.buy}>
-          <div className={styles.included}>
-            <div className={styles.includedHead}>
-              <h2>{HOME.included.title}</h2>
-              <p className={styles.price}>
-                <strong>{price}</strong> {HOME.included.perVideo}
-              </p>
-            </div>
-            <ul className={styles.items}>
-              {HOME.included.items.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          <section id="order" className={styles.order} aria-labelledby="order-title">
-            <h2 id="order-title">{HOME.order.title}</h2>
-          </section>
-
-          <p className={styles.fine}>
-            {HOME.finePrint} {HOME.terms.before}
-            <a href="/terms">{HOME.terms.link}</a>
-            {HOME.terms.after}
-          </p>
-        </div>
       </div>
 
       <section id="how" className={styles.section} aria-labelledby="how-title">

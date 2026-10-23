@@ -141,6 +141,11 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
       case 'eth_requestAccounts':
         connected = true;
         return { result: [account.address] };
+      case 'wallet_requestPermissions':
+        // As MetaMask answers it (wagmi asks it first when it connects): the person picks the account, which the page
+        // may read from then on.
+        connected = true;
+        return { result: [{ parentCapability: 'eth_accounts', caveats: [{ type: 'restrictReturnedAccounts', value: [account.address] }] }] };
       case 'eth_accounts':
         return { result: connected ? [account.address] : [] };
       case 'eth_chainId':
