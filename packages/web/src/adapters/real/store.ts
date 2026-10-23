@@ -3,11 +3,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, getTableColumns, gt, gte, inArray, is, isNotNull, isNull, lt, lte, ne, or, SQL, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
-import { costs, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
+import { costs, feedback, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
 import {
   statusesBefore,
   type CostKind,
   type Deliverable,
+  type Feedback,
   type NewOrder,
   type NewPaymentIntent,
   type NewRefund,
@@ -26,7 +27,7 @@ import {
   type StepState,
   type VmTask,
 } from '../../ports';
-import { atomicToUsd, defined, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
+import { atomicToUsd, defined, keptFeedback, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
 
 const toPayment = ({ createdAt: _created, updatedAt: _updated, ...payment }: typeof payments.$inferSelect): PaymentRecord => payment;
 
@@ -133,6 +134,23 @@ export class DrizzleStore implements OrderStore {
 
   async getOrder(id: string): Promise<Order | null> {
     const [row] = await this.db.select().from(orders).where(eq(orders.id, id));
+    return row ?? null;
+  }
+
+  // One statement, so two answers given at once leave one of them whole. The FK refuses an order that does not exist.
+  async setFeedback(orderId: string, f: Omit<Feedback, 'updatedAt'>): Promise<void> {
+    const kept = keptFeedback(f, new Date());
+    await this.db
+      .insert(feedback)
+      .values({ orderId, ...kept })
+      .onConflictDoUpdate({ target: feedback.orderId, set: kept });
+  }
+
+  async getFeedback(orderId: string): Promise<Feedback | null> {
+    const [row] = await this.db
+      .select({ answer: feedback.answer, postUrl: feedback.postUrl, mayShow: feedback.mayShow, updatedAt: feedback.updatedAt })
+      .from(feedback)
+      .where(eq(feedback.orderId, orderId));
     return row ?? null;
   }
 

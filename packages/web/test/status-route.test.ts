@@ -126,6 +126,27 @@ describe('GET /v1/videos/<id>', () => {
     expect(withoutSummary).not.toHaveProperty('music');
   });
 
+  it('shows the feedback in the status', async () => {
+    const order = await runningOrder();
+    // Nothing is shown until there is an answer: the key is absent, not null.
+    expect(await body(await get(order.id))).not.toHaveProperty('feedback');
+    await store.transition(order.id, 'delivered');
+    expect(await body(await get(order.id))).not.toHaveProperty('feedback');
+
+    const postUrl = 'https://x.com/someone/status/1';
+    await store.setFeedback(order.id, { answer: 'as_is', postUrl, mayShow: true });
+    // What the answer says, and not when it was given.
+    expect((await body(await get(order.id))).feedback).toEqual({ answer: 'as_is', postUrl, mayShow: true });
+
+    await store.setFeedback(order.id, { answer: 'not_yet', postUrl: null, mayShow: false });
+    expect((await body(await get(order.id))).feedback).toEqual({ answer: 'not_yet', postUrl: null, mayShow: false });
+
+    // The answer outlives the delivery: an expired order still shows it, and another order shows none.
+    await store.transition(order.id, 'expired');
+    expect((await body(await get(order.id))).feedback).toEqual({ answer: 'not_yet', postUrl: null, mayShow: false });
+    expect(await body(await get((await runningOrder()).id))).not.toHaveProperty('feedback');
+  });
+
   it('says when the order and its files are deleted: 30 days after it was made', async () => {
     const order = await runningOrder();
     expect((await body(await get(order.id))).expiresAt).toBe(new Date(order.createdAt.getTime() + 30 * DAY_S * 1000).toISOString());

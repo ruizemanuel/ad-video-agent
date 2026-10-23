@@ -455,6 +455,72 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       });
     });
 
+    describe('feedback', () => {
+      const POST_URL = 'https://x.com/someone/status/1';
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+      it('upserts feedback', async () => {
+        const order = await orderIn('delivered');
+        expect(await s.getFeedback(order.id)).toBeNull();
+
+        await s.setFeedback(order.id, { answer: 'as_is', postUrl: POST_URL, mayShow: true });
+        const first = await s.getFeedback(order.id);
+        expect(first).toEqual({ answer: 'as_is', postUrl: POST_URL, mayShow: true, updatedAt: expect.any(Date) });
+        expect(Math.abs(first!.updatedAt.getTime() - Date.now())).toBeLessThan(minutes(1));
+
+        // A new answer replaces every field, and the time it was given.
+        await pause();
+        await s.setFeedback(order.id, { answer: 'not_yet', postUrl: null, mayShow: false });
+        const second = await s.getFeedback(order.id);
+        expect(second).toEqual({ answer: 'not_yet', postUrl: null, mayShow: false, updatedAt: expect.any(Date) });
+        expect(second!.updatedAt.getTime()).toBeGreaterThan(first!.updatedAt.getTime());
+
+        await s.setFeedback(order.id, { answer: 'with_changes', postUrl: 'https://example.com/post', mayShow: false });
+        expect(await s.getFeedback(order.id)).toMatchObject({ answer: 'with_changes', postUrl: 'https://example.com/post', mayShow: false });
+      });
+
+      it('keeps the answer of each order apart, and none for an order that was never asked', async () => {
+        const a = await orderIn('delivered');
+        const b = await orderIn('delivered');
+        await s.setFeedback(a.id, { answer: 'as_is', postUrl: POST_URL, mayShow: true });
+        expect(await s.getFeedback(b.id)).toBeNull();
+        expect(await s.getFeedback('ord_doesnotexist')).toBeNull();
+        await s.setFeedback(b.id, { answer: 'with_changes', postUrl: null, mayShow: false });
+        expect(await s.getFeedback(a.id)).toMatchObject({ answer: 'as_is', postUrl: POST_URL, mayShow: true });
+        expect(await s.getFeedback(b.id)).toMatchObject({ answer: 'with_changes', postUrl: null, mayShow: false });
+      });
+
+      it('keeps mayShow false whenever there is no postUrl', async () => {
+        const order = await orderIn('delivered');
+        await s.setFeedback(order.id, { answer: 'as_is', postUrl: null, mayShow: true });
+        expect(await s.getFeedback(order.id)).toMatchObject({ postUrl: null, mayShow: false });
+        await s.setFeedback(order.id, { answer: 'as_is', postUrl: POST_URL, mayShow: true });
+        expect(await s.getFeedback(order.id)).toMatchObject({ postUrl: POST_URL, mayShow: true });
+        await s.setFeedback(order.id, { answer: 'as_is', postUrl: null, mayShow: true });
+        expect(await s.getFeedback(order.id)).toMatchObject({ postUrl: null, mayShow: false });
+      });
+
+      it('survives the order expiring', async () => {
+        const order = await orderIn('delivered');
+        await s.setFeedback(order.id, { answer: 'as_is', postUrl: POST_URL, mayShow: false });
+        expect(await s.transition(order.id, 'expired')).toBe(true);
+        expect(await s.getFeedback(order.id)).toMatchObject({ answer: 'as_is', postUrl: POST_URL });
+      });
+
+      it('keeps one answer when several come at once', async () => {
+        const order = await orderIn('delivered');
+        const answers = (['as_is', 'with_changes', 'not_yet'] as const).map((answer) => ({ answer, postUrl: null, mayShow: false }));
+        await Promise.all(answers.map((answer) => s.setFeedback(order.id, answer)));
+        const kept = await s.getFeedback(order.id);
+        expect(answers.map((answer) => answer.answer)).toContain(kept?.answer);
+      });
+
+      it('refuses feedback for an order that does not exist', async () => {
+        await expect(s.setFeedback('ord_doesnotexist', { answer: 'as_is', postUrl: null, mayShow: false })).rejects.toThrow();
+        expect(await s.getFeedback('ord_doesnotexist')).toBeNull();
+      });
+    });
+
     describe('steps, warnings and deliverables', () => {
       it('keeps the steps already set when it sets another', async () => {
         const order = await create();

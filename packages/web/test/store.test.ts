@@ -21,7 +21,7 @@ afterAll(async () => {
 // One in-memory Postgres for the whole suite, emptied before each test: starting PGlite for every test would take minutes.
 const db = await openDb('memory');
 describeStoreContract('DrizzleStore', async () => {
-  await db.execute(sql`truncate table orders, vm_tasks, payments, costs, refunds, prechecks restart identity cascade`);
+  await db.execute(sql`truncate table orders, vm_tasks, payments, costs, refunds, prechecks, feedback restart identity cascade`);
   return new DrizzleStore(db);
 });
 

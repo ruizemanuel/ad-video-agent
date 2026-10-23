@@ -1,6 +1,6 @@
 // What the two OrderStore adapters (Postgres and files) have to do the same way.
 import { randomBytes } from 'node:crypto';
-import { VIDEO_STATUSES, type Order } from '../ports';
+import { VIDEO_STATUSES, type Feedback, type Order } from '../ports';
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
@@ -51,3 +51,11 @@ export function lowestFreeSlot(held: Iterable<number | null>, slots: number): nu
 export function defined<T extends object>(patch: T): Partial<T> {
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as Partial<T>;
 }
+
+/** The answer to "did you post it?" as the stores keep it: `mayShow` is false whenever there is no post to show. */
+export const keptFeedback = (f: Omit<Feedback, 'updatedAt'>, updatedAt: Date): Feedback => ({
+  answer: f.answer,
+  postUrl: f.postUrl,
+  mayShow: f.postUrl !== null && f.mayShow,
+  updatedAt,
+});

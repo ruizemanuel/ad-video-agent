@@ -43,6 +43,13 @@
       "when": 1792714207605,
       "tag": "0005_complete_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792715652488,
+      "tag": "0006_zippy_scarlet_spider",
+      "breakpoints": true
     }
   ]
 }

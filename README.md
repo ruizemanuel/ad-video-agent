@@ -13,7 +13,7 @@ Stage 2a is live: the x402 service and the whole chain run end to end. An order 
 | Package | What it holds |
 | --- | --- |
 | `packages/core` (`@app/core`) | Plain TypeScript shared by the others: the edit decision list (EDL) the video is built from, its timing and brand rules, claim validation, music analysis, quality checks and the protocol of the rented machine. |
-| `packages/web` (`@app/web`) | The Next.js app on Vercel: the free quote and the x402 payment (`POST /v1/videos`), order status and delivery links, the API the rented machine takes its tasks from, a durable workflow per order (Vercel Workflow), and the crons that reconcile payments and refunds and expire old orders. |
+| `packages/web` (`@app/web`) | The Next.js app on Vercel: the free quote and the x402 payment (`POST /v1/videos`), order status and delivery links, the free answer to "did you post it?" for a delivered order (`POST /v1/videos/<id>/feedback`), the API the rented machine takes its tasks from, a durable workflow per order (Vercel Workflow), and the crons that reconcile payments and refunds and expire old orders. |
 | `packages/vm` (`@app/vm`) | The worker that runs on the rented machine: site capture, key frames, render and mix. |
 | `packages/clock` (`@app/clock`) | A Cloudflare Worker that is the reconcile clock: its Cron Trigger calls the reconcile route every 10 minutes. |
 

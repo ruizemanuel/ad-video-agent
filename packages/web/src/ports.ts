@@ -1,9 +1,9 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders and
-// their first-video promo slots, VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private
-// files), the LlmPort (the models, as far as the tasks so far use them), the BuyPort (renting the VM, following it,
-// and what the chain says about a payment), the MusicPort (Lyria, 3.5 and 3 Pro) and the RefundPort (the refunds'
-// wallet on Celo).
+// their first-video promo slots, the client's answer to "did you post it?", VM tasks, payment intents, costs, refunds
+// and pre-checks), the BlobPort (the private files), the LlmPort (the models, as far as the tasks so far use them),
+// the BuyPort (renting the VM, following it, and what the chain says about a payment), the MusicPort (Lyria, 3.5 and
+// 3 Pro) and the RefundPort (the refunds' wallet on Celo).
 import type {
   CaptureFile,
   Claim,
@@ -82,6 +82,17 @@ export type Deliverable = { name: string; path: string; bytes: number };
  * them (the ones in claims.md), and the track's model (by its name) and tempo, when the video has music.
  */
 export type DeliverySummary = { claims: ClaimItem[]; music: { model: string; bpm: number } | null };
+
+/** What a client says of a delivered video: they posted it as it came, posted it changed, or have not posted it yet. */
+export const FEEDBACK_ANSWERS = ['as_is', 'with_changes', 'not_yet'] as const;
+export type FeedbackAnswer = (typeof FEEDBACK_ANSWERS)[number];
+
+/**
+ * The answer to "did you post it?" for an order: at most one, and a new answer replaces the one before. `postUrl` is
+ * where the client posted it, when they said; `mayShow` is whether we may show that post, and is false whenever there is
+ * no `postUrl`. `updatedAt` is when the answer was last given.
+ */
+export type Feedback = { answer: FeedbackAnswer; postUrl: string | null; mayShow: boolean; updatedAt: Date };
 
 export type Order = {
   /** `ord_` and 24 random base32 characters. */
@@ -231,6 +242,14 @@ export interface OrderStore {
   /** Whether the wallet, whatever the case of its hex, has an order at any price that has its video or is on its way to it. */
   hasVideo(payer: string): Promise<boolean>;
   getOrder(id: string): Promise<Order | null>;
+  /**
+   * Keeps the answer to "did you post it?" for the order, replacing every field of the one before and the time it was
+   * given. `mayShow` is kept false when there is no `postUrl`, whatever it is given as. It throws for an order that does
+   * not exist.
+   */
+  setFeedback(orderId: string, f: Omit<Feedback, 'updatedAt'>): Promise<void>;
+  /** The order's answer, or null when it has none (or there is no such order). */
+  getFeedback(orderId: string): Promise<Feedback | null>;
   findOrderByPayment(asset: string, payer: string, nonce: string): Promise<Order | null>;
   /** Moves the order if ORDER_TRANSITIONS allows it from where it is (and only then applies the patch). False otherwise. */
   transition(id: string, to: OrderStatus, patch?: Partial<Order>): Promise<boolean>;

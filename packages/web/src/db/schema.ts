@@ -1,11 +1,12 @@
 import { sql, type SQL } from 'drizzle-orm';
-import { customType, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { boolean, customType, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { VmTaskKind } from '@app/core';
 import {
   VIDEO_STATUSES,
   type CostKind,
   type Deliverable,
   type DeliverySummary,
+  type FeedbackAnswer,
   type OrderRequest,
   type OrderStatus,
   type PaymentAuthorization,
@@ -84,6 +85,18 @@ export const orders = pgTable(
     uniqueIndex('orders_promo_payer_idx').on(sql`lower(${t.payer})`).where(holdsPromoSlot(t)),
   ],
 );
+
+/** The answer to "did you post it?": one per order, replaced when it is given again. */
+export const feedback = pgTable('feedback', {
+  orderId: text('order_id')
+    .primaryKey()
+    .references(() => orders.id),
+  answer: text('answer').$type<FeedbackAnswer>().notNull(),
+  postUrl: text('post_url'),
+  /** Whether the post may be shown: false whenever there is no post_url (the store sees to it). */
+  mayShow: boolean('may_show').notNull().default(false),
+  updatedAt: at('updated_at').notNull().defaultNow(),
+});
 
 export const vmTasks = pgTable(
   'vm_tasks',

@@ -6,7 +6,19 @@ import { getRun, start, type Run } from 'workflow/api';
 import { WorkflowRunNotFoundError } from 'workflow/errors';
 import type { Env } from '../env';
 import { signFileLink } from '../links';
-import { ORDER_DAYS, STEP_NAMES, type Order, type OrderStatus, type OrderStore, type RefundRecord, type RefundStatus, type StepName, type StepState } from '../ports';
+import {
+  ORDER_DAYS,
+  STEP_NAMES,
+  type Feedback,
+  type FeedbackAnswer,
+  type Order,
+  type OrderStatus,
+  type OrderStore,
+  type RefundRecord,
+  type RefundStatus,
+  type StepName,
+  type StepState,
+} from '../ports';
 import { orderWorkflow } from '../workflows/order';
 import type { SettledPayment } from './x402';
 
@@ -78,12 +90,19 @@ export type StatusJson = {
   music?: { model: string; bpm: number };
   warnings: string[];
   refund?: { status: RefundStatus; txHash: string | null };
+  /** Once the client has answered "did you post it?" (POST /v1/videos/<id>/feedback), and still after the order expires. */
+  feedback?: { answer: FeedbackAnswer; postUrl: string | null; mayShow: boolean };
   /** When the order and its files are deleted (ISO 8601). Gone once the order has expired. */
   expiresAt?: string;
 };
 
 /** The base is where the service lives, with no trailing slash: the links point there. */
-export function statusView(order: Order, refund: RefundRecord | null, settings: Pick<Env, 'LINK_SIGNING_SECRET'> & { PUBLIC_BASE_URL: string }): StatusJson {
+export function statusView(
+  order: Order,
+  refund: RefundRecord | null,
+  feedback: Feedback | null,
+  settings: Pick<Env, 'LINK_SIGNING_SECRET'> & { PUBLIC_BASE_URL: string },
+): StatusJson {
   const steps: StatusStep[] = STEP_NAMES.filter((name) => name !== 'refund' || order.steps.refund !== undefined).map((name) => ({
     name,
     state: order.steps[name] ?? 'pending',
@@ -104,6 +123,7 @@ export function statusView(order: Order, refund: RefundRecord | null, settings: 
     if (order.summary.music !== null) view.music = order.summary.music;
   }
   if (refund !== null) view.refund = { status: refund.status, txHash: refund.txHash };
+  if (feedback !== null) view.feedback = { answer: feedback.answer, postUrl: feedback.postUrl, mayShow: feedback.mayShow };
   if (order.status !== 'expired') view.expiresAt = new Date(order.createdAt.getTime() + ORDER_DAYS * DAY_MS).toISOString();
   return view;
 }

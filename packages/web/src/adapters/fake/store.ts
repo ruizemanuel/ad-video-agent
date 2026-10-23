@@ -9,6 +9,7 @@ import {
   canTransition,
   type CostKind,
   type Deliverable,
+  type Feedback,
   type NewOrder,
   type NewPaymentIntent,
   type NewRefund,
@@ -27,9 +28,9 @@ import {
   type StepState,
   type VmTask,
 } from '../../ports';
-import { atomicToUsd, defined, holdsPromoSlot, holdsVideo, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
+import { atomicToUsd, defined, holdsPromoSlot, holdsVideo, keptFeedback, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
 
-type Collection = 'orders' | 'tasks' | 'payments' | 'costs' | 'refunds' | 'prechecks';
+type Collection = 'orders' | 'tasks' | 'payments' | 'costs' | 'refunds' | 'prechecks' | 'feedback';
 
 type Timestamps = { createdAt: Date; updatedAt: Date };
 type StoredPayment = PaymentRecord & Timestamps;
@@ -241,6 +242,17 @@ export class FileStore implements OrderStore {
 
   getOrder(id: string): Promise<Order | null> {
     return this.locked(() => this.read<Order>('orders', id));
+  }
+
+  setFeedback(orderId: string, f: Omit<Feedback, 'updatedAt'>): Promise<void> {
+    return this.locked(async () => {
+      await this.requireOrder(orderId);
+      await this.write('feedback', orderId, keptFeedback(f, new Date()));
+    });
+  }
+
+  getFeedback(orderId: string): Promise<Feedback | null> {
+    return this.locked(() => this.read<Feedback>('feedback', orderId));
   }
 
   findOrderByPayment(asset: string, payer: string, nonce: string): Promise<Order | null> {
