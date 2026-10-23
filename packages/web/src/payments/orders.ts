@@ -128,5 +128,20 @@ export function statusView(
   return view;
 }
 
+/**
+ * The order with this id and what its status says, or null when there is no such order. The status route and the order
+ * page both read an order this way, so a person and an agent are shown the same.
+ */
+export async function readStatus(
+  store: Pick<OrderStore, 'getOrder' | 'getRefund' | 'getFeedback'>,
+  id: string,
+  settings: Pick<Env, 'LINK_SIGNING_SECRET'> & { PUBLIC_BASE_URL: string },
+): Promise<{ order: Order; status: StatusJson } | null> {
+  const order = await store.getOrder(id);
+  if (order === null) return null;
+  const [refund, feedback] = await Promise.all([store.getRefund(id), store.getFeedback(id)]);
+  return { order, status: statusView(order, refund, feedback, settings) };
+}
+
 /** Where the service lives: PUBLIC_BASE_URL, or (only where it is not set, in local runs) the address it was asked at. */
 export const serviceBase = (settings: Pick<Env, 'PUBLIC_BASE_URL'>, req: Request): string => settings.PUBLIC_BASE_URL ?? new URL(req.url).origin;

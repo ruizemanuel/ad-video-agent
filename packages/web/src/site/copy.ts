@@ -140,3 +140,55 @@ export const AGENTS = {
   --data '{"url":"https://yourproject.xyz"}' https://ad-video-agent-ten.vercel.app/v1/videos`,
   },
 } as const;
+
+/**
+ * The order page: the page a person lands on after paying, and comes back to by its link. The steps' names are the ones
+ * a person would use: nothing of the flow's own words.
+ */
+export const ORDER_PAGE = {
+  /** The tab's title. */
+  title: `Your order · ${BRAND}`,
+  /** Above the headline: the site, and the start of the order's number. */
+  which: (site: string, shortId: string) => `${site} · order ${shortId}…`,
+
+  making: {
+    title: 'Making your video',
+    lede: 'Usually about 8 minutes. You can close this tab — this link brings you back here.',
+    fine: 'If the video can’t pass our quality check, nothing is delivered and your payment goes back to your wallet automatically.',
+  },
+  link: {
+    label: 'The link to your order',
+    copy: 'Copy link',
+    copied: 'Copied',
+    /** The browser would not copy it: the link is selected instead. */
+    selected: 'Link selected. Copy it from here.',
+  },
+
+  /** The steps, in the order they happen. The VM is part of the capture, and the delivery part of the final video. */
+  steps: {
+    payment: 'Payment received',
+    capture: 'Site captured',
+    script: 'Script written, every line sourced',
+    music: 'Music chosen',
+    preview: 'Key frames ready',
+    review: 'Quality check',
+    render: 'Final video',
+    refund: 'Refund sent',
+  },
+  /** Beside the step being done. */
+  now: 'now',
+  /** What a screen reader says of a step before its name. */
+  stateOf: { done: 'Done', now: 'In progress', todo: 'Waiting', failed: 'Failed' },
+
+  /** An order that could not be made: the reason, and where the refund is. */
+  refund: {
+    reason: ['We couldn’t make a video that passes our check.', 'Your payment is on its way back.'],
+    refunding: 'Refund: on its way.',
+    refunded: 'Refund: sent.',
+    refundFailed: 'Refund: delayed. It will still reach the wallet you paid from.',
+    transaction: 'View the transaction',
+  },
+  unpaid: ['The payment didn’t go through.', 'Nothing was charged.'],
+  expired: 'This order’s files have expired.',
+  delivered: { title: 'Your video is ready', files: 'Files' },
+} as const;

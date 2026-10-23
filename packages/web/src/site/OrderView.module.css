@@ -1,0 +1,240 @@
+/* The order page: one column, as wide as its steps need, under the site and the order's number. The same warm paper as
+   the home; a failed step is the only red. */
+.page {
+  --error: #a3352b;
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 48px var(--gutter) 112px;
+}
+
+.main {
+  max-width: 560px;
+}
+
+.which {
+  color: var(--muted);
+  font: 400 14px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.title {
+  font: 400 64px/1.02 var(--serif);
+  letter-spacing: -0.01em;
+  margin-top: 8px;
+  text-wrap: balance;
+}
+
+/* A headline that is a sentence: smaller than the title, so a long one still sits in a few lines. */
+.statement {
+  font: 400 44px/1.08 var(--serif);
+  letter-spacing: -0.01em;
+  margin-top: 8px;
+  text-wrap: balance;
+}
+
+.lede {
+  color: var(--muted);
+  font-size: 18px;
+  margin-top: 14px;
+  max-width: 520px;
+  text-wrap: pretty;
+}
+
+/* The link to the order, with the button that copies it. */
+.link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 26px;
+  padding: 14px 14px 14px 22px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.linkField {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 14px/1.4 var(--mono);
+  text-overflow: ellipsis;
+}
+
+.copy {
+  flex: none;
+  padding: 10px 16px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 14px/1.2 var(--sans);
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--ink);
+  color: var(--card);
+}
+
+.note {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+/* Read by screen readers, not shown. */
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The steps: a mark, the step's name, and "now" beside the one being done. */
+.steps {
+  list-style: none;
+  margin-top: 30px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.step[data-state='todo'] {
+  color: var(--muted);
+}
+
+.when {
+  color: var(--muted);
+  font: 400 13px/1 var(--mono);
+}
+
+.mark {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+.done {
+  background: var(--accent);
+}
+
+.done::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.now {
+  border: 2px solid var(--ink);
+  border-top-color: transparent;
+  animation: spin 0.9s linear infinite;
+}
+
+.todo {
+  border: 2px solid var(--line);
+}
+
+.failed {
+  background: var(--error);
+}
+
+.failed::before,
+.failed::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 3px;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+  transform: rotate(45deg);
+}
+
+.failed::after {
+  transform: rotate(-45deg);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fine {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 18px;
+  max-width: 520px;
+  text-wrap: pretty;
+}
+
+/* Where the refund is, under the reason. */
+.refundLine {
+  margin-top: 18px;
+  font-weight: 500;
+}
+
+/* The files of a delivered order, until its own view. */
+.files {
+  list-style: none;
+  margin-top: 28px;
+  border-top: 1px solid var(--ink);
+}
+
+.files li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font: 400 14px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+/* A phone. */
+@media (max-width: 640px) {
+  .page {
+    padding-top: 32px;
+    padding-bottom: 80px;
+  }
+
+  .title {
+    font-size: 46px;
+  }
+
+  .statement {
+    font-size: 34px;
+  }
+
+  .lede {
+    font-size: 17px;
+  }
+
+  .link {
+    gap: 10px;
+    padding: 12px 12px 12px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now {
+    animation: none;
+  }
+}
