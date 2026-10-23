@@ -1,17 +1,30 @@
 // POST /v1/videos: order an ad video for a website. Without a payment it is a free quote: the body is checked, the
 // site and each of its extra pages go through the pre-check, and the answer is a 402 with the price (or a 400/422 that
-// asks for nothing, or a 503 when the check cannot be made now). With an x402 payment that the facilitator verifies, the
-// order is made and the answer is 202 with where to follow it; only then is the payment settled, and only a settled
-// payment starts the order's run.
+// asks for nothing, or a 503 when the check cannot be made now). The price is the full one, or the first-video price
+// for a wallet the promo takes that the request names in its x-payer header. With an x402 payment that the facilitator
+// verifies, the order is made and the answer is 202 with where to follow it; only then is the payment settled, and only
+// a settled payment starts the order's run.
 import { OrderRequestSchema } from '@app/core';
-import { decodePaymentSignatureHeader } from '@x402/core/http';
+import { decodePaymentRequiredHeader, decodePaymentSignatureHeader } from '@x402/core/http';
 import { withX402 } from '@x402/next';
 import { NextResponse, type NextRequest } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
-import { authorizationWindowProblem, createResourceServer, formatPrice, readSignedPayment, routeConfig, type SettledPayment, type SignedPayment } from '../../../payments/x402';
+import {
+  authorizationWindowProblem,
+  createResourceServer,
+  formatPrice,
+  PAYER_HINT_HEADER,
+  payerHint,
+  PROMO_PRICE_ATOMIC,
+  promoGate,
+  readSignedPayment,
+  routeConfig,
+  type SettledPayment,
+  type SignedPayment,
+} from '../../../payments/x402';
 import { precheck, PrecheckCapReached, type PrecheckDeps } from '../../../precheck/precheck';
-import { ModelCallFailed, ModelOutputInvalid, type OrderRequest, type PrecheckResult } from '../../../ports';
+import { ModelCallFailed, ModelOutputInvalid, type Order, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
 
 const ROUTE = '/v1/videos';
@@ -20,6 +33,9 @@ const THIN_HINT = 'Your site shows little of the product. Adding up to 3 public 
 const MODEL_RETRY_AFTER_SECONDS = 60;
 
 const NO_STORE = { 'cache-control': 'no-store' };
+const PROMO_PAYER_REASON =
+  'The first-video price must be paid by the wallet that asked for it: name that wallet in the x-payer header, and sign the payment with it.';
+const PROMO_GONE_REASON = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
 const refuse = (status: number, error: string, reason: string, headers: Record<string, string> = {}): Response =>
   Response.json({ error, reason }, { status, headers: { ...NO_STORE, ...headers } });
 
@@ -96,21 +112,34 @@ const ordersOfRequests = new WeakMap<Request, OrderLink>();
  * Makes the order of a verified payment. The same payment always gives the same order, so a client that sends it
  * again gets the order it already has. An answer of 400 or more cancels the settlement, so nothing is charged: a payment
  * that is not one the service takes, or whose authorization is not valid yet or is valid for longer than the offer asks,
- * makes no order.
+ * makes no order. Nor does a payment at the first-video price that the wallet named in x-payer did not sign, or one that
+ * finds no promo slot left for its wallet when its order is made.
  */
 const createOrder =
   (deps: VideosDeps, settings: Env) =>
   async (request: NextRequest): Promise<NextResponse> => {
     const payment = signedPayment(request);
     if (payment === null) {
-      const reason = 'The payment must be a USDT or USDC authorization on Celo for the full price, to the address the quote names.';
+      const reason = 'The payment must be a USDT or USDC authorization on Celo for the price the quote names, to the address it names.';
       return NextResponse.json({ error: 'invalid_payment', reason }, { status: 400, headers: NO_STORE });
     }
     const window = authorizationWindowProblem(payment, Date.now() / 1000);
     if (window !== null) return NextResponse.json({ error: 'invalid_payment', reason: window }, { status: 400, headers: NO_STORE });
     const body = await readBody(request);
     if (!body.ok) return NextResponse.json({ error: 'invalid_request', reason: body.reason }, { status: 400, headers: NO_STORE });
-    const { order } = await deps.store.createOrder({ request: body.order, ...payment });
+
+    let order: Order;
+    if (payment.amount === PROMO_PRICE_ATOMIC && PROMO_PRICE_ATOMIC !== settings.PRICE_ATOMIC) {
+      // The offer was the first-video price because the request named a wallet: that wallet must be the one that pays.
+      if (payerHint(request.headers.get(PAYER_HINT_HEADER)) !== payment.payer.toLowerCase()) {
+        return NextResponse.json({ error: 'invalid_payment', reason: PROMO_PAYER_REASON }, { status: 400, headers: NO_STORE });
+      }
+      const promo = await deps.store.createPromoOrder({ request: body.order, ...payment }, settings.PROMO_SLOTS);
+      if ('refused' in promo) return NextResponse.json({ error: 'promo_unavailable', reason: PROMO_GONE_REASON }, { status: 409, headers: NO_STORE });
+      order = promo.order;
+    } else {
+      order = (await deps.store.createOrder({ request: body.order, ...payment })).order;
+    }
     const link = { orderId: order.id, statusUrl: `${serviceBase(settings, request)}${ROUTE}/${order.id}` };
     ordersOfRequests.set(request, link);
     return NextResponse.json(link, { status: 202, headers: { ...NO_STORE, 'content-location': link.statusUrl } });
@@ -125,15 +154,34 @@ async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promis
 
 type PaidHandler = (request: NextRequest) => Promise<NextResponse>;
 
-// Built once per set of dependencies: making it asks the facilitator what it supports.
+// Built once per set of dependencies: making it asks the facilitator what it supports. The price each request is
+// offered is worked out from that set's store.
 let paid: { deps: VideosDeps; handler: PaidHandler } | undefined;
 
 function paidHandler(deps: VideosDeps, settings: Env): PaidHandler {
   if (paid?.deps !== deps) {
     const server = createResourceServer(settings, deps.facilitator, (payment) => paymentSettled(payment, deps));
-    paid = { deps, handler: withX402(createOrder(deps, settings), { [ROUTE]: routeConfig(settings) }, server) };
+    const routes = { [ROUTE]: routeConfig(settings, promoGate(settings, deps.store)) };
+    paid = { deps, handler: withX402(createOrder(deps, settings), routes, server) };
   }
   return paid.handler;
+}
+
+/**
+ * What a 402 asks to be paid, in atomic units: the offer in its PAYMENT-REQUIRED header, the price this request was
+ * offered. A 402 for a settlement that failed has no such header; its payment matched the offer, so it says the price.
+ */
+function askedPrice(res: Response, request: Request, fullPrice: bigint): bigint {
+  const header = res.headers.get('payment-required');
+  if (header !== null) {
+    try {
+      const amount = decodePaymentRequiredHeader(header).accepts[0]?.amount;
+      if (amount !== undefined) return BigInt(amount);
+    } catch {
+      // Not one this service wrote: the price below.
+    }
+  }
+  return signedPayment(request)?.amount ?? fullPrice;
 }
 
 /** A JSON body as an object, or an empty one when it is not. */
@@ -167,9 +215,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (res.status < 400 || (res.status !== 402 && made === undefined)) return res;
 
   // The status and the x402 headers stay as they are. The price is in the PAYMENT-REQUIRED header, for x402 clients;
-  // the body says it for whoever reads it. When the settlement failed or ended in doubt (a facilitator timeout) after
-  // the order was made, the body and Content-Location also say where the order is: it starts if the payment reaches
-  // the chain, and is given up as unpaid if it never does.
+  // the body says the same price for whoever reads it. When the settlement failed or ended in doubt (a facilitator
+  // timeout) after the order was made, the body and Content-Location also say where the order is: it starts if the
+  // payment reaches the chain, and is given up as unpaid if it never does.
   const headers = new Headers(res.headers);
   headers.set('content-type', 'application/json');
   headers.set('cache-control', 'no-store');
@@ -179,7 +227,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       ? {
           precheck: { thinSite: check.thin, ...(check.thin === true && { hint: THIN_HINT }) },
           termsUrl: `${serviceBase(settings, request)}/terms`,
-          price: { amount: formatPrice(settings.PRICE_ATOMIC), assets: ['USDT', 'USDC'] },
+          price: { amount: formatPrice(askedPrice(res, request, settings.PRICE_ATOMIC)), assets: ['USDT', 'USDC'] },
         }
       : await jsonObject(res);
   if (made !== undefined) headers.set('content-location', made.statusUrl);

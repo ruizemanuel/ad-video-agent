@@ -1,18 +1,19 @@
-import { sql } from 'drizzle-orm';
-import { customType, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql, type SQL } from 'drizzle-orm';
+import { customType, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { VmTaskKind } from '@app/core';
-import type {
-  CostKind,
-  Deliverable,
-  DeliverySummary,
-  OrderRequest,
-  OrderStatus,
-  PaymentAuthorization,
-  PaymentStatus,
-  PrecheckResult,
-  RefundStatus,
-  Steps,
-  VmTaskStatus,
+import {
+  VIDEO_STATUSES,
+  type CostKind,
+  type Deliverable,
+  type DeliverySummary,
+  type OrderRequest,
+  type OrderStatus,
+  type PaymentAuthorization,
+  type PaymentStatus,
+  type PrecheckResult,
+  type RefundStatus,
+  type Steps,
+  type VmTaskStatus,
 } from '../ports';
 
 /** Token amounts in atomic units: numeric(78, 0) holds any uint256, and comes back as bigint. */
@@ -24,6 +25,23 @@ const units = customType<{ data: bigint; driverData: string }>({
 
 const at = (name: string) => timestamp(name, { withTimezone: true });
 const createdAt = () => at('created_at').notNull().defaultNow();
+
+// Written into the SQL as it is (an index's predicate takes no parameters): the statuses are this code's own constants.
+const videoStatuses = sql.raw(VIDEO_STATUSES.map((status) => `'${status}'`).join(', '));
+
+/**
+ * An order that has its video or is on its way to it (VIDEO_STATUSES, or expired once delivered), as a condition on
+ * these columns of `orders`: what makes a wallet's first video.
+ */
+export const holdsVideo = (t: { status: AnyPgColumn; deliveredAt: AnyPgColumn }): SQL =>
+  sql`(${t.status} in (${videoStatuses}) or (${t.status} = 'expired' and ${t.deliveredAt} is not null))`;
+
+/**
+ * An order that holds a first-video promo slot: one at the promo price that holds its video. The two promo indexes and
+ * the store's queries all use this one condition.
+ */
+export const holdsPromoSlot = (t: { status: AnyPgColumn; deliveredAt: AnyPgColumn; promoSlot: AnyPgColumn }): SQL =>
+  sql`(${t.promoSlot} is not null and ${holdsVideo(t)})`;
 
 export const orders = pgTable(
   'orders',
@@ -48,6 +66,8 @@ export const orders = pgTable(
     /** The VM's permit: only its sha256 is kept. */
     vmTokenHash: text('vm_token_hash'),
     vmTokenExpiresAt: at('vm_token_expires_at'),
+    /** The first-video promo slot of an order at the promo price; null at the full price. */
+    promoSlot: integer('promo_slot'),
     createdAt: createdAt(),
     paidAt: at('paid_at'),
     deliveredAt: at('delivered_at'),
@@ -58,6 +78,10 @@ export const orders = pgTable(
     index('orders_vm_token_hash_idx').on(t.vmTokenHash),
     // What the cron lists: by status, oldest first.
     index('orders_status_created_idx').on(t.status, t.createdAt),
+    // The first-video promo, among the orders that hold a slot: each slot held once, and one slot per wallet. An order
+    // that will never have its video leaves both, and its slot is free again.
+    uniqueIndex('orders_promo_slot_idx').on(t.promoSlot).where(holdsPromoSlot(t)),
+    uniqueIndex('orders_promo_payer_idx').on(sql`lower(${t.payer})`).where(holdsPromoSlot(t)),
   ],
 );
 

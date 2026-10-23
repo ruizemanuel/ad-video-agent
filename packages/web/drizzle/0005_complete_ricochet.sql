@@ -1,0 +1,3 @@
+ALTER TABLE "orders" ADD COLUMN "promo_slot" integer;--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_promo_slot_idx" ON "orders" USING btree ("promo_slot") WHERE ("orders"."promo_slot" is not null and ("orders"."status" in ('awaiting_settlement', 'paid', 'running', 'delivered') or ("orders"."status" = 'expired' and "orders"."delivered_at" is not null)));--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_promo_payer_idx" ON "orders" USING btree (lower("payer")) WHERE ("orders"."promo_slot" is not null and ("orders"."status" in ('awaiting_settlement', 'paid', 'running', 'delivered') or ("orders"."status" = 'expired' and "orders"."delivered_at" is not null)));

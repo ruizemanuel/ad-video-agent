@@ -206,6 +206,28 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...real, ERC8021_CODE: 'Celo-Event-2026' })).not.toThrow(/Celo-Event-2026/);
   });
 
+  it('PROMO_SLOTS defaults to 0 and refuses negatives or fractions', () => {
+    expect(parseEnv(real).PROMO_SLOTS).toBe(0);
+    expect(parseEnv({ ...real, PROMO_SLOTS: '' }).PROMO_SLOTS).toBe(0);
+    expect(parseEnv({ ...real, PROMO_SLOTS: '0' }).PROMO_SLOTS).toBe(0);
+    expect(parseEnv({ ...real, PROMO_SLOTS: '10' }).PROMO_SLOTS).toBe(10);
+    for (const value of ['-1', '1.5', '2.0', '1e1', ' 3', 'ten', '9'.repeat(20)]) {
+      expect(() => parseEnv({ ...real, PROMO_SLOTS: value }), value).toThrow('PROMO_SLOTS');
+    }
+  });
+
+  it('TEAM_WALLETS parses a comma list and refuses a non-address without echoing it', () => {
+    const mixed = '0xAbCdEf0123456789aBcDeF0123456789ABCDEF01';
+    const plain = `0x${'b'.repeat(40)}`;
+    expect(parseEnv(real).TEAM_WALLETS).toEqual([]);
+    expect(parseEnv({ ...real, TEAM_WALLETS: '' }).TEAM_WALLETS).toEqual([]);
+    // In lowercase, so a wallet is found whatever the case it is written in; spaces and an empty item are let go.
+    expect(parseEnv({ ...real, TEAM_WALLETS: `${mixed}, ${plain},` }).TEAM_WALLETS).toEqual([mixed.toLowerCase(), plain]);
+    const typo = '0xnot-a-wallet-but-maybe-a-secret';
+    expect(() => parseEnv({ ...real, TEAM_WALLETS: `${mixed},${typo}` })).toThrow(/TEAM_WALLETS.*0x followed by 40 hex characters/);
+    expect(() => parseEnv({ ...real, TEAM_WALLETS: `${mixed},${typo}` })).not.toThrow(typo);
+  });
+
   it('names the variable that is wrong and never prints what it held', () => {
     const secret = 'sk-this-must-not-leak-into-a-log';
     let message = '';

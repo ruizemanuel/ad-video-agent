@@ -1,5 +1,6 @@
 // What the two OrderStore adapters (Postgres and files) have to do the same way.
 import { randomBytes } from 'node:crypto';
+import { VIDEO_STATUSES, type Order } from '../ports';
 
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
@@ -28,6 +29,23 @@ export function roundUsd(usd: number): number {
 
 /** Atomic units of a 6-decimal token (USDT, USDC) in dollars. */
 export const atomicToUsd = (atomic: bigint): number => Number(atomic) / 1e6;
+
+/** An order that has its video or is on its way to it, as `holdsVideo` in db/schema.ts says it in SQL. */
+export const holdsVideo = (o: Pick<Order, 'status' | 'deliveredAt'>): boolean =>
+  (VIDEO_STATUSES as readonly string[]).includes(o.status) || (o.status === 'expired' && o.deliveredAt !== null);
+
+/**
+ * An order that holds a first-video promo slot, as `holdsPromoSlot` in db/schema.ts says it in SQL. (An order the
+ * FileStore wrote before slots were kept has no `promoSlot` at all.)
+ */
+export const holdsPromoSlot = (o: Pick<Order, 'status' | 'deliveredAt' | 'promoSlot'>): boolean => typeof o.promoSlot === 'number' && holdsVideo(o);
+
+/** The lowest promo slot in 1..`slots` that none of `held` is, or null when all of them are. */
+export function lowestFreeSlot(held: Iterable<number | null>, slots: number): number | null {
+  const taken = new Set(held);
+  for (let slot = 1; slot <= slots; slot++) if (!taken.has(slot)) return slot;
+  return null;
+}
 
 /** The patch without the keys that are `undefined`: a patch means "change these", not "erase these". */
 export function defined<T extends object>(patch: T): Partial<T> {

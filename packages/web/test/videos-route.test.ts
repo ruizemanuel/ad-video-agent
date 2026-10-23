@@ -4,15 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodePaymentRequiredHeader, decodePaymentSignatureHeader } from '@x402/core/http';
 import { NextRequest } from 'next/server';
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { getAdapters } from '../src/adapters';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
 import { POST } from '../src/app/v1/videos/route';
-import { ModelCallFailed, ModelOutputInvalid } from '../src/ports';
-import { TOKENS } from '../src/payments/x402';
+import { ModelCallFailed, ModelOutputInvalid, type NewOrder, type OrderStore } from '../src/ports';
+import { PROMO_PRICE_ATOMIC, TOKENS } from '../src/payments/x402';
 import type { FetchedPage } from '../src/precheck/fetch-page';
 import { orderWorkflow } from '../src/workflows/order';
 import { FAKE_SETTLE_TX, FakeFacilitator } from './support/fake-facilitator';
@@ -38,6 +39,8 @@ vi.stubEnv('PAYTO_ADDRESS', PAYTO);
 vi.stubEnv('LINK_SIGNING_SECRET', 's'.repeat(40));
 vi.stubEnv('CRON_SECRET', 'c'.repeat(40));
 vi.stubEnv('PUBLIC_BASE_URL', BASE);
+// The first-video promo is on, for 2 wallets: a client that sends no x-payer header must not notice it.
+vi.stubEnv('PROMO_SLOTS', '2');
 afterAll(async () => {
   vi.unstubAllEnvs();
   await rm(dir, { recursive: true, force: true });
@@ -66,10 +69,10 @@ const json = async (res: Response | Promise<Response>) => (await res).json() as 
 /** Asks for the price of `body`, then signs what the 402 asks for, from a new wallet. */
 const pay = async (body: unknown = { url: U }, options: PayOptions = {}): Promise<PaymentHeaders> => payFor(await POST(post(body)), options);
 /** The order a payment made, found the way the reconciliation finds it. */
-const orderOf = async (headers: PaymentHeaders) => {
+const orderOf = async (headers: PaymentHeaders, inStore: OrderStore = store) => {
   const payment = decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']);
   const { from, nonce } = (payment.payload as { authorization: { from: string; nonce: string } }).authorization;
-  return store.findOrderByPayment(payment.accepted.asset, from, nonce);
+  return inStore.findOrderByPayment(payment.accepted.asset, from, nonce);
 };
 
 beforeEach(() => {
@@ -436,5 +439,176 @@ describe('POST /v1/videos with a payment', () => {
     const res = await POST(post({ url: U, audio: 'voice' }, await pay()));
     expect(res.status).toBe(400);
     expect(facilitator.calls.verify).toBe(0);
+  });
+});
+
+describe('POST /v1/videos at the first-video price', () => {
+  const FULL = ['5000000', '5000000'];
+  const PROMO = ['10000', '10000'];
+  const GONE = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
+
+  // Each test on a store of its own, so both of its slots start free.
+  let fresh: FileStore;
+  beforeEach(async () => {
+    fresh = new FileStore(await mkdtemp(join(dir, 'promo-')));
+    setVideosDeps({ ...deps, store: fresh });
+  });
+  afterEach(() => {
+    setVideosDeps(deps);
+  });
+
+  /** A wallet the test signs with: a key made now, and its address. */
+  const newWallet = () => {
+    const key = generatePrivateKey();
+    return { key, address: privateKeyToAccount(key).address };
+  };
+  /** The test's store, with these methods in place of its own, as the route's store from now on. */
+  const useStoreWith = (overrides: Partial<OrderStore>) => {
+    const store = new Proxy(fresh, {
+      get(target, name) {
+        if (typeof name === 'string' && name in overrides) return overrides[name as keyof OrderStore];
+        const value: unknown = Reflect.get(target, name);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    setVideosDeps({ ...deps, store });
+  };
+  /** The free quote, naming the wallet in x-payer when one is given. */
+  const quote = (address?: string) => POST(post({ url: U }, address === undefined ? {} : { 'x-payer': address }));
+  /** What a 402 asks for in each token, in atomic units. */
+  const asked = (res: Response) => decodePaymentRequiredHeader(res.headers.get('PAYMENT-REQUIRED')!).accepts.map((offer) => offer.amount);
+  let nonce = 0;
+  /** Another wallet's payment at the first-video price, as the store keeps it. */
+  const someoneElse = (): NewOrder => ({
+    request: { url: U, audio: 'music' },
+    network: 'eip155:42220',
+    asset: TOKENS.USDT.address,
+    payer: privateKeyToAccount(generatePrivateKey()).address,
+    amount: PROMO_PRICE_ATOMIC,
+    nonce: `0x${(++nonce).toString(16).padStart(64, '0')}`,
+    validAfter: 0n,
+    validBefore: 1_790_000_000n,
+  });
+
+  it('makes a promo order when the eligible wallet pays 0.01 with x-payer', async () => {
+    const me = newWallet();
+    const res402 = await quote(me.address);
+    expect(res402.status).toBe(402);
+    expect(asked(res402)).toEqual(PROMO);
+    expect(await res402.clone().json()).toMatchObject({ price: { amount: '0.01', assets: ['USDT', 'USDC'] } });
+
+    // The header may write the address in any case.
+    const headers = await payFor(res402, { key: me.key });
+    const res = await POST(post({ url: U }, { 'x-payer': me.address.toLowerCase(), ...headers }));
+    expect(res.status).toBe(202);
+    const { orderId, statusUrl } = (await res.json()) as { orderId: string; statusUrl: string };
+    expect(res.headers.get('Content-Location')).toBe(statusUrl);
+    expect(await fresh.getOrder(orderId)).toMatchObject({ status: 'paid', payer: me.address, amount: 10_000n, promoSlot: 1, runId: 'wrun_test' });
+    expect(facilitator.calls.settle).toBe(1);
+    expect(start).toHaveBeenCalledTimes(1);
+
+    // Its first video is on its way: the next quote is at the full price.
+    expect(asked(await quote(me.address))).toEqual(FULL);
+  });
+
+  it('refuses a promo payment signed by another wallet than x-payer', async () => {
+    const asker = newWallet();
+    const signer = newWallet();
+    const headers = await payFor(await quote(asker.address), { key: signer.key });
+    const res = await POST(post({ url: U }, { 'x-payer': asker.address, ...headers }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_payment', reason: expect.stringContaining('wallet that asked for it') });
+    expect(res.headers.get('Content-Location')).toBeNull();
+    expect(facilitator.calls.settle).toBe(0);
+    expect(start).not.toHaveBeenCalled();
+    expect(await orderOf(headers, fresh)).toBeNull();
+    expect(await fresh.promoSlotsUsed()).toBe(0);
+  });
+
+  it('refuses a promo payment without x-payer', async () => {
+    const me = newWallet();
+    const headers = await payFor(await quote(me.address), { key: me.key });
+    const res = await POST(post({ url: U }, headers));
+    // Without the header the offer is the full price, which the payment does not match: x402 answers it with a fresh
+    // 402 at the full price before the facilitator is asked anything, and nothing is charged.
+    expect(res.status).toBe(402);
+    expect(asked(res)).toEqual(FULL);
+    expect(await res.json()).toMatchObject({ price: { amount: '5' } });
+    expect(facilitator.calls.verify).toBe(0);
+    expect(facilitator.calls.settle).toBe(0);
+    expect(await orderOf(headers, fresh)).toBeNull();
+    expect(await fresh.promoSlotsUsed()).toBe(0);
+  });
+
+  it('answers 409 promo_unavailable when the last slot went to someone else', async () => {
+    expect(await fresh.createPromoOrder(someoneElse(), 2)).toMatchObject({ created: true });
+    const me = newWallet();
+    const headers = await payFor(await quote(me.address), { key: me.key });
+    // Between the price this payment was offered and its order, another wallet takes the last slot.
+    const takeSlot = fresh.createPromoOrder.bind(fresh);
+    useStoreWith({
+      createPromoOrder: async (order, slots) => {
+        await takeSlot(someoneElse(), slots);
+        return takeSlot(order, slots);
+      },
+    });
+
+    const res = await POST(post({ url: U }, { 'x-payer': me.address, ...headers }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'promo_unavailable', reason: GONE });
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(facilitator.calls.settle).toBe(0);
+    expect(start).not.toHaveBeenCalled();
+    expect(await orderOf(headers, fresh)).toBeNull();
+    expect(await fresh.promoSlotsUsed()).toBe(2);
+  });
+
+  it('answers a fresh 402 at the full price when the promo check fails at payment time, and charges nothing', async () => {
+    const me = newWallet();
+    const headers = await payFor(await quote(me.address), { key: me.key });
+    useStoreWith({
+      hasVideo: async () => {
+        throw new Error('The database is not answering.');
+      },
+    });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await POST(post({ url: U }, { 'x-payer': me.address, ...headers }));
+      expect(res.status).toBe(402);
+      expect(asked(res)).toEqual(FULL);
+      expect(await res.json()).toMatchObject({ price: { amount: '5' } });
+      expect(logged).toHaveBeenCalledWith('[promo_check_failed]', 'The database is not answering.');
+    } finally {
+      logged.mockRestore();
+    }
+    expect(facilitator.calls.verify).toBe(0);
+    expect(facilitator.calls.settle).toBe(0);
+    expect(await orderOf(headers, fresh)).toBeNull();
+  });
+
+  it("keeps today's answers for a client that sends no x-payer", async () => {
+    // The promo is on and both of its slots are free.
+    const res402 = await quote();
+    expect(res402.status).toBe(402);
+    const required = decodePaymentRequiredHeader(res402.headers.get('PAYMENT-REQUIRED')!);
+    expect(required.accepts.map((offer) => [offer.asset, offer.amount])).toEqual([
+      [TOKENS.USDT.address, '5000000'],
+      [TOKENS.USDC.address, '5000000'],
+    ]);
+    expect(required.resource.description).toBe(
+      'Ad video package from a website URL. Costs 5 USDT or USDC on Celo. x402 clients with a default $1 per-payment cap must raise it.',
+    );
+    expect(await res402.clone().json()).toEqual({
+      precheck: { thinSite: true, hint: THIN_HINT },
+      termsUrl: `${BASE}/terms`,
+      price: { amount: '5', assets: ['USDT', 'USDC'] },
+    });
+
+    const res = await POST(post({ url: U }, await payFor(res402)));
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { orderId: string; statusUrl: string };
+    expect(body).toEqual({ orderId: expect.stringMatching(/^ord_/), statusUrl: `${BASE}/v1/videos/${body.orderId}` });
+    expect(await fresh.getOrder(body.orderId)).toMatchObject({ status: 'paid', amount: 5_000_000n, promoSlot: null });
+    expect(await fresh.promoSlotsUsed()).toBe(0);
   });
 });

@@ -1,9 +1,9 @@
 // The OrderStore on Postgres (Neon over HTTP in production, PGlite in the tests), through drizzle. Neon's HTTP
 // driver has no interactive transactions, so every operation that must be atomic is one statement.
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, gte, inArray, is, isNotNull, isNull, lt, lte, ne, or, SQL, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
-import { costs, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
+import { costs, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
 import {
   statusesBefore,
   type CostKind,
@@ -26,7 +26,7 @@ import {
   type StepState,
   type VmTask,
 } from '../../ports';
-import { atomicToUsd, defined, newOrderId, roundUsd } from '../store-common';
+import { atomicToUsd, defined, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
 
 const toPayment = ({ createdAt: _created, updatedAt: _updated, ...payment }: typeof payments.$inferSelect): PaymentRecord => payment;
 
@@ -39,6 +39,21 @@ const toTask = ({ seq: _seq, ...task }: typeof vmTasks.$inferSelect): VmTask => 
 
 /** What a `sum()` over a numeric column gives, as a string: 0 when there is nothing to sum. */
 const total = (column: AnyColumn) => sql<string>`coalesce(sum(${column}), 0)::text`;
+
+/**
+ * A new order as the select list of an INSERT … SELECT, which names every column of the table in its order (`orders`
+ * has no generated column): the value `values` gives, or else the column's default, as VALUES would put it. Each value
+ * is cast to its column's type, which a SELECT, unlike VALUES, does not take from the columns it fills.
+ */
+function selectedOrder(values: Partial<typeof orders.$inferInsert>): SQL {
+  return sql.join(
+    Object.entries(getTableColumns(orders)).map(([key, column]) => {
+      const value: unknown = key in values ? values[key as keyof typeof values] : (column.default ?? null);
+      return is(value, SQL) ? value : sql`${sql.param(value, column)}::${sql.raw(column.getSQLType())}`;
+    }),
+    sql`, `,
+  );
+}
 
 export class DrizzleStore implements OrderStore {
   constructor(private readonly db: Db) {}
@@ -55,6 +70,65 @@ export class DrizzleStore implements OrderStore {
     const existing = await this.findOrderByPayment(o.asset, o.payer, o.nonce);
     if (!existing) throw new Error('The order was refused as a duplicate, but no order has that payment.');
     return { order: existing, created: false };
+  }
+
+  // The promo's atomicity rests on the two unique indexes of schema.ts and on single statements: a slot or a wallet
+  // taken by another call at the same moment makes the insert write nothing, and what was taken is then read back.
+  async createPromoOrder(o: NewOrder, slots: number): Promise<{ order: Order; created: boolean } | { refused: 'no_slot' | 'not_first_video' }> {
+    const existing = await this.findOrderByPayment(o.asset, o.payer, o.nonce);
+    if (existing) return { order: existing, created: false };
+    // A pass that writes nothing and finds neither the payment nor a video lost its slot to an order made at the same
+    // moment, which now holds it; the next pass takes another. A slot freed meanwhile could make the passes run out
+    // first: the payment is then refused, and the payer asks for a new quote.
+    for (let pass = 0; pass < slots; pass++) {
+      const slot = lowestFreeSlot(await this.heldSlots(slots), slots);
+      if (slot === null) break;
+      const [inserted] = await this.insertPromoOrder(o, slot);
+      if (inserted) return { order: inserted, created: true };
+      const same = await this.findOrderByPayment(o.asset, o.payer, o.nonce);
+      if (same) return { order: same, created: false };
+      if (await this.hasVideo(o.payer)) return { refused: 'not_first_video' };
+    }
+    return (await this.hasVideo(o.payer)) ? { refused: 'not_first_video' } : { refused: 'no_slot' };
+  }
+
+  /** The promo slots in 1..`slots` that an order holds. */
+  private async heldSlots(slots: number): Promise<(number | null)[]> {
+    const rows = await this.db
+      .select({ slot: orders.promoSlot })
+      .from(orders)
+      .where(and(holdsPromoSlot(orders), lte(orders.promoSlot, slots)));
+    return rows.map((row) => row.slot);
+  }
+
+  /**
+   * One statement: the order holding `slot`, written only if the wallet has no video (the condition VALUES cannot carry,
+   * so it is an INSERT … SELECT). Nothing is written, and nothing comes back, when the wallet has one, when the slot or
+   * the wallet's promo is held (the promo indexes), or when the payment already made an order.
+   */
+  private insertPromoOrder(o: NewOrder, slot: number): Promise<Order[]> {
+    const { request, network, asset, payer, amount, nonce, validAfter, validBefore } = o;
+    const order = selectedOrder({ id: newOrderId(), request, network, asset, payer, amount, nonce, validAfter, validBefore, promoSlot: slot, createdAt: new Date() });
+    const walletHasVideo = sql`exists (select 1 from ${orders} where lower(${orders.payer}) = ${payer.toLowerCase()} and ${holdsVideo(orders)})`;
+    return this.db
+      .insert(orders)
+      .select(sql`select ${order} where not ${walletHasVideo}`)
+      .onConflictDoNothing()
+      .returning();
+  }
+
+  async promoSlotsUsed(): Promise<number> {
+    const [row] = await this.db.select({ used: count() }).from(orders).where(holdsPromoSlot(orders));
+    return row?.used ?? 0;
+  }
+
+  async hasVideo(payer: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(sql`lower(${orders.payer}) = ${payer.toLowerCase()}`, holdsVideo(orders)))
+      .limit(1);
+    return row !== undefined;
   }
 
   async getOrder(id: string): Promise<Order | null> {

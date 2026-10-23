@@ -43,6 +43,27 @@ const schema = z
         .pipe(z.bigint().positive())
         .default(PRICE_DEFAULT),
     ),
+    /** How many wallets pay the first-video price (0.01) for their first video: 0 turns the promo off. */
+    PROMO_SLOTS: blank(
+      z
+        .string()
+        .regex(/^[0-9]+$/, 'must be a whole number, 0 or more')
+        .transform(Number)
+        .pipe(z.int())
+        .default(0),
+    ),
+    /**
+     * The team's wallets, separated by commas: they always pay the full price. Kept in lowercase, so a wallet is found
+     * whatever the case it is written in.
+     */
+    TEAM_WALLETS: blank(
+      z
+        .string()
+        .transform((list) => list.split(',').map((item) => item.trim()).filter((item) => item !== ''))
+        .pipe(z.array(address))
+        .transform((wallets) => wallets.map((wallet) => wallet.toLowerCase()))
+        .default([]),
+    ),
     /** The agent's wallet, which pays buy. A person loads it. */
     SPEND_WALLET_PRIVATE_KEY: blank(privateKey.optional()),
     /** The refunds' wallet. A person loads it. */

@@ -27,7 +27,7 @@ import {
   type StepState,
   type VmTask,
 } from '../../ports';
-import { atomicToUsd, defined, newOrderId, roundUsd } from '../store-common';
+import { atomicToUsd, defined, holdsPromoSlot, holdsVideo, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
 
 type Collection = 'orders' | 'tasks' | 'payments' | 'costs' | 'refunds' | 'prechecks';
 
@@ -180,37 +180,63 @@ export class FileStore implements OrderStore {
 
   // Orders.
 
+  /** Writes a new order for the payment, awaiting its settlement, holding `promoSlot` if it is not null. */
+  private async addOrder(o: NewOrder, promoSlot: number | null): Promise<Order> {
+    const order: Order = {
+      id: newOrderId(),
+      status: 'awaiting_settlement',
+      request: o.request,
+      network: o.network,
+      asset: o.asset,
+      payer: o.payer,
+      amount: o.amount,
+      nonce: o.nonce,
+      validAfter: o.validAfter,
+      validBefore: o.validBefore,
+      settleTx: null,
+      runId: null,
+      steps: {},
+      deliverables: [],
+      summary: null,
+      warnings: [],
+      failureReason: null,
+      vmTokenHash: null,
+      vmTokenExpiresAt: null,
+      promoSlot,
+      createdAt: new Date(),
+      paidAt: null,
+      deliveredAt: null,
+    };
+    await this.write('orders', order.id, order);
+    return order;
+  }
+
   createOrder(o: NewOrder): Promise<{ order: Order; created: boolean }> {
     return this.locked(async () => {
       const existing = await this.findByPayment(o.asset, o.payer, o.nonce);
       if (existing) return { order: existing, created: false };
-      const order: Order = {
-        id: newOrderId(),
-        status: 'awaiting_settlement',
-        request: o.request,
-        network: o.network,
-        asset: o.asset,
-        payer: o.payer,
-        amount: o.amount,
-        nonce: o.nonce,
-        validAfter: o.validAfter,
-        validBefore: o.validBefore,
-        settleTx: null,
-        runId: null,
-        steps: {},
-        deliverables: [],
-        summary: null,
-        warnings: [],
-        failureReason: null,
-        vmTokenHash: null,
-        vmTokenExpiresAt: null,
-        createdAt: new Date(),
-        paidAt: null,
-        deliveredAt: null,
-      };
-      await this.write('orders', order.id, order);
-      return { order, created: true };
+      return { order: await this.addOrder(o, null), created: true };
     });
+  }
+
+  createPromoOrder(o: NewOrder, slots: number): Promise<{ order: Order; created: boolean } | { refused: 'no_slot' | 'not_first_video' }> {
+    return this.locked(async () => {
+      const existing = await this.findByPayment(o.asset, o.payer, o.nonce);
+      if (existing) return { order: existing, created: false };
+      const orders = await this.all<Order>('orders');
+      if (orders.some((other) => sameHex(other.payer, o.payer) && holdsVideo(other))) return { refused: 'not_first_video' };
+      const slot = lowestFreeSlot(orders.filter(holdsPromoSlot).map((other) => other.promoSlot), slots);
+      if (slot === null) return { refused: 'no_slot' };
+      return { order: await this.addOrder(o, slot), created: true };
+    });
+  }
+
+  promoSlotsUsed(): Promise<number> {
+    return this.locked(async () => (await this.all<Order>('orders')).filter(holdsPromoSlot).length);
+  }
+
+  hasVideo(payer: string): Promise<boolean> {
+    return this.locked(async () => (await this.all<Order>('orders')).some((o) => sameHex(o.payer, payer) && holdsVideo(o)));
   }
 
   getOrder(id: string): Promise<Order | null> {

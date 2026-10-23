@@ -1,8 +1,9 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
-// flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders,
-// VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private files), the LlmPort (the
-// models, as far as the tasks so far use them), the BuyPort (renting the VM, following it, and what the chain says
-// about a payment), the MusicPort (Lyria, 3.5 and 3 Pro) and the RefundPort (the refunds' wallet on Celo).
+// flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders and
+// their first-video promo slots, VM tasks, payment intents, costs, refunds and pre-checks), the BlobPort (the private
+// files), the LlmPort (the models, as far as the tasks so far use them), the BuyPort (renting the VM, following it,
+// and what the chain says about a payment), the MusicPort (Lyria, 3.5 and 3 Pro) and the RefundPort (the refunds'
+// wallet on Celo).
 import type {
   CaptureFile,
   Claim,
@@ -50,6 +51,13 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   unpaid: ['expired'],
   expired: [],
 };
+
+/**
+ * The statuses of an order that has its video, or is on its way to it. An `expired` order has had it when it was
+ * delivered. One in any other status (unpaid, refunding, refunded, refund_failed, or expired with no delivery) never
+ * will: what makes a wallet's first video and what holds a first-video promo slot.
+ */
+export const VIDEO_STATUSES = ['awaiting_settlement', 'paid', 'running', 'delivered'] as const satisfies readonly OrderStatus[];
 
 /** How long an order is kept, from when it was made: then it expires and its files are deleted. */
 export const ORDER_DAYS = 30;
@@ -101,6 +109,11 @@ export type Order = {
   // The VM's permit: only its hash is kept.
   vmTokenHash: string | null;
   vmTokenExpiresAt: Date | null;
+  /**
+   * The first-video promo slot (1 to PROMO_SLOTS) of an order paid at the first-video price; null at the full price.
+   * The order holds it while it has its video or is on its way to it (VIDEO_STATUSES), and gives it back otherwise.
+   */
+  promoSlot: number | null;
   createdAt: Date;
   paidAt: Date | null;
   deliveredAt: Date | null;
@@ -206,6 +219,17 @@ export type CostKind = 'buy' | 'card';
 export interface OrderStore {
   /** One order per (asset, payer, nonce), whatever the case of the hex: the same payment gives the same order. */
   createOrder(o: NewOrder): Promise<{ order: Order; created: boolean }>;
+  /**
+   * An order at the first-video price, holding the lowest free promo slot in 1..`slots`. A payment that already made an
+   * order gives that order, before anything else is looked at. Otherwise it is refused with `not_first_video` when the
+   * wallet has a video (see `hasVideo`), and with `no_slot` when every slot is held. Of several calls at once, never
+   * more than `slots` hold a slot, and never two for one wallet, whatever the case of the hex.
+   */
+  createPromoOrder(o: NewOrder, slots: number): Promise<{ order: Order; created: boolean } | { refused: 'no_slot' | 'not_first_video' }>;
+  /** How many promo slots are held: by the orders at the first-video price that have their video or are on their way to it. */
+  promoSlotsUsed(): Promise<number>;
+  /** Whether the wallet, whatever the case of its hex, has an order at any price that has its video or is on its way to it. */
+  hasVideo(payer: string): Promise<boolean>;
   getOrder(id: string): Promise<Order | null>;
   findOrderByPayment(asset: string, payer: string, nonce: string): Promise<Order | null>;
   /** Moves the order if ORDER_TRANSITIONS allows it from where it is (and only then applies the patch). False otherwise. */

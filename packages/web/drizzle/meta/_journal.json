@@ -36,6 +36,13 @@
       "when": 1792712768203,
       "tag": "0004_overjoyed_gunslinger",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792714207605,
+      "tag": "0005_complete_ricochet",
+      "breakpoints": true
     }
   ]
 }

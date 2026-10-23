@@ -130,6 +130,7 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
           failureReason: null,
           vmTokenHash: null,
           vmTokenExpiresAt: null,
+          promoSlot: null,
           createdAt: expect.any(Date),
           paidAt: null,
           deliveredAt: null,
@@ -311,6 +312,146 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       it('says no to a conditional run id for an order that does not exist', async () => {
         expect(await s.setRunIdIfNone('ord_doesnotexist', 'wrun')).toBe(false);
         expect(await s.getOrder('ord_doesnotexist')).toBeNull();
+      });
+    });
+
+    describe('the first-video promo', () => {
+      /** A new wallet, its hex in mixed case, as a wallet writes it. */
+      const wallet = () => `0xAbCd${(++counter).toString(16).padStart(36, '0')}`;
+      /** A payment at the first-video price, with a nonce of its own, from a new wallet unless one is given. */
+      const promo = (payer = wallet()): NewOrder => newOrder({ payer, amount: 10_000n, nonce: uniqueNonce() });
+      type PromoResult = Awaited<ReturnType<OrderStore['createPromoOrder']>>;
+      const made = (result: PromoResult): Order => {
+        if (!('order' in result)) throw new Error(`The promo order was refused: ${result.refused}.`);
+        return result.order;
+      };
+      const slotOf = (result: PromoResult): number | null => made(result).promoSlot;
+      /** Moves an order made a moment ago (awaiting its settlement) to `status`, the way ROUTE does. */
+      const moveTo = async (order: Order, status: OrderStatus) => {
+        for (const step of ROUTE[status]) expect(await s.transition(order.id, step)).toBe(true);
+      };
+
+      it('gives promo slots 1..n and refuses no_slot past n', async () => {
+        const results: PromoResult[] = [];
+        for (let k = 0; k < 4; k++) results.push(await s.createPromoOrder(promo(), 3));
+        expect(results.slice(0, 3).map((result) => ('created' in result ? result.created : result.refused))).toEqual([true, true, true]);
+        expect(results.slice(0, 3).map(slotOf)).toEqual([1, 2, 3]);
+        expect(results[3]).toEqual({ refused: 'no_slot' });
+        expect(await s.promoSlotsUsed()).toBe(3);
+        // A promo order is an order like any other, at the price it was paid: it waits for its settlement.
+        const first = made(results[0]!);
+        expect(first).toMatchObject({ status: 'awaiting_settlement', amount: 10_000n, promoSlot: 1, summary: null, runId: null });
+        expect(await s.getOrder(first.id)).toEqual(first);
+        // An order at the full price holds no slot.
+        expect((await create()).promoSlot).toBeNull();
+        expect(await s.promoSlotsUsed()).toBe(3);
+      });
+
+      it('refuses a second promo order for the same wallet in any case of its hex', async () => {
+        const payer = wallet();
+        expect(slotOf(await s.createPromoOrder(promo(payer), 5))).toBe(1);
+        expect(await s.createPromoOrder(promo(payer.toLowerCase()), 5)).toEqual({ refused: 'not_first_video' });
+        expect(await s.createPromoOrder(promo(`0x${payer.slice(2).toUpperCase()}`), 5)).toEqual({ refused: 'not_first_video' });
+        // Nor for a wallet that had a video at the full price.
+        const paidInFull = wallet();
+        await orderIn('delivered', { payer: paidInFull });
+        expect(await s.createPromoOrder(promo(paidInFull.toLowerCase()), 5)).toEqual({ refused: 'not_first_video' });
+        expect(await s.promoSlotsUsed()).toBe(1);
+        // A wallet with a promo order may still order at the full price, as often as it likes.
+        expect((await s.createOrder(newOrder({ payer, nonce: uniqueNonce() }))).created).toBe(true);
+        expect((await s.createOrder(newOrder({ payer, nonce: uniqueNonce() }))).created).toBe(true);
+      });
+
+      it('frees the slot when the order ends unpaid or refunded', async () => {
+        const unpaid = made(await s.createPromoOrder(promo(), 2));
+        const refunded = made(await s.createPromoOrder(promo(), 2));
+        expect(await s.createPromoOrder(promo(), 2)).toEqual({ refused: 'no_slot' });
+
+        await moveTo(unpaid, 'unpaid');
+        expect(await s.promoSlotsUsed()).toBe(1);
+        // The wallet gets its first-video price back, and the lowest free slot is the one it left.
+        expect(slotOf(await s.createPromoOrder(promo(unpaid.payer), 2))).toBe(unpaid.promoSlot);
+
+        // A refund under way already gives it back: the order will never have its video.
+        await moveTo(refunded, 'refunding');
+        expect(await s.promoSlotsUsed()).toBe(1);
+        expect(await s.transition(refunded.id, 'refunded')).toBe(true);
+        expect(slotOf(await s.createPromoOrder(promo(), 2))).toBe(refunded.promoSlot);
+        expect(await s.createPromoOrder(promo(), 2)).toEqual({ refused: 'no_slot' });
+      });
+
+      it('keeps the slot of a delivered order after it expires, not of a refunded one', async () => {
+        const delivered = made(await s.createPromoOrder(promo(), 2));
+        const refunded = made(await s.createPromoOrder(promo(), 2));
+        await moveTo(delivered, 'delivered');
+        await moveTo(refunded, 'refunded');
+        expect(await s.transition(delivered.id, 'expired')).toBe(true);
+        expect(await s.transition(refunded.id, 'expired')).toBe(true);
+        expect(await s.promoSlotsUsed()).toBe(1);
+        expect(await s.hasVideo(delivered.payer)).toBe(true);
+        expect(await s.hasVideo(refunded.payer)).toBe(false);
+        expect(slotOf(await s.createPromoOrder(promo(), 2))).toBe(refunded.promoSlot);
+        expect(await s.createPromoOrder(promo(), 2)).toEqual({ refused: 'no_slot' });
+      });
+
+      it('never hands out more slots than PROMO_SLOTS under concurrent claims', async () => {
+        const results = await Promise.all(Array.from({ length: 5 }, () => s.createPromoOrder(promo(), 2)));
+        expect(results.filter((result) => 'created' in result && result.created).map(slotOf).sort()).toEqual([1, 2]);
+        expect(results.filter((result) => 'refused' in result)).toEqual([{ refused: 'no_slot' }, { refused: 'no_slot' }, { refused: 'no_slot' }]);
+        expect(await s.promoSlotsUsed()).toBe(2);
+
+        // Nor two slots for one wallet, whatever the case of its hex, with slots to spare.
+        const payer = wallet();
+        const spellings = [payer, payer.toLowerCase(), `0x${payer.slice(2).toUpperCase()}`, payer];
+        const same = await Promise.all(spellings.map((spelling) => s.createPromoOrder(promo(spelling), 10)));
+        expect(same.filter((result) => 'created' in result && result.created)).toHaveLength(1);
+        expect(same.filter((result) => 'refused' in result)).toEqual(Array(3).fill({ refused: 'not_first_video' }));
+        expect(await s.promoSlotsUsed()).toBe(3);
+      });
+
+      it('returns the existing order when the same promo payment comes again', async () => {
+        const payment = promo();
+        const first = made(await s.createPromoOrder(payment, 2));
+        expect(await s.createPromoOrder(payment, 2)).toEqual({ order: first, created: false });
+        const respelled = { ...payment, asset: payment.asset.toLowerCase(), payer: payment.payer.toLowerCase(), nonce: payment.nonce.toUpperCase().replace('0X', '0x') };
+        expect(await s.createPromoOrder(respelled, 2)).toEqual({ order: first, created: false });
+        // Before any slot or first-video check: with every slot taken since, it is still the order it made.
+        made(await s.createPromoOrder(promo(), 2));
+        expect(await s.createPromoOrder(payment, 2)).toEqual({ order: first, created: false });
+        expect(await s.createPromoOrder(payment, 0)).toEqual({ order: first, created: false });
+        // Sent several times at once, it makes one order.
+        const again = promo();
+        const results = await Promise.all([s.createPromoOrder(again, 5), s.createPromoOrder(again, 5), s.createPromoOrder(again, 5)]);
+        expect(results.filter((result) => 'created' in result && result.created)).toHaveLength(1);
+        expect(new Set(results.map((result) => made(result).id)).size).toBe(1);
+        expect(await s.promoSlotsUsed()).toBe(3);
+      });
+
+      it('hasVideo is true for running or delivered orders and false after a refund', async () => {
+        // An order that has, or is on its way to, its video, at any price.
+        const holds: Record<OrderStatus, boolean> = {
+          awaiting_settlement: true,
+          paid: true,
+          running: true,
+          delivered: true,
+          unpaid: false,
+          refunding: false,
+          refunded: false,
+          refund_failed: false,
+          // Expired without a delivery (ROUTE expires an unpaid order); a delivered one that expired is in the test above.
+          expired: false,
+        };
+        for (const status of ALL_STATUSES) {
+          const payer = wallet();
+          expect(await s.hasVideo(payer), `${status}, before`).toBe(false);
+          await orderIn(status, { payer });
+          expect(await s.hasVideo(payer.toLowerCase()), status).toBe(holds[status]);
+          expect(await s.hasVideo(`0x${payer.slice(2).toUpperCase()}`), status).toBe(holds[status]);
+        }
+        // A promo order counts the same; and one wallet's orders say nothing of another's.
+        const promoted = made(await s.createPromoOrder(promo(), 1));
+        expect(await s.hasVideo(promoted.payer)).toBe(true);
+        expect(await s.hasVideo(wallet())).toBe(false);
       });
     });
 
