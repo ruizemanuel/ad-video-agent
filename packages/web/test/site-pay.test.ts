@@ -126,7 +126,71 @@ describe('payOrder', () => {
     expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: unknown.fetcher })).toEqual({
       ok: false,
       reason: ORDER_FORM.errors.notConfirmed,
+      maybeCharged: true,
     });
+  });
+
+  it('payOrder takes the order from Content-Location when the body names none', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const id = 'ord_abcdefghijklmnopqrstuvwx';
+    const pay = (answer: () => Response) => payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: fakeFetch(answer).fetcher });
+
+    // The order was made and paid, and its body was cut short on the way: the header still says where it is.
+    const cutShort = () => new Response('{"orderId":"ord_', { status: 202, headers: { 'content-type': 'application/json', 'content-location': `https://ad-video-agent.example/v1/videos/${id}` } });
+    expect(await pay(cutShort)).toEqual({ ok: true, orderId: id });
+    // As a path of the page's own address, too.
+    expect(await pay(() => new Response(null, { status: 202, headers: { 'content-location': `/v1/videos/${id}` } }))).toEqual({ ok: true, orderId: id });
+
+    // The settlement failed or ended in doubt after the order was made, and the body says nothing of it.
+    const doubt = () => json(402, { precheck: { thinSite: false } }, { 'payment-required': encodePaymentRequiredHeader(required()), 'content-location': `https://ad-video-agent.example/v1/videos/${id}` });
+    expect(await pay(doubt)).toEqual({ ok: true, orderId: id });
+    expect(await pay(() => new Response('', { status: 502, headers: { 'content-location': `https://ad-video-agent.example/v1/videos/${id}` } }))).toEqual({ ok: true, orderId: id });
+  });
+
+  it('payOrder takes no Content-Location that does not name an order of the service', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const locations = [
+      'https://ad-video-agent.example/v1/videos/ord_short',
+      'https://ad-video-agent.example/v1/videos/ord_ABCDEFGHIJKLMNOPQRSTUVWX',
+      'https://ad-video-agent.example/v1/videos/ord_abcdefghijklmnopqrstuvw1',
+      'https://ad-video-agent.example/v1/videos/ord_abcdefghijklmnopqrstuvwx/files',
+      'https://ad-video-agent.example/v1/files/ord_abcdefghijklmnopqrstuvwx',
+      'https://ad-video-agent.example/v1/videos/',
+      'not a location',
+    ];
+    for (const location of locations) {
+      const { fetcher } = fakeFetch(() => new Response(null, { status: 202, headers: { 'content-location': location } }));
+      expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher }), location).toEqual({
+        ok: false,
+        reason: ORDER_FORM.errors.notConfirmed,
+        maybeCharged: true,
+      });
+    }
+  });
+
+  it('payOrder says the payment may have been charged when the answer names no order and is no refusal', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const answers: [string, () => Response][] = [
+      ['a 500 with no body', () => new Response(null, { status: 500 })],
+      ['a 503 an error page gave', () => new Response('<h1>Service Unavailable</h1>', { status: 503 })],
+      ['a 500 with a reason of its own', () => json(500, { error: 'internal', reason: 'Something broke.' })],
+      ['a 202 with no order in it', () => json(202, {})],
+      ['a 200 whose body cannot be read', () => new Response('{"orderId":', { status: 200, headers: { 'content-type': 'application/json' } })],
+    ];
+    for (const [label, answer] of answers) {
+      const { fetcher, sent } = fakeFetch(answer);
+      expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher }), label).toEqual({
+        ok: false,
+        reason: ORDER_FORM.errors.notConfirmed,
+        maybeCharged: true,
+      });
+      // Sent once, and never again.
+      expect(sent, label).toHaveLength(1);
+    }
+    // The words of it, for a person: look in the wallet first, and do not pay again if the payment is there.
+    expect(ORDER_FORM.errors.notConfirmed).toMatch(/check your wallet for a payment to Ad Video Agent before you try again/i);
+    expect(ORDER_FORM.errors.notConfirmed).toMatch(/if it’s there, your video is being made/i);
+    expect(ORDER_FORM.errors.notConfirmed).toMatch(/don’t pay again/i);
   });
 
   it('payOrder sends nothing when the wallet does not sign', async () => {

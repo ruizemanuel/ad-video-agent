@@ -2,7 +2,9 @@
 // The order form of the home. One press of its button runs the whole order: the free quote, the wallet (connected and
 // moved to Celo), that wallet's own quote and price, the token it holds enough of, one signature, and the order page.
 // A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on. A press
-// never pays more than its button showed: a dearer price is shown first, and the next press pays it.
+// never pays more than its button showed: a dearer price is shown first, and the next press pays it. A payment that may
+// have gone through locks the button until the person says it is not in their wallet (or reloads the page), so it is
+// never paid twice.
 // Wherever the order cannot go on, it stops, keeps everything the person typed and says why. It is rendered in the
 // browser only: everything it does needs the person's wallet, which the server cannot see.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -83,9 +85,11 @@ function causes(error: unknown): unknown[] {
 const hasCode = (error: unknown, code: number): boolean => causes(error).some((cause) => (cause as { code?: unknown }).code === code);
 const hasName = (error: unknown, name: string): boolean => causes(error).some((cause) => (cause as { name?: unknown }).name === name);
 
-/** What to tell the person when the order stopped at `stage`. Only a payment that was sent can have been charged. */
+/**
+ * What to tell the person when the order stopped at `stage`, before any payment was sent (one that was sent and may
+ * have been charged locks the form instead).
+ */
 function stoppedText(error: unknown, stage: Stage): string {
-  if (error instanceof PaymentNotConfirmed) return ORDER_FORM.errors.notConfirmed;
   if (hasName(error, 'ProviderNotFoundError')) return ORDER_FORM.errors.noWallet;
   if (hasCode(error, UserRejectedRequestError.code)) {
     if (stage === 'connect') return ORDER_FORM.errors.connectCancelled;
@@ -130,6 +134,9 @@ function Form({ price, promoSlots }: Props) {
   const [busy, setBusy] = useState(false);
   // Set at once on a press, before React renders the button disabled: a second press in between finds it set.
   const inFlight = useRef(false);
+  // A payment went out and nothing says whether it was charged: no press signs again until the person unlocks it.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const locked = useRef(false);
   const urlField = useRef<HTMLInputElement>(null);
   const pageFields = useRef<(HTMLInputElement | null)[]>([]);
   const id = useId();
@@ -149,6 +156,25 @@ function Form({ price, promoSlots }: Props) {
       setPagesOpen(true);
       requestAnimationFrame(() => pageFields.current[found.index]?.focus());
     }
+  }
+
+  /**
+   * A payment that may have been charged: the person is asked to look in their wallet, and the button stays locked
+   * until they say it is not there. Its price no longer holds either (the promo may be gone with it).
+   */
+  function mayHaveBeenCharged() {
+    locked.current = true;
+    setUnconfirmed(true);
+    setNotice(stopped(ORDER_FORM.errors.notConfirmed));
+    setWalletPrice(null);
+    void queryClient.invalidateQueries({ queryKey: OFFER_KEY });
+  }
+
+  /** The person looked in their wallet and the payment is not there: the next press may pay. */
+  function unlock() {
+    locked.current = false;
+    setUnconfirmed(false);
+    setNotice(null);
   }
 
   /** Whether the quote has a price; if not, the person is told why. */
@@ -228,6 +254,10 @@ function Form({ price, promoSlots }: Props) {
         },
       };
       const result = await payOrder({ input, required: quote.required, token, signer, maxAmountAtomic: shownAtomic });
+      if (!result.ok && result.maybeCharged === true) {
+        mayHaveBeenCharged();
+        return false;
+      }
       if (!result.ok) {
         setNotice(stopped(result.reason));
         // The promo may have just run out: the wallet's last price no longer holds, so the button goes back to the full
@@ -242,17 +272,18 @@ function Form({ price, promoSlots }: Props) {
       router.push(href);
       return true;
     } catch (error) {
-      setNotice(stopped(stoppedText(error, stage)));
-      // A payment that may not have gone through leaves no price to trust either.
-      if (error instanceof PaymentNotConfirmed) setWalletPrice(null);
+      // The payment was sent and its answer never came back: as with an answer that names no order.
+      if (error instanceof PaymentNotConfirmed) mayHaveBeenCharged();
+      else setNotice(stopped(stoppedText(error, stage)));
       return false;
     }
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // One order at a time: a press while one is on its way does nothing, so no payment is ever signed or sent twice.
-    if (inFlight.current) return;
+    // One order at a time: a press while one is on its way does nothing, so no payment is ever signed or sent twice. Nor
+    // does a press while a payment that may have gone through is unconfirmed.
+    if (inFlight.current || locked.current) return;
     inFlight.current = true;
     setBusy(true);
     let leaving = false;
@@ -383,7 +414,7 @@ function Form({ price, promoSlots }: Props) {
         {banner === null ? null : <p className={styles.promo}>{banner}</p>}
       </div>
 
-      <button type="submit" className={styles.pay} disabled={busy} aria-busy={busy}>
+      <button type="submit" className={styles.pay} disabled={busy || unconfirmed} aria-busy={busy} aria-describedby={unconfirmed ? ids.notice : undefined}>
         {label}
       </button>
       <p id={ids.notice} className={notice?.tone === 'error' ? `${styles.notice} ${styles.error}` : styles.notice} role="status">
@@ -395,6 +426,11 @@ function Form({ price, promoSlots }: Props) {
           </>
         )}
       </p>
+      {unconfirmed ? (
+        <button type="button" className={styles.unlock} data-part="unlock" onClick={unlock}>
+          {ORDER_FORM.button.notInWallet}
+        </button>
+      ) : null}
     </form>
   );
 }

@@ -79,6 +79,8 @@ export const ORDER_FORM = {
     pay: (price: string, token: string) => `Pay ${price} ${token}`,
     /** After the form stopped to suggest more pages for a site that shows little. */
     continueAndPay: (price: string, token: string) => `Continue and pay ${price} ${token}`,
+    /** The way out of the lock after a payment that may have gone through: the person looked, and it is not there. */
+    notInWallet: 'The payment isn’t in my wallet. Try again',
   },
   /** What is going on while the button waits. */
   progress: {
@@ -109,8 +111,11 @@ export const ORDER_FORM = {
     walletBusy: 'Your wallet has a request open. Finish it there, then try again. Nothing was charged.',
     /** The service turned the payment down and gave no reason of its own: it took nothing. */
     paymentRefused: 'The payment didn’t go through. Nothing was charged. Try again.',
-    /** The payment left the page and no answer came back: it may or may not have gone through. */
-    notConfirmed: 'We couldn’t confirm your order. Check your wallet before you try again, so you don’t pay twice.',
+    /**
+     * The payment left the page and no answer says what came of it: it may or may not have gone through. The form stays
+     * locked until the person says it is not in their wallet (`button.notInWallet`).
+     */
+    notConfirmed: `We couldn’t confirm your order. Check your wallet for a payment to ${BRAND} before you try again. If it’s there, your video is being made, so don’t pay again.`,
     /** Anything else that went wrong before a payment was sent. */
     generic: 'Something went wrong. Nothing was charged. Try again.',
   },

@@ -220,6 +220,23 @@ textarea.field {
   cursor: progress;
 }
 
+/* The way out of the lock after a payment that may have gone through: a quiet button under the notice. */
+.unlock {
+  align-self: flex-start;
+  padding: 10px 16px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 14px/1.3 var(--sans);
+  cursor: pointer;
+}
+
+.unlock:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
 /* What is going on, or why the order stopped. It is there even when empty, so screen readers hear what it says next. */
 .notice {
   font-size: 14px;

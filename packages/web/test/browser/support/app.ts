@@ -179,8 +179,11 @@ const TYPES: Record<string, string> = {
   '.wav': 'audio/wav',
 };
 
-/** An answer given in the app's place: a status, a JSON or text body, and headers. */
-export type AppAnswer = { status: number; contentType: string; body: string; headers?: Record<string, string> };
+/**
+ * An answer given in the app's place: a status, a JSON or text body, and headers; or none at all (`unanswered`), as a
+ * connection that drops before the answer comes back: the page's request fails.
+ */
+export type AppAnswer = { status: number; contentType: string; body: string; headers?: Record<string, string> } | { unanswered: true };
 
 export type LaunchedPage = {
   browser: Browser;
@@ -265,7 +268,7 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
       const url = new URL(request.url());
       if (url.origin === appUrl.origin && inAppsPlace !== undefined) {
         const answer = await inAppsPlace(request);
-        if (answer !== null) return request.respond(answer);
+        if (answer !== null) return 'unanswered' in answer ? request.abort('failed') : request.respond(answer);
       }
       if (url.origin === appUrl.origin || url.protocol === 'data:' || url.protocol === 'blob:') return request.continue();
       if (url.origin === CELO_NODE) return answerNode(request, read);

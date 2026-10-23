@@ -3,12 +3,12 @@
 // on the order page. When it should not pay, it says why and asks the wallet for nothing it does not need.
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Page } from 'puppeteer-core';
+import type { HTTPRequest, Page } from 'puppeteer-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FileStore } from '../../src/adapters/fake/store';
 import { TOKENS } from '../../src/payments/tokens';
 import type { Order } from '../../src/ports';
-import { launchPage, startApp, type App, type LaunchedPage } from './support/app';
+import { launchPage, startApp, type App, type AppAnswer, type LaunchedPage } from './support/app';
 import { seedOrder } from './support/seed';
 import type { Eip1193Provider, WalletOptions } from './support/wallet';
 
@@ -99,6 +99,10 @@ const waitForButton = (page: Page, text: string): Promise<unknown> =>
 
 /** What the service says when the first-video price is gone by the time the payment arrives (409 promo_unavailable). */
 const PROMO_GONE = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
+
+/** Whether the request is the paying POST of an order: the one that carries the signed payment. */
+const isPaying = (request: HTTPRequest): boolean =>
+  request.method() === 'POST' && new URL(request.url()).pathname === '/v1/videos' && request.headers()['payment-signature'] !== undefined;
 
 const expectPlainWords = (text: string): void => {
   for (const word of PROTOCOL_WORDS) expect(text.toLowerCase(), word).not.toContain(word.toLowerCase());
@@ -213,6 +217,61 @@ describe('the order form', () => {
       expect(wallet.signatureRequests()).toBe(0);
       expect(await page.$eval(BUTTON, (button) => (button as HTMLButtonElement).disabled)).toBe(false);
       expect(await storedOrders(app.fakeDir)).toHaveLength(before);
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it.each<[string, AppAnswer]>([
+    ['a 500 with no body', { status: 500, contentType: 'text/plain', body: '' }],
+    ['no answer at all', { unanswered: true }],
+  ])('never pays again after a payment that may have gone through (%s), until the person unlocks it', async (_label, answer) => {
+    const before = (await storedOrders(app.fakeDir)).length;
+    const { browser, page, wallet, blockedRequests, answerForApp } = await openForm(app, { balances: { USDT: PLENTY } });
+    try {
+      // The payment leaves, and what comes back names no order: it may or may not have been charged.
+      let answered = false;
+      answerForApp((request) => {
+        if (!isPaying(request) || answered) return null;
+        answered = true;
+        return answer;
+      });
+      await fill(page, { url: 'https://doubt.tiendita.example/' });
+      await page.click(BUTTON);
+      await waitForText(page, 'Check your wallet for a payment to Ad Video Agent before you try again.');
+      expect(await orderText(page)).toContain('If it’s there, your video is being made, so don’t pay again.');
+      expect(wallet.signatureRequests()).toBe(1);
+      expect(await buttonState(page)).toMatchObject({ disabled: true });
+      expectPlainWords(await orderText(page));
+
+      // No press signs anything now, however it comes: a click, the button's own click, Enter in the address field.
+      const ordering: string[] = [];
+      page.on('request', (request) => {
+        if (new URL(request.url()).pathname === '/v1/videos') ordering.push(request.method());
+      });
+      await page.click(BUTTON);
+      await page.$eval(BUTTON, (button) => (button as HTMLButtonElement).click());
+      await page.focus(URL_FIELD);
+      await page.keyboard.press('Enter');
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: WAIT.timeout });
+      expect(ordering).toEqual([]);
+      expect(wallet.signatureRequests()).toBe(1);
+      expect(await orderText(page)).toContain('Check your wallet for a payment to Ad Video Agent before you try again.');
+      expect(await storedOrders(app.fakeDir)).toHaveLength(before);
+
+      // The person looked, and the payment is not in the wallet: they say so, and the next press pays.
+      const unlock = `${FORM} button[data-part="unlock"]`;
+      expect(await page.$eval(unlock, (button) => button.textContent)).toBe('The payment isn’t in my wallet. Try again');
+      await page.click(unlock);
+      expect(await buttonState(page)).toMatchObject({ disabled: false });
+      expect(await page.$(unlock)).toBeNull();
+      await page.click(BUTTON);
+      const id = await waitForOrderPage(page);
+      expect(wallet.signatureRequests()).toBe(2);
+      const orders = await storedOrders(app.fakeDir);
+      expect(orders).toHaveLength(before + 1);
+      expect(orders.find((order) => order.id === id)).toMatchObject({ payer: wallet.address, amount: 50_000n, request: { url: 'https://doubt.tiendita.example/' } });
       expect(blockedRequests()).toEqual([]);
     } finally {
       await browser.close();
@@ -403,8 +462,7 @@ describe('the order form with the first-video promo on', () => {
         // with the slot taken in the store as the other payment leaves it.
         let taker: string | undefined;
         answerForApp(async (request) => {
-          const paying = request.method() === 'POST' && new URL(request.url()).pathname === '/v1/videos' && request.headers()['payment-signature'] !== undefined;
-          if (!paying || taker !== undefined) return null;
+          if (!isPaying(request) || taker !== undefined) return null;
           taker = await seedOrder(app.fakeDir, 'running', { promoSlot: 1 });
           return { status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'promo_unavailable', reason: PROMO_GONE }) };
         });

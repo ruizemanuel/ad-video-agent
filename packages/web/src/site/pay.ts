@@ -20,7 +20,15 @@ const CELO_NETWORK = `eip155:${celo.id}` as const;
  */
 const MAX_PAYMENT_ATOMIC = 10_000_000n;
 
-export type PayResult = { ok: true; orderId: string } | { ok: false; reason: string };
+/**
+ * How a payment ended for the page: the order it made; a refusal, which took nothing; or, with `maybeCharged`, an answer
+ * that names no order and may have come after the payment was taken. A payment that may have been charged is never
+ * signed again until the person has looked in their wallet.
+ */
+export type PayResult = { ok: true; orderId: string } | { ok: false; reason: string; maybeCharged?: true };
+
+/** The path of an order's status, as the service writes it in Content-Location: an id is `ord_` and 24 base32 characters. */
+const ORDER_LOCATION = new RegExp(`^${ORDER_PATH}/(ord_[a-z2-7]{24})$`);
 
 /** The signed payment was sent and no answer came back: it may have gone through or not. */
 export class PaymentNotConfirmed extends Error {
@@ -37,13 +45,27 @@ export function chooseToken(balances: { USDT: bigint; USDC: bigint }, amountAtom
   return null;
 }
 
+/** The order a Content-Location header names (the service's own address or a path of it), or undefined for none. */
+function orderAt(location: string | null): string | undefined {
+  if (location === null) return undefined;
+  let path: string;
+  try {
+    // Only the path counts: a header that is a path alone is read against any address.
+    path = new URL(location, 'http://localhost').pathname;
+  } catch {
+    return undefined;
+  }
+  return ORDER_LOCATION.exec(path)?.[1];
+}
+
 /**
  * Has `signer` sign the payment `required` asks for, in `token` only and for no more than `maxAmountAtomic` (the price
  * the person was shown), and sends the order with it. Asked for more, the x402 client itself refuses: it throws before
- * the wallet is asked, and nothing is sent. Any answer that names an order is that order: one whose payment then failed
- * or ended in doubt is still the person's, and its page says how it ends. An answer that names none is a refusal, with
- * the service's reason. A wallet that does not sign throws its own error, and nothing is sent; a payment whose answer
- * never comes back throws PaymentNotConfirmed.
+ * the wallet is asked, and nothing is sent. Any answer that names an order, in its body or in its Content-Location, is
+ * that order: one whose payment then failed or ended in doubt is still the person's, and its page says how it ends. An
+ * answer that names none is a refusal (4xx), with the service's reason; any other may have come after the payment was
+ * taken, and says so (`maybeCharged`). A wallet that does not sign throws its own error, and nothing is sent; a payment
+ * whose answer never comes back throws PaymentNotConfirmed.
  */
 export async function payOrder({
   input,
@@ -85,8 +107,14 @@ export async function payOrder({
   }
 
   if (typeof body.orderId === 'string' && body.orderId !== '') return { ok: true, orderId: body.orderId };
-  const reason = typeof body.reason === 'string' && body.reason !== '' ? body.reason : undefined;
-  // A refusal (4xx) comes before the payment is taken. Any other answer that names no order may come after it was.
-  const refused = res.status >= 400 && res.status < 500;
-  return { ok: false, reason: reason ?? (refused ? ORDER_FORM.errors.paymentRefused : ORDER_FORM.errors.notConfirmed) };
+  // A body that could not be read (cut short on the way) still comes with the header that says where the order is.
+  const located = orderAt(res.headers.get('content-location'));
+  if (located !== undefined) return { ok: true, orderId: located };
+  // A refusal (4xx) comes before the payment is taken.
+  if (res.status >= 400 && res.status < 500) {
+    const reason = typeof body.reason === 'string' && body.reason !== '' ? body.reason : undefined;
+    return { ok: false, reason: reason ?? ORDER_FORM.errors.paymentRefused };
+  }
+  // Any other answer that names no order may come after it was.
+  return { ok: false, reason: ORDER_FORM.errors.notConfirmed, maybeCharged: true };
 }
