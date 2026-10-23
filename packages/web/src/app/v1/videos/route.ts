@@ -1,6 +1,8 @@
 // POST /v1/videos: order an ad video for a website. Without a payment it is a free quote: the body is checked, the
 // site and each of its extra pages go through the pre-check, and the answer is a 402 with the price (or a 400/422 that
-// asks for nothing, or a 503 when the check cannot be made now). The price is the full one, or the first-video price
+// asks for nothing, or a 503 when the check cannot be made now). Before the pre-check, with a payment or without, an
+// order today's VMs have no room for is refused with a 503 (`at_capacity`) until the next UTC day, so it is never
+// charged. The price is the full one, or the first-video price
 // for a wallet the promo takes that the request names in its x-payer header. With an x402 payment that the facilitator
 // verifies, the order is made and the answer is 202 with where to follow it; only then is the payment settled, and only
 // a settled payment starts the order's run.
@@ -23,6 +25,7 @@ import {
   type SettledPayment,
   type SignedPayment,
 } from '../../../payments/x402';
+import { hasVmCapacity, secondsToNextUtcDay } from '../../../payments/vm-payment';
 import { precheck, PrecheckCapReached, type PrecheckDeps } from '../../../precheck/precheck';
 import { ModelCallFailed, ModelOutputInvalid, type Order, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
@@ -36,6 +39,7 @@ const NO_STORE = { 'cache-control': 'no-store' };
 const PROMO_PAYER_REASON =
   'The first-video price must be paid by the wallet that asked for it: name that wallet in the x-payer header, and sign the payment with it.';
 const PROMO_GONE_REASON = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
+const AT_CAPACITY_REASON = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
 const refuse = (status: number, error: string, reason: string, headers: Record<string, string> = {}): Response =>
   Response.json({ error, reason }, { status, headers: { ...NO_STORE, ...headers } });
 
@@ -203,8 +207,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!body.ok) return refuse(400, 'invalid_request', body.reason);
   if (body.order.audio === 'voice') return refuse(400, 'voice_not_available_yet', 'Voice-over is not available yet. Ask for audio "music" or "none".');
 
-  // Before any payment is looked at: a site, or an extra page, that fails the check is never charged.
   const deps = await videosDeps();
+  // Before the check and any payment: an order whose VM today's buy cap has no room for is never taken, nor charged.
+  const now = new Date();
+  if (!(await hasVmCapacity({ store: deps.store, dailyCapUsd: settings.BUY_DAILY_CAP_USD }, now))) {
+    return refuse(503, 'at_capacity', AT_CAPACITY_REASON, { 'retry-after': String(secondsToNextUtcDay(now)) });
+  }
+
+  // Before any payment is looked at: a site, or an extra page, that fails the check is never charged.
   const checked = await checkPages(body.order, { store: deps.store, llm: deps.llm, fetchPage: deps.fetchPage, dailyCapUsd: settings.PRECHECK_DAILY_CAP_USD });
   if (!checked.ok) return checked.answer;
   const check = checked.site;

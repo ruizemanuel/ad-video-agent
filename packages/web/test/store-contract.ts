@@ -623,6 +623,36 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       });
     });
 
+    describe('orders still to pay for their VM', () => {
+      it('counts the orders paid since a date, paid or running, that have no VM payment yet', async () => {
+        const paid = await orderIn('paid');
+        await orderIn('running');
+        // Its VM payment is kept already: counted in buy's spend once it goes out, not here.
+        const renting = await orderIn('running');
+        expect(await s.insertPaymentIntent(intent(renting.id))).toBe(true);
+        // Not these: an order not paid yet, and those past running.
+        await create();
+        for (const status of ['delivered', 'refunding', 'refunded', 'refund_failed', 'unpaid', 'expired'] as const) await orderIn(status);
+        expect(await s.paidWithoutVmPaymentSince(ago(minutes(1)))).toBe(2);
+
+        // A payment kept under the order's key counts, whatever has become of it.
+        expect(await s.insertPaymentIntent(intent(paid.id))).toBe(true);
+        await s.updatePayment(`${paid.id}:vm`, { status: 'rejected', reason: 'daily-cap' });
+        expect(await s.paidWithoutVmPaymentSince(ago(minutes(1)))).toBe(1);
+        expect(await s.paidWithoutVmPaymentSince(ahead(minutes(1)))).toBe(0);
+      });
+
+      it('counts an order paid at the date itself, and none paid before it', async () => {
+        const at = ago(minutes(10));
+        const before = await create();
+        expect(await s.transition(before.id, 'paid', { paidAt: new Date(at.getTime() - 1) })).toBe(true);
+        const onTheDot = await create();
+        expect(await s.transition(onTheDot.id, 'paid', { paidAt: at })).toBe(true);
+        expect(await s.paidWithoutVmPaymentSince(at)).toBe(1);
+        expect(await s.paidWithoutVmPaymentSince(ago(minutes(20)))).toBe(2);
+      });
+    });
+
     describe('payment intents', () => {
       it('inserts a payment intent once', async () => {
         const order = await create();

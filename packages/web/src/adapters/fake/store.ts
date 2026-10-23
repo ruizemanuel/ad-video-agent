@@ -331,6 +331,17 @@ export class FileStore implements OrderStore {
     return this.locked(() => this.sumCosts((cost) => cost.kind === 'buy' && cost.createdAt >= t));
   }
 
+  paidWithoutVmPaymentSince(t: Date): Promise<number> {
+    return this.locked(async () => {
+      // The keys of the payments kept: an order's VM payment is under `${id}:vm` (vmPaymentKey).
+      const kept = new Set((await this.all<StoredPayment>('payments')).map((payment) => payment.key));
+      const waiting = (await this.all<Order>('orders')).filter(
+        (o) => (o.status === 'paid' || o.status === 'running') && o.paidAt !== null && o.paidAt >= t && !kept.has(`${o.id}:vm`),
+      );
+      return waiting.length;
+    });
+  }
+
   precheckSpendSince(t: Date): Promise<number> {
     return this.locked(() => this.sumCosts((cost) => cost.orderId === 'precheck' && cost.kind === 'card' && cost.createdAt >= t));
   }

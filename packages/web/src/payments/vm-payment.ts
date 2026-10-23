@@ -33,7 +33,30 @@ export type VmPaymentDeps = {
 /** Dollars in millionths. A 6-decimal stablecoin's atomic unit is one of them, and whole numbers compare exactly. */
 const micros = (usd: number): number => Math.round(usd * 1e6);
 
-const startOfUtcDay = (at: Date): Date => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const startOfUtcDay = (at: Date): Date => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
+
+/** The seconds from `at` to the next UTC day, when the daily buy cap starts again. */
+export const secondsToNextUtcDay = (at: Date): number => Math.ceil((startOfUtcDay(at).getTime() + DAY_MS - at.getTime()) / 1000);
+
+export type VmCapacityDeps = {
+  store: Pick<OrderStore, 'buySpendSince' | 'paidWithoutVmPaymentSince'>;
+  /** BUY_DAILY_CAP_USD. */
+  dailyCapUsd: number;
+};
+
+/**
+ * Whether today's buy cap has room for the VM of one more order: what buy was paid since the UTC day began, plus
+ * VM_MAX_ATOMIC for each order paid today whose VM payment is still to come and one more for the new order, is within
+ * the cap. It is asked before an order is taken, so that no order is paid only to be refunded at its VM for the cap
+ * (which payForVm still checks, at the last moment). A store that fails to answer throws: that is never room.
+ */
+export async function hasVmCapacity({ store, dailyCapUsd }: VmCapacityDeps, now: Date): Promise<boolean> {
+  const today = startOfUtcDay(now);
+  const [spent, waiting] = await Promise.all([store.buySpendSince(today), store.paidWithoutVmPaymentSince(today)]);
+  return micros(spent) + Number(VM_MAX_ATOMIC) * (waiting + 1) <= micros(dailyCapUsd);
+}
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 200);
 

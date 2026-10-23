@@ -270,6 +270,11 @@ export interface OrderStore {
   addCost(orderId: string, item: string, usd: number, kind: CostKind): Promise<void>;
   orderCost(orderId: string): Promise<number>;
   buySpendSince(t: Date): Promise<number>;
+  /**
+   * How many orders paid since `t` (`paid` or `running`) have no VM payment kept yet (none under `${id}:vm`): each may
+   * still pay buy for its VM. Once its payment is kept, what it pays is counted in `buySpendSince` instead.
+   */
+  paidWithoutVmPaymentSince(t: Date): Promise<number>;
   /** What the free pre-check (the costs of the order id 'precheck') cost since `t`. */
   precheckSpendSince(t: Date): Promise<number>;
 

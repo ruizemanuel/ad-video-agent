@@ -181,6 +181,7 @@ function Form({ price, promoSlots }: Props) {
   function priced(quote: Quote): quote is Extract<Quote, { kind: 'priced' }> {
     if (quote.kind === 'refused') setNotice(stopped(quote.reason));
     else if (quote.kind === 'unavailable') setNotice(stopped(ORDER_FORM.errors.unavailable(quote.retryAfterSeconds)));
+    else if (quote.kind === 'at_capacity') setNotice(stopped(ORDER_FORM.errors.atCapacity));
     return quote.kind === 'priced';
   }
 

@@ -193,6 +193,17 @@ describe('payOrder', () => {
     expect(ORDER_FORM.errors.notConfirmed).toMatch(/don’t pay again/i);
   });
 
+  it('payOrder says plainly that nothing was charged when the service has made all the videos it can today', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    // The service says so before it looks at the payment: a refusal, not a payment in doubt.
+    const reason = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
+    const { fetcher } = fakeFetch(() => json(503, { error: 'at_capacity', reason }, { 'retry-after': '7200' }));
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher })).toEqual({
+      ok: false,
+      reason: ORDER_FORM.errors.atCapacity,
+    });
+  });
+
   it('payOrder sends nothing when the wallet does not sign', async () => {
     const account = privateKeyToAccount(generatePrivateKey());
     const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });

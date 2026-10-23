@@ -234,6 +234,16 @@ export class DrizzleStore implements OrderStore {
     return Number(row?.usd ?? 0);
   }
 
+  // One statement: the paid orders with no payment under their VM's key (vmPaymentKey: `${id}:vm`).
+  async paidWithoutVmPaymentSince(t: Date): Promise<number> {
+    const [row] = await this.db
+      .select({ waiting: count() })
+      .from(orders)
+      .leftJoin(payments, eq(payments.key, sql`${orders.id} || ':vm'`))
+      .where(and(inArray(orders.status, ['paid', 'running']), gte(orders.paidAt, t), isNull(payments.key)));
+    return row?.waiting ?? 0;
+  }
+
   // The pre-check's costs are card costs: the condition on the kind lets the (kind, created_at) index find the day's.
   async precheckSpendSince(t: Date): Promise<number> {
     const [row] = await this.db

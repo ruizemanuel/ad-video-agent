@@ -383,6 +383,33 @@ describe('the order form', () => {
   });
 });
 
+describe("the order form once the day's videos are all made", () => {
+  it('says so before the wallet, and that nothing was charged', async () => {
+    // A daily buy cap below what one VM may cost: the service has room for no order today.
+    const app = await startApp({ BUY_DAILY_CAP_USD: '0.05' });
+    try {
+      const { browser, page, wallet, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY } });
+      try {
+        await fill(page, { url: 'https://full.tiendita.example/' });
+        await page.click(BUTTON);
+        await waitForText(page, 'We’ve made all the videos we can for today. Try again tomorrow. Nothing was charged.');
+        expect(await orderText(page)).not.toContain('Try again in');
+        // The wallet was never asked to connect, let alone to sign, and the button is ready for tomorrow.
+        expect(await askWallet(page, 'eth_accounts')).toEqual([]);
+        expect(wallet.signatureRequests()).toBe(0);
+        expect(await buttonState(page)).toMatchObject({ disabled: false });
+        expectPlainWords(await orderText(page));
+        expect(await storedOrders(app.fakeDir)).toEqual([]);
+        expect(blockedRequests()).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    } finally {
+      await app.stop();
+    }
+  });
+});
+
 describe('the order form with the first-video promo on', () => {
   it('pays the promo price as an eligible wallet', async () => {
     const app = await startApp({ PROMO_SLOTS: '3' });

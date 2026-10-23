@@ -101,6 +101,8 @@ export const ORDER_FORM = {
     /** The service refused the order without saying why (it always says why). */
     refused: 'We can’t make a video of this site. Nothing was charged.',
     unavailable: (retryAfterSeconds: number) => `We can’t check sites right now. Try again ${againIn(retryAfterSeconds)}.`,
+    /** The service has made all the videos it can today: it takes no order, and charges nothing, until the next day. */
+    atCapacity: 'We’ve made all the videos we can for today. Try again tomorrow. Nothing was charged.',
     noFunds: (price: string) => `You need ${price} USDT or USDC on Celo.`,
     /** The wallet's quote asks more than the button said (the promo ran out, the price changed): nothing was signed. */
     priceRaised: (price: string) => `The price for your wallet is now ${price} USDT or USDC. Nothing was charged. Press the button again to pay it.`,

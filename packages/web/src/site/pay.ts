@@ -9,7 +9,7 @@ import { ExactEvmScheme } from '@x402/evm/exact/client';
 import { celo } from 'viem/chains';
 import { TOKENS, type TokenSymbol } from '../payments/tokens';
 import { ORDER_FORM } from './copy';
-import { jsonBody, ORDER_PATH, PAYER_HEADER, type OrderInput } from './quote';
+import { AT_CAPACITY, jsonBody, ORDER_PATH, PAYER_HEADER, type OrderInput } from './quote';
 
 /** Celo mainnet, as x402 names it. */
 const CELO_NETWORK = `eip155:${celo.id}` as const;
@@ -63,9 +63,10 @@ function orderAt(location: string | null): string | undefined {
  * the person was shown), and sends the order with it. Asked for more, the x402 client itself refuses: it throws before
  * the wallet is asked, and nothing is sent. Any answer that names an order, in its body or in its Content-Location, is
  * that order: one whose payment then failed or ended in doubt is still the person's, and its page says how it ends. An
- * answer that names none is a refusal (4xx), with the service's reason; any other may have come after the payment was
- * taken, and says so (`maybeCharged`). A wallet that does not sign throws its own error, and nothing is sent; a payment
- * whose answer never comes back throws PaymentNotConfirmed.
+ * answer that names none is a refusal (a 4xx, with the service's reason, or the 503 of a service that has made all the
+ * videos it can today); any other may have come after the payment was taken, and says so (`maybeCharged`). A wallet
+ * that does not sign throws its own error, and nothing is sent; a payment whose answer never comes back throws
+ * PaymentNotConfirmed.
  */
 export async function payOrder({
   input,
@@ -115,6 +116,8 @@ export async function payOrder({
     const reason = typeof body.reason === 'string' && body.reason !== '' ? body.reason : undefined;
     return { ok: false, reason: reason ?? ORDER_FORM.errors.paymentRefused };
   }
+  // Nor is anything taken once the service has made all the videos it can today: it says so before it looks at the payment.
+  if (res.status === 503 && body.error === AT_CAPACITY) return { ok: false, reason: ORDER_FORM.errors.atCapacity };
   // Any other answer that names no order may come after it was.
   return { ok: false, reason: ORDER_FORM.errors.notConfirmed, maybeCharged: true };
 }

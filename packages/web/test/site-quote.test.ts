@@ -97,6 +97,17 @@ describe('requestQuote', () => {
     expect(await requestQuote(INPUT, undefined, silent.fetcher)).toEqual({ kind: 'unavailable', retryAfterSeconds: 60 });
   });
 
+  it('tells a service that has made all the videos it can today from a check that cannot be made now', async () => {
+    const reason = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
+    const full = fakeFetch(() => json(503, { error: 'at_capacity', reason }, { 'retry-after': '7200' }));
+    expect(await requestQuote(INPUT, undefined, full.fetcher)).toEqual({ kind: 'at_capacity' });
+    // The page's own words for it, in place of the minutes to wait for a check.
+    expect(ORDER_FORM.errors.atCapacity).toBe('We’ve made all the videos we can for today. Try again tomorrow. Nothing was charged.');
+    const check = fakeFetch(() => json(503, { error: 'precheck_unavailable', reason: 'The site could not be checked right now. Try again in a minute.' }, { 'retry-after': '60' }));
+    expect(await requestQuote(INPUT, undefined, check.fetcher)).toEqual({ kind: 'unavailable', retryAfterSeconds: 60 });
+    expect(ORDER_FORM.errors.unavailable(60)).toBe('We can’t check sites right now. Try again in a minute.');
+  });
+
   it('sends x-payer only when given', async () => {
     const answer = () => quote402('50000', { precheck: { thinSite: false }, price: { amount: '0.05', assets: ['USDT', 'USDC'] } });
     const anonymous = fakeFetch(answer);

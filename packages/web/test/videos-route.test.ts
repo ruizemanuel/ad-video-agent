@@ -442,6 +442,108 @@ describe('POST /v1/videos with a payment', () => {
   });
 });
 
+describe("POST /v1/videos once today's VMs are spoken for", () => {
+  // BUY_DAILY_CAP_USD is left at its default, 2 USD: room for 28 VMs at VM_MAX_ATOMIC (0.07 USD) each.
+  const AT_CAPACITY = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
+  // Two hours and half a second before the next UTC day.
+  const NOW = new Date('2026-10-23T21:59:59.500Z');
+
+  // Each test on a store of its own, at a moment of its own, so the day's spend is what the test puts in it.
+  let fresh: FileStore;
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW });
+    fresh = new FileStore(await mkdtemp(join(dir, 'capacity-')));
+    setVideosDeps({ ...deps, store: fresh });
+  });
+  afterEach(() => {
+    setVideosDeps(deps);
+    vi.useRealTimers();
+  });
+
+  let nonce = 0;
+  /** An order paid now, as the payment route leaves it, whose VM is still to be paid. */
+  const paidOrder = async (): Promise<string> => {
+    const { order } = await fresh.createOrder({
+      request: { url: U, audio: 'music' },
+      network: 'eip155:42220',
+      asset: TOKENS.USDT.address,
+      payer: privateKeyToAccount(generatePrivateKey()).address,
+      amount: 5_000_000n,
+      nonce: `0x${(++nonce).toString(16).padStart(64, 'c')}`,
+      validAfter: 0n,
+      validBefore: 1_890_000_000n,
+    });
+    expect(await fresh.transition(order.id, 'paid')).toBe(true);
+    return order.id;
+  };
+  /** What buy was paid today for the VMs of orders gone by, in dollars. */
+  const spent = (usd: number) => fresh.addCost('ord_earlier', 'buy:vm', usd, 'buy');
+
+  it('answers 503 at_capacity until the next UTC day when the spend and the VMs still to pay would pass the cap, before the check and the payment', async () => {
+    // A payment signed while there was still room.
+    const headers = await pay();
+    // 1.93 USD paid to buy, and one order paid whose VM is still to pay: the next order's VM would pass the 2 USD.
+    await spent(1.93);
+    await paidOrder();
+    const classified = llm.calls.classifySite;
+
+    const site = 'https://capacity.example/';
+    for (const res of [await POST(post({ url: site })), await POST(post({ url: U }, headers))]) {
+      expect(res.status).toBe(503);
+      expect(res.headers.get('retry-after')).toBe('7201');
+      expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await res.json()).toEqual({ error: 'at_capacity', reason: AT_CAPACITY });
+    }
+    // Neither the site nor the payment was looked at: nothing was charged, and no order was made.
+    expect(fetchPage).not.toHaveBeenCalledWith(site);
+    expect(llm.calls.classifySite).toBe(classified);
+    expect(facilitator.calls.verify).toBe(0);
+    expect(facilitator.calls.settle).toBe(0);
+    expect(await orderOf(headers, fresh)).toBeNull();
+  });
+
+  it('answers as usual just under the cap, and counts the order it takes', async () => {
+    // 1.86 USD paid to buy, 0.07 for the paid order's VM and 0.07 for the next one: 2 USD, the cap itself.
+    await spent(1.86);
+    await paidOrder();
+    const quote = await POST(post({ url: U }));
+    expect(quote.status).toBe(402);
+    const res = await POST(post({ url: U }, await payFor(quote)));
+    expect(res.status).toBe(202);
+    // The order just taken has its VM to pay too: there is no room for another one today.
+    expect((await POST(post({ url: U }))).status).toBe(503);
+  });
+
+  it('counts the VM of an order that is paying for it once, in what buy was paid', async () => {
+    await spent(1.86);
+    const renting = await paidOrder();
+    expect(await fresh.insertPaymentIntent({ key: `${renting}:vm`, orderId: renting, kind: 'vm', maxAtomic: 70_000n })).toBe(true);
+    await fresh.addCost(renting, 'buy:vm', 0.07, 'buy');
+    // 1.93 USD paid to buy, that order's VM among it, and 0.07 for the next one: the cap, not past it.
+    expect((await POST(post({ url: U }))).status).toBe(402);
+  });
+
+  it.each(['buySpendSince', 'paidWithoutVmPaymentSince'])('never takes a store that fails to answer (%s) for one with room', async (method) => {
+    const failing = new Proxy(fresh, {
+      get(target, name) {
+        if (name === method) {
+          return async () => {
+            throw new Error('The database is not answering.');
+          };
+        }
+        const value: unknown = Reflect.get(target, name);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    setVideosDeps({ ...deps, store: failing });
+    const site = 'https://capacity-unknown.example/';
+    await expect(POST(post({ url: site }))).rejects.toThrow('The database is not answering.');
+    expect(fetchPage).not.toHaveBeenCalledWith(site);
+    expect(facilitator.calls.verify).toBe(0);
+  });
+});
+
 describe('POST /v1/videos at the first-video price', () => {
   const FULL = ['5000000', '5000000'];
   const PROMO = ['10000', '10000'];

@@ -11,6 +11,11 @@ export const ORDER_PATH = '/v1/videos';
 export const OFFER_PATH = '/v1/offer';
 /** The header that names the wallet that will pay: the service's PAYER_HINT_HEADER (payments/x402.ts). */
 export const PAYER_HEADER = 'x-payer';
+/**
+ * The error of the service's 503 once it has made all the videos it can today. It comes before the order's payment is
+ * looked at, to a quote and to a paying request alike: nothing was charged.
+ */
+export const AT_CAPACITY = 'at_capacity';
 
 /** The order as POST /v1/videos takes it. Parts the person left empty are left out. */
 export type OrderInput = { url: string; brief?: string; extraUrls?: string[]; audio: 'music' | 'none' };
@@ -24,7 +29,9 @@ export type Quote =
   /** The service will not take this order (400 or 422), and says why. */
   | { kind: 'refused'; reason: string }
   /** The check cannot be made now (503). */
-  | { kind: 'unavailable'; retryAfterSeconds: number };
+  | { kind: 'unavailable'; retryAfterSeconds: number }
+  /** The service has made all the videos it can today (503 `at_capacity`): nothing is taken until the next day. */
+  | { kind: 'at_capacity' };
 
 /** What an order costs now, and the first-video promo while it is on. */
 export type Offer = { price: string; promo: { price: string; left: number } | null };
@@ -99,7 +106,10 @@ export async function requestQuote(input: OrderInput, payer?: string, fetcher: t
   if (res.status === 400 || res.status === 422) {
     return { kind: 'refused', reason: text(field(body, 'reason')) ?? ORDER_FORM.errors.refused };
   }
-  if (res.status === 503) return { kind: 'unavailable', retryAfterSeconds: retryAfter(res.headers.get('retry-after')) };
+  if (res.status === 503) {
+    if (field(body, 'error') === AT_CAPACITY) return { kind: 'at_capacity' };
+    return { kind: 'unavailable', retryAfterSeconds: retryAfter(res.headers.get('retry-after')) };
+  }
   throw new Error(`The quote answered ${res.status}.`);
 }
 
