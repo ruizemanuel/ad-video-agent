@@ -12,6 +12,7 @@ import { withX402 } from '@x402/next';
 import { NextResponse, type NextRequest } from 'next/server';
 import { env, type Env } from '../../../env';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
+import { hasVmCapacity, secondsToNextUtcDay } from '../../../payments/vm-payment';
 import {
   authorizationWindowProblem,
   createResourceServer,
@@ -25,7 +26,6 @@ import {
   type SettledPayment,
   type SignedPayment,
 } from '../../../payments/x402';
-import { hasVmCapacity, secondsToNextUtcDay } from '../../../payments/vm-payment';
 import { precheck, PrecheckCapReached, type PrecheckDeps } from '../../../precheck/precheck';
 import { ModelCallFailed, ModelOutputInvalid, type Order, type OrderRequest, type PrecheckResult } from '../../../ports';
 import { videosDeps, type VideosDeps } from './deps';
