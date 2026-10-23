@@ -54,7 +54,8 @@ function againIn(seconds: number): string {
 
 /**
  * The order form. The price comes as text ("0.05"), the token as its symbol. A reason the service gives for refusing
- * an order is shown as it comes, not from here.
+ * an order is shown as it comes, not from here, save for a payment it could not check (`paymentNotChecked`), whose
+ * reason speaks of the protocol.
  */
 export const ORDER_FORM = {
   url: { label: 'Your site’s address', placeholder: 'https://yourproject.xyz' },
@@ -113,6 +114,11 @@ export const ORDER_FORM = {
     walletBusy: 'Your wallet has a request open. Finish it there, then try again. Nothing was charged.',
     /** The service turned the payment down and gave no reason of its own: it took nothing. */
     paymentRefused: 'The payment didn’t go through. Nothing was charged. Try again.',
+    /**
+     * The service could not check the payment's times (its `invalid_payment`, or a 402 with no reason of its own): the
+     * computer's clock is off, most of the time. It took nothing.
+     */
+    paymentNotChecked: 'Your payment couldn’t be checked. If your computer’s clock isn’t set automatically, set it and try again. Nothing was charged.',
     /**
      * The payment left the page and no answer says what came of it: it may or may not have gone through. The form stays
      * locked until the person says it is not in their wallet (`button.notInWallet`).

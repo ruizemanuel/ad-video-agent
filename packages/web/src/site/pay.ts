@@ -27,6 +27,9 @@ const MAX_PAYMENT_ATOMIC = 10_000_000n;
  */
 export type PayResult = { ok: true; orderId: string } | { ok: false; reason: string; maybeCharged?: true };
 
+/** The error of the service's 400 for a payment it does not take: one whose times are off, above all. */
+const INVALID_PAYMENT = 'invalid_payment';
+
 /** The path of an order's status, as the service writes it in Content-Location: an id is `ord_` and 24 base32 characters. */
 const ORDER_LOCATION = new RegExp(`^${ORDER_PATH}/(ord_[a-z2-7]{24})$`);
 
@@ -113,8 +116,11 @@ export async function payOrder({
   if (located !== undefined) return { ok: true, orderId: located };
   // A refusal (4xx) comes before the payment is taken.
   if (res.status >= 400 && res.status < 500) {
+    // A payment whose times the service would not take, which a computer's clock that is off signs: its reason speaks
+    // of the protocol, and a 402 with none of its own turned down a payment that had run out.
+    if (body.error === INVALID_PAYMENT) return { ok: false, reason: ORDER_FORM.errors.paymentNotChecked };
     const reason = typeof body.reason === 'string' && body.reason !== '' ? body.reason : undefined;
-    return { ok: false, reason: reason ?? ORDER_FORM.errors.paymentRefused };
+    return { ok: false, reason: reason ?? (res.status === 402 ? ORDER_FORM.errors.paymentNotChecked : ORDER_FORM.errors.paymentRefused) };
   }
   // Nor is anything taken once the service has made all the videos it can today: it says so before it looks at the payment.
   if (res.status === 503 && body.error === AT_CAPACITY) return { ok: false, reason: ORDER_FORM.errors.atCapacity };

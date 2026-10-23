@@ -100,18 +100,37 @@ describe('payOrder', () => {
     const gone = fakeFetch(() => json(409, { error: 'promo_unavailable', reason }));
     expect(await payOrder({ input: INPUT, required: required('10000'), token: 'USDT', signer, maxAmountAtomic: 10_000n, fetcher: gone.fetcher })).toEqual({ ok: false, reason });
 
-    const invalid = fakeFetch(() => json(400, { error: 'invalid_payment', reason: 'The payment must be a USDT or USDC authorization.' }));
+    const invalid = fakeFetch(() => json(400, { error: 'invalid_request', reason: 'url: Invalid URL' }));
     expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: invalid.fetcher })).toEqual({
       ok: false,
-      reason: 'The payment must be a USDT or USDC authorization.',
+      reason: 'url: Invalid URL',
     });
 
-    // A payment the service turned down before taking it says no reason of its own: nothing was charged.
-    const turnedDown = fakeFetch(() => json(402, { precheck: { thinSite: false }, price: { amount: '0.05', assets: ['USDT', 'USDC'] } }, { 'payment-required': encodePaymentRequiredHeader(required()) }));
-    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: turnedDown.fetcher })).toEqual({
+    // A refusal that says no reason of its own: nothing was charged.
+    const silent = fakeFetch(() => json(409, { error: 'promo_unavailable' }));
+    expect(await payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: silent.fetcher })).toEqual({
       ok: false,
       reason: ORDER_FORM.errors.paymentRefused,
     });
+  });
+
+  it('payOrder points at the computer’s clock when the payment could not be checked', async () => {
+    const signer = privateKeyToAccount(generatePrivateKey());
+    const pay = (answer: () => Response) => payOrder({ input: INPUT, required: required(), token: 'USDT', signer, maxAmountAtomic: 50_000n, fetcher: fakeFetch(answer).fetcher });
+    const clock = { ok: false, reason: ORDER_FORM.errors.paymentNotChecked };
+
+    // A clock that runs fast signs a payment valid for longer than the offer asks: the service's reason is not for people.
+    const tooLong = 'The payment authorization is valid for too long: validBefore must be at most 360 seconds from now.';
+    expect(await pay(() => json(400, { error: 'invalid_payment', reason: tooLong }))).toEqual(clock);
+    // One that runs slow signs a payment that has already run out: the service turns it down with a plain 402.
+    const turnedDown = () => json(402, { precheck: { thinSite: false }, price: { amount: '0.05', assets: ['USDT', 'USDC'] } }, { 'payment-required': encodePaymentRequiredHeader(required()) });
+    expect(await pay(turnedDown)).toEqual(clock);
+    // A 402 that gives a reason of its own is shown with it.
+    expect(await pay(() => json(402, { reason: 'The payment was for another order.' }))).toEqual({ ok: false, reason: 'The payment was for another order.' });
+
+    expect(ORDER_FORM.errors.paymentNotChecked).toBe(
+      'Your payment couldn’t be checked. If your computer’s clock isn’t set automatically, set it and try again. Nothing was charged.',
+    );
   });
 
   it('payOrder lands on the order whenever the answer names one, however its payment ended', async () => {
