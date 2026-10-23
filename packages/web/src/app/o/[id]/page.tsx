@@ -35,6 +35,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
       initial={status}
       audio={order.request.audio === 'none' ? 'none' : 'music'}
       site={new URL(order.request.url).host}
+      siteUrl={order.request.url}
       shortId={order.id.slice('ord_'.length, 'ord_'.length + 8)}
       link={`${base}/o/${order.id}`}
     />

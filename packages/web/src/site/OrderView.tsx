@@ -1,11 +1,12 @@
 'use client';
 // The order page's view of an order: the steps of its making with the link to come back by, or the end it came to (a
-// refund on its way or sent, a payment that never went through, files that have expired, the video). It starts from the
+// refund on its way or sent, a payment that never went through, files that have expired, the delivery). It starts from the
 // status the server read and, while the order is not over, asks the status route every 5 s. Once the status says the
 // order is over, it stops asking.
 import { useEffect, useRef, useState } from 'react';
 import type { StatusJson } from '../payments/orders';
 import { ORDER_PAGE } from './copy';
+import { DeliveredView } from './DeliveredView';
 import styles from './OrderView.module.css';
 import { followStatus, phaseOf, progressRows, type ProgressRow } from './progress';
 
@@ -15,6 +16,8 @@ export type OrderViewProps = {
   audio: 'music' | 'none';
   /** The host of the site the video is made from. */
   site: string;
+  /** The site's address, whole, as the order was placed with it. */
+  siteUrl: string;
   /** The first characters of the order's number, after `ord_`. */
   shortId: string;
   /** The link to this order, whole. */
@@ -27,12 +30,21 @@ async function lookAtOrder(id: string, signal: AbortSignal): Promise<StatusJson 
   return res.ok ? ((await res.json()) as StatusJson) : null;
 }
 
-export function OrderView({ initial, audio, site, shortId, link }: OrderViewProps) {
+export function OrderView({ initial, audio, site, siteUrl, shortId, link }: OrderViewProps) {
   const [status, setStatus] = useState(initial);
   // From what the server read, once: it stops by itself at an end, so the answers it brings do not start it again.
   useEffect(() => followStatus(initial.status, (signal) => lookAtOrder(initial.id, signal), setStatus), [initial.id, initial.status]);
 
   const phase = phaseOf(status.status);
+  // The delivery is a page of its own, wider than the column the rest of the states sit in.
+  if (phase === 'delivered') {
+    return (
+      <main className={styles.page}>
+        <DeliveredView status={status} site={site} siteUrl={siteUrl} shortId={shortId} />
+      </main>
+    );
+  }
+
   const rows = progressRows(status, audio);
   return (
     <main className={styles.page}>
@@ -55,7 +67,6 @@ export function OrderView({ initial, audio, site, shortId, link }: OrderViewProp
           </>
         )}
         {phase === 'expired' && <h1 className={styles.statement}>{ORDER_PAGE.expired}</h1>}
-        {phase === 'delivered' && <Delivered files={status.files ?? []} />}
       </div>
     </main>
   );
@@ -136,22 +147,6 @@ function Refund({ status, rows }: { status: StatusJson; rows: ProgressRow[] }) {
         )}
       </p>
       <Steps rows={rows} />
-    </>
-  );
-}
-
-/** Until the delivered view: a link to each file. */
-function Delivered({ files }: { files: NonNullable<StatusJson['files']> }) {
-  return (
-    <>
-      <h1 className={styles.title}>{ORDER_PAGE.delivered.title}</h1>
-      <ul className={styles.files} aria-label={ORDER_PAGE.delivered.files}>
-        {files.map(({ name, url }) => (
-          <li key={name}>
-            <a href={url}>{name}</a>
-          </li>
-        ))}
-      </ul>
     </>
   );
 }

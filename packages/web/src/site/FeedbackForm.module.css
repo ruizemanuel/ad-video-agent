@@ -1,0 +1,140 @@
+/* "Did you post it?": a card with three answers as pills, the link to the post and, under it, the permission and the
+   button. The chosen answer is in ink, as the audio choice of the order form. */
+.card {
+  --error: #a3352b;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+}
+
+.title {
+  color: var(--muted);
+  font: 500 13px/1.4 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip {
+  position: relative;
+  padding: 8px 16px;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  font-size: 14px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+/* The radio itself covers its label, unseen: it keeps the keyboard and the screen reader's behaviour of a radio. */
+.chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.chip:has(input:checked) {
+  background: var(--ink);
+  color: #fff;
+}
+
+.chip:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.field {
+  width: 100%;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: 400 14px/1.4 var(--sans);
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+.field[aria-invalid='true'] {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
+}
+
+.permission {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.permission:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+
+.permission input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.save {
+  padding: 9px 18px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 14px/1.2 var(--sans);
+  cursor: pointer;
+}
+
+.save:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
+/* What happened to the last save. It is there even when empty, so screen readers hear what it says next. */
+.notice {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.error {
+  color: var(--error);
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 18px;
+  }
+}

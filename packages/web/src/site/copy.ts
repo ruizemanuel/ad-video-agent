@@ -192,5 +192,29 @@ export const ORDER_PAGE = {
   },
   unpaid: ['The payment didn’t go through.', 'Nothing was charged.'],
   expired: 'This order’s files have expired.',
-  delivered: { title: 'Your video is ready', files: 'Files' },
+
+  /** The delivery: the video, what to do with it, where each of its lines comes from, and whether it was posted. */
+  delivered: {
+    title: 'Your video is ready',
+    /** What the video is, under the player, after the site. */
+    size: '1080×1920',
+    /** The video's length, once the player knows it: "19.5 s". */
+    length: (seconds: number) => `${seconds.toFixed(1)} s`,
+    player: (site: string) => `The video made from ${site}`,
+    actions: { download: 'Download MP4', muted: 'Muted version', post: 'Post on X' },
+    postNote: '“Post on X” opens X with a short text ready; attach the MP4 you downloaded.',
+    sources: { title: 'Where each line comes from' },
+    music: (model: string, bpm: number) => `Music: made for this video by ${model}, ${bpm} BPM. You may use it in this ad, paid ads included.`,
+    feedback: {
+      title: 'Did you post it?',
+      answers: { as_is: 'As is', with_changes: 'With changes', not_yet: 'Not yet' },
+      link: { label: 'Link to your post', placeholder: 'Link to your post (optional)' },
+      mayShow: 'You can show this post as an example',
+      save: 'Save',
+      saved: 'Saved. You can change it any time.',
+      chooseFirst: 'Choose one of the answers first.',
+      badLink: 'Paste the whole link to your post, starting with https://.',
+      failed: 'We couldn’t save that. What you typed is still here; try again.',
+    },
+  },
 } as const;

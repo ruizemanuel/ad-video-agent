@@ -194,20 +194,6 @@
   font-weight: 500;
 }
 
-/* The files of a delivered order, until its own view. */
-.files {
-  list-style: none;
-  margin-top: 28px;
-  border-top: 1px solid var(--ink);
-}
-
-.files li {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
-  font: 400 14px/1.4 var(--mono);
-  overflow-wrap: anywhere;
-}
-
 /* A phone. */
 @media (max-width: 640px) {
   .page {

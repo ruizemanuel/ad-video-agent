@@ -1,0 +1,203 @@
+/* The delivery: the video in a phone frame on the left, and on the right the headline, the three actions, the question
+   about the post and the sources of every line. On a phone it is one column in the order a person needs it: the headline,
+   the video, the actions. */
+.layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    'player head'
+    'player more';
+  column-gap: 64px;
+  align-items: start;
+}
+
+.head {
+  grid-area: head;
+  min-width: 0;
+}
+
+.which {
+  color: var(--muted);
+  font: 400 14px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.title {
+  font: 400 64px/1.02 var(--serif);
+  letter-spacing: -0.01em;
+  margin-top: 8px;
+  text-wrap: balance;
+}
+
+/* The video, in the same phone frame as the examples of the home. */
+.player {
+  grid-area: player;
+  min-width: 0;
+}
+
+.phone {
+  padding: 6px;
+  border-radius: 28px;
+  background: var(--ink);
+  box-shadow: 0 26px 50px -24px rgba(20, 20, 20, 0.45);
+}
+
+.phone video {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: contain;
+  border-radius: 22px;
+  background: var(--ink);
+}
+
+.caption {
+  margin-top: 12px;
+  padding-left: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.site {
+  color: var(--ink);
+  font: 500 13px/1.4 var(--mono);
+}
+
+.more {
+  grid-area: more;
+  min-width: 0;
+}
+
+/* Download, the muted version and the post on X: three equal buttons, the first in ink. */
+.actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.primary,
+.ghost {
+  display: block;
+  padding: 15px 12px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  font: 600 16px/1.3 var(--sans);
+  text-align: center;
+  text-decoration: none;
+}
+
+.primary {
+  background: var(--ink);
+  color: #fff;
+}
+
+.primary:hover {
+  background: #2b2b2b;
+  color: #fff;
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink);
+}
+
+.ghost:hover {
+  background: var(--ink);
+  color: #fff;
+}
+
+.fine {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 10px;
+  max-width: 640px;
+  text-wrap: pretty;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 22px;
+  margin-top: 30px;
+}
+
+.sources {
+  margin-top: 34px;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font: 500 13px/1.4 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Each line of the video beside the words it comes from. */
+.claims {
+  list-style: none;
+  margin-top: 10px;
+}
+
+.claim {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+
+.line,
+.quote,
+.where {
+  overflow-wrap: anywhere;
+}
+
+.quote {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.where {
+  color: var(--muted);
+  font: 400 12px/1.5 var(--mono);
+  margin-top: 4px;
+}
+
+/* A phone: the headline, the video, then the rest. */
+@media (max-width: 640px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas:
+      'head'
+      'player'
+      'more';
+  }
+
+  .title {
+    font-size: 46px;
+  }
+
+  .player {
+    width: min(100%, 280px);
+    margin-top: 22px;
+  }
+
+  .actions {
+    grid-auto-flow: row;
+    margin-top: 22px;
+  }
+
+  .cards {
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 26px;
+  }
+
+  .claim {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

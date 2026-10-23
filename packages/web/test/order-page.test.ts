@@ -87,9 +87,10 @@ describe('the order page', () => {
     expect(words(unpaidHtml)).toContain("The payment didn't go through. Nothing was charged.");
     expect(words(expiredHtml)).toContain("This order's files have expired.");
 
-    // Until the delivered view is made: a link to each file, signed for 30 days.
+    // The delivery (delivered-view.test.ts has its details): the two videos behind links signed for 30 days.
+    expect(words(deliveredHtml)).toContain('Your video is ready');
     const files = links(deliveredHtml).filter(({ href }) => href.startsWith(`${BASE}/v1/files/${delivered}/`));
-    expect(files.map(({ words }) => words)).toEqual(['hook-a-9x16.mp4', 'hook-a-9x16-muted.mp4', 'claims.md', 'music.md']);
+    expect(files.map(({ words }) => words)).toEqual(['Download MP4', 'Muted version']);
 
     // None of them is shown as being made, and none offers the link to come back to.
     for (const html of [refundedHtml, unpaidHtml, expiredHtml, deliveredHtml]) {
@@ -130,7 +131,7 @@ describe('the order page', () => {
   it('shows no music step for an order without audio', async () => {
     const id = await seedOrder(dir, 'running');
     const status = (await readStatus(store, id, SETTINGS))?.status as StatusJson;
-    const html = renderToStaticMarkup(createElement(OrderView, { initial: status, audio: 'none', site: 'cobrame.example', shortId: id.slice(4, 12), link: `${BASE}/o/${id}` }));
+    const html = renderToStaticMarkup(createElement(OrderView, { initial: status, audio: 'none', site: 'cobrame.example', siteUrl: 'https://cobrame.example/', shortId: id.slice(4, 12), link: `${BASE}/o/${id}` }));
     expect(rows(html).map((row) => row.words)).not.toContainEqual(expect.stringContaining('Music chosen'));
     expect(rows(html)).toHaveLength(6);
   });
@@ -172,6 +173,7 @@ describe('the refund of an order', () => {
         },
         audio: 'music',
         site: 'cobrame.example',
+        siteUrl: 'https://cobrame.example/',
         shortId: 'abcdefgh',
         link: `${BASE}/o/ord_abcdefgh2345678abcdefgh2`,
       }),
