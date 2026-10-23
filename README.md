@@ -4,16 +4,28 @@ A service that turns a website into a short ad video. An agent (or any x402 clie
 
 ## Status
 
-Stage 2a is live: the x402 service and the whole chain run end to end. An order is paid in USDT or USDC on Celo (x402). The service then rents a machine through buy to capture the site and render the video, a director model writes the script, a review model checks the key frames, Lyria makes the music, and the result is delivered as signed links. If any step fails, the order is refunded automatically, in the token it was paid in.
+Stage 2b: the x402 service and the whole chain run end to end (stage 2a), and people order from a page with a browser wallet (stage 2b). An order is paid in USDT or USDC on Celo (x402), by an agent or by a person from the page. The service then rents a machine through buy to capture the site and render the video, a director model writes the script, a review model checks the key frames, Lyria makes the music, and the result is delivered as signed links. If any step fails, the order is refunded automatically, in the token it was paid in.
 
-[Deployment](#deployment) and [Environment variables](#environment-variables) describe how the service is deployed and configured.
+[The service](#the-service) describes the page and the API, and [Deployment](#deployment) and [Environment variables](#environment-variables) how the service is deployed and configured.
+
+## The service
+
+The page and the API are one deployment, and the page is a client of the API like any other.
+
+- **The page, `/`:** a person pastes their site's address, connects a browser wallet and pays with one signature, in USDT or USDC on Celo, with no gas and no account. They land on `/o/<id>`, the order's page, which follows the order to its end and then shows the video, where each of its lines comes from, and the question "Did you post it?". That address is the order's link: whoever has it can open the order.
+- **`POST /v1/videos`:** without a payment, the free quote. The body (`url`, and optionally a `brief`, up to 3 `extraUrls` and `audio`) is checked, the site and its extra pages go through a free check, and the answer is a `402` with the price in its `PAYMENT-REQUIRED` header and in the body, or a `400` or `422` that says why the order is refused. The same request with an x402 payment in `PAYMENT-SIGNATURE` places the order: a `202` with its `orderId` and `statusUrl`, which `Content-Location` names too.
+- **`GET /v1/videos/<id>`:** the order's status, free: its steps and, once it is delivered, signed links to its files for 30 days.
+- **`POST /v1/videos/<id>/feedback`:** the answer to "Did you post it?" for a delivered order, free: `answer` (`as_is`, `with_changes` or `not_yet`) and, optionally, `postUrl` (an `https` link to the post, with no user name or password in it) and `mayShow` (whether the post may be shown as an example). A new answer replaces the one before; the status shows it.
+- **`GET /v1/offer`:** what an order costs now, free: `price` and `assets`, and `promo` (its `price` and how many slots are `left`) while the first-video promo is on, or `null`.
+- **The `x-payer` header:** a quote that names the paying wallet in it is offered that wallet's own price: the first-video price, while the promo has a slot for it. The paying request must carry the same header, and its payment must be signed by that wallet. A client that sends no `x-payer` gets the full price, as always.
+- **`503`:** it comes in two kinds, and says when to try again in `Retry-After`. `precheck_unavailable`: the free check cannot be made now (its model did not answer, or `PRECHECK_DAILY_CAP_USD` was reached for the day). `at_capacity`: the service has made all the videos it can today. What buy was paid since the UTC day began, plus 0.07 USDT (the most a machine is paid) for each order paid today whose machine is not paid yet and for one more order, would pass `BUY_DAILY_CAP_USD`. It comes before the free check and before any payment is looked at, for a quote and a paying request alike, so nothing is charged; its `Retry-After` is the seconds until the next UTC day.
 
 ## Packages
 
 | Package | What it holds |
 | --- | --- |
 | `packages/core` (`@app/core`) | Plain TypeScript shared by the others: the edit decision list (EDL) the video is built from, its timing and brand rules, claim validation, music analysis, quality checks and the protocol of the rented machine. |
-| `packages/web` (`@app/web`) | The Next.js app on Vercel: the free quote and the x402 payment (`POST /v1/videos`), order status and delivery links, the free answer to "did you post it?" for a delivered order (`POST /v1/videos/<id>/feedback`), the API the rented machine takes its tasks from, a durable workflow per order (Vercel Workflow), and the crons that reconcile payments and refunds and expire old orders. |
+| `packages/web` (`@app/web`) | The Next.js app on Vercel: the page where people order and pay from a browser wallet (`/`) and follow their order (`/o/<id>`), the free quote and the x402 payment (`POST /v1/videos`), what an order costs now (`GET /v1/offer`), order status and delivery links, the free answer to "did you post it?" for a delivered order (`POST /v1/videos/<id>/feedback`), the API the rented machine takes its tasks from, a durable workflow per order (Vercel Workflow), and the crons that reconcile payments and refunds and expire old orders. |
 | `packages/vm` (`@app/vm`) | The worker that runs on the rented machine: site capture, key frames, render and mix. |
 | `packages/clock` (`@app/clock`) | A Cloudflare Worker that is the reconcile clock: its Cron Trigger calls the reconcile route every 10 minutes. |
 
@@ -90,7 +102,7 @@ Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks
 | --- | --- | --- | --- |
 | `PAYTO_ADDRESS` | Yes | No | The address that receives the payments. |
 | `PRICE_ATOMIC` | No, default `5000000` | No | The price of an order in the smallest unit of USDT and USDC, which have 6 decimals: `5000000` is 5. |
-| `PROMO_SLOTS` | No, default `0` | No | How many wallets get their first video at 0.01 USDT or USDC; `0` turns the promo off. A wallet is offered that price when the quote names it in the `x-payer` header and it has no video yet, and the payment must come from that wallet. Its order holds a slot while its video is on the way or delivered, and gives it back if the order ends unpaid or refunded. `GET /v1/offer` says how many are left. |
+| `PROMO_SLOTS` | No, default `0` | No | How many wallets get their first video at 0.01 USDT or USDC; `0` turns the promo off. A wallet is offered that price when the quote names it in the `x-payer` header and it has no video yet; the paying request must carry the same header, and the payment must come from that wallet. Its order holds a slot while its video is on the way or delivered, and gives it back if the order ends unpaid or refunded. `GET /v1/offer` says how many are left. |
 | `TEAM_WALLETS` | No | No | The team's wallets, separated by commas (`0x` and 40 hex characters each): they are never offered the first-video price. |
 | `X402_API_KEY` | Yes | Yes | The key for Celo's x402 facilitator, which checks and settles the payments. A person makes it at x402.celo.org. |
 | `SPEND_WALLET_PRIVATE_KEY` | Yes | Yes | The spend wallet's key (`0x` and 64 hex characters). |
@@ -108,7 +120,7 @@ Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks
 | `GITHUB_REPO` | Yes | No | `owner/name` of the public repository the rented machine downloads its code from. |
 | `VM_CODE_REF` | Only without `VERCEL_GIT_COMMIT_SHA` | No | A commit or tag for the machine to download when the deployment has no commit of its own. |
 | `SPEND_CAP_PER_ORDER_USD` | No, default `2.5` | No | The most an order may spend on model and music calls. A call that only improves the video (a correction, the review, a third music track) is not made if it would pass the cap. |
-| `BUY_DAILY_CAP_USD` | No, default `2` | No | The most the service may pay buy for machines in a UTC day, every order together. |
+| `BUY_DAILY_CAP_USD` | No, default `2` | No | The most the service may pay buy for machines in a UTC day, every order together. When what was paid today, plus 0.07 for each order paid today whose machine is not paid yet and for one more order, would pass it, `POST /v1/videos` answers `503 at_capacity` until the next UTC day, before any payment. |
 | `REFUND_DAILY_CAP_USD` | No, default `10` | No | The most it may refund in a UTC day, every order together. |
 | `PRECHECK_DAILY_CAP_USD` | No, default `2` | No | The most the free site check's model calls may cost in a UTC day, every quote together. Past it, a site that was not checked in the last 24 hours gets a 503 until the next UTC day. |
 | `VERCEL_ENV` | Set by Vercel | No | `production` turns on the checks that keep a test setup out of production: no fake adapters, no in-memory or local database, and a commit for the machine. |
