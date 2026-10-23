@@ -138,6 +138,45 @@ describe('POST /v1/videos/<id>/feedback', () => {
     expect(await store.getFeedback(order.id)).toBeNull();
   });
 
+  it('refuses a postUrl with a user name or password in it', async () => {
+    const order = await orderIn('delivered');
+    // The first one reads as x.com, and is a link to evil.example.
+    for (const postUrl of ['https://x.com@evil.example/someone/status/1', 'https://user:secret@x.com/someone/status/1', 'https://user@x.com/someone/status/1', 'https://:secret@x.com/someone/status/1']) {
+      const res = await post(order.id, { answer: 'as_is', postUrl, mayShow: true });
+      expect(res.status, postUrl).toBe(400);
+      expect(await json(res), postUrl).toMatchObject({ error: 'invalid_request', reason: expect.stringContaining('postUrl') });
+    }
+    expect(await store.getFeedback(order.id)).toBeNull();
+  });
+
+  it('keeps a postUrl as the browser writes it', async () => {
+    const order = await orderIn('delivered');
+    const written: [string, string][] = [
+      ['https://X.com/someone/status/1', 'https://x.com/someone/status/1'],
+      ['https:x.com/someone/status/1', 'https://x.com/someone/status/1'],
+      ['https:\\\\x.com\\someone\\status\\1', 'https://x.com/someone/status/1'],
+      ['https://x.com:443/someone/../someone/status/1', 'https://x.com/someone/status/1'],
+      ['https://x.com', 'https://x.com/'],
+      ['https://x.com/someone/status/1?s=20#reply', 'https://x.com/someone/status/1?s=20#reply'],
+      ['https://x.com/año', 'https://x.com/a%C3%B1o'],
+    ];
+    for (const [given, kept] of written) {
+      expect((await post(order.id, { answer: 'as_is', postUrl: given, mayShow: true })).status, given).toBe(200);
+      expect(await store.getFeedback(order.id), given).toMatchObject({ postUrl: kept, mayShow: true });
+    }
+  });
+
+  it('measures the 2048 characters on the postUrl as it is kept', async () => {
+    const order = await orderIn('delivered');
+    // Under 2048 characters as given; each "ñ" is six once written as the browser does.
+    const given = `https://x.com/${'ñ'.repeat(340)}`;
+    expect(given.length).toBeLessThan(2048);
+    const res = await post(order.id, { answer: 'as_is', postUrl: given });
+    expect(res.status).toBe(400);
+    expect(await json(res)).toMatchObject({ error: 'invalid_request', reason: expect.stringContaining('postUrl') });
+    expect(await store.getFeedback(order.id)).toBeNull();
+  });
+
   it('takes a postUrl of up to 2048 characters', async () => {
     const order = await orderIn('delivered');
     const longest = `https://x.com/${'a'.repeat(2048 - 'https://x.com/'.length)}`;

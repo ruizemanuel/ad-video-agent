@@ -9,22 +9,34 @@ const refuse = (status: number, error: string, reason: string): Response => Resp
 
 const MAX_POST_URL = 2048;
 
-const isHttps = (value: string): boolean => {
+/** The address, or null for text that is none. */
+const parsed = (value: string): URL | null => {
   try {
-    return new URL(value).protocol === 'https:';
+    return new URL(value);
   } catch {
-    return false;
+    return null;
   }
 };
+/** Whether an address has neither a user name nor a password in it; text that is no address is the https check's to refuse. */
+const noLogin = (value: string): boolean => {
+  const url = parsed(value);
+  return url === null || (url.username === '' && url.password === '');
+};
 
-// `postUrl` may be left out or null (no link); a blank one is a mistake, not "no link". Unknown keys are ignored.
+// `postUrl` may be left out or null (no link); a blank one is a mistake, not "no link". It is kept as the browser writes
+// it (lowercase host, no default port, the path resolved and encoded), and its length is measured on that. A link with a
+// user name or password is refused: https://x.com@evil.example/ reads as x.com and goes to evil.example. Unknown keys are
+// ignored.
 const FeedbackBody = z.object({
   answer: z.enum(FEEDBACK_ANSWERS),
   postUrl: z
     .string()
     .max(MAX_POST_URL, `at most ${MAX_POST_URL} characters`)
     .regex(/^\S+$/, 'must be a link with no spaces in it')
-    .refine(isHttps, 'must be an https link')
+    .refine((value) => parsed(value)?.protocol === 'https:', 'must be an https link')
+    .refine(noLogin, 'must not have a user name or password in it')
+    .transform((value) => new URL(value).href)
+    .pipe(z.string().max(MAX_POST_URL, `at most ${MAX_POST_URL} characters once written as a link`))
     .nullish(),
   mayShow: z.boolean().optional(),
 });
