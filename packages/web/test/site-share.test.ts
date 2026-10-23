@@ -45,6 +45,19 @@ describe('xIntentUrl', () => {
     expect(text.endsWith(` ${SITE}`)).toBe(true);
   });
 
+  it('never throws on half of a character, which it writes as the replacement character', () => {
+    // A lone half of a surrogate pair (a high one, then a low one), which no link can carry as it is.
+    for (const half of ['\ud83d', '\ude00']) {
+      const line = `Get paid ${half} on time`;
+      expect(() => xIntentUrl(line, SITE), JSON.stringify(half)).not.toThrow();
+      expect(textOf(xIntentUrl(line, SITE))).toBe(`Get paid � on time ${SITE}`);
+    }
+    // A whole emoji stays as it is beside one cut in half.
+    expect(textOf(xIntentUrl('😀 ok \ud83d', SITE))).toBe(`😀 ok � ${SITE}`);
+    // Nor does the site's address make it throw.
+    expect(textOf(xIntentUrl('Get paid', 'https://cobrame.example/\ud800'))).toBe('Get paid https://cobrame.example/�');
+  });
+
   it('keeps a site address that leaves no room for a line, whole and alone', () => {
     const site = `https://cobrame.example/${'p'.repeat(300)}`;
     expect(textOf(xIntentUrl('Get paid on time', site))).toBe(site);

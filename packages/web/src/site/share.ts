@@ -10,6 +10,21 @@ const MAX_POST_URL_LENGTH = 2048;
 /** A text as one line: its runs of white space, line breaks included, are single spaces. */
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
+/**
+ * The text with each lone half of a surrogate pair, which no link can carry (encodeURIComponent throws on it), as the
+ * replacement character U+FFFD: what String.prototype.toWellFormed does, which not every browser the page serves has.
+ * It keeps the text's length.
+ */
+function wellFormed(text: string): string {
+  let out = '';
+  // A string's iterator gives a whole pair as one character, and a lone half as one of its own.
+  for (const character of text) {
+    const code = character.charCodeAt(0);
+    out += character.length === 1 && code >= 0xd800 && code <= 0xdfff ? '�' : character;
+  }
+  return out;
+}
+
 /** The host of an address, or nothing when it is not an address. */
 function hostOf(address: string): string {
   try {
@@ -37,14 +52,15 @@ function fitted(line: string, room: number): string {
  * The link that opens X with a post ready to send: the first line of the video, a space and the site, so that the post
  * is no longer than X takes. The line is the one that gives way (cut, with an ellipsis, when it does not fit), and the
  * site's address is never touched. With no line (an order with no claims, or one that is blank) the line is the site's
- * host. X will not take a video from a link, so the person attaches the one they downloaded.
+ * host. X will not take a video from a link, so the person attaches the one they downloaded. It never throws: half of a
+ * character (a line cut through an emoji before it reached the service) is written as U+FFFD.
  */
 export function xIntentUrl(firstLine: string, siteUrl: string): string {
   const room = MAX_POST_LENGTH - siteUrl.length - 1;
   // An address so long that no line fits beside it goes alone.
   const line = room < 2 ? '' : fitted(oneLine(firstLine) || hostOf(siteUrl), room);
   const post = line === '' ? siteUrl : `${line} ${siteUrl}`;
-  return `${X_INTENT}?text=${encodeURIComponent(post)}`;
+  return `${X_INTENT}?text=${encodeURIComponent(wellFormed(post))}`;
 }
 
 /**
