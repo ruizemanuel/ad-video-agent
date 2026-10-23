@@ -219,7 +219,7 @@ describe('the refund of an order', () => {
   });
 
   it('shows which step failed and the refund step', () => {
-    expect(rows(view('refunding')).map(({ state }) => state)).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'now']);
+    expect(rows(view('refunding')).map(({ state }) => state)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'now']);
   });
 });
 

@@ -193,7 +193,7 @@ export const ORDER_PAGE = {
   /** Beside the step being done. */
   now: 'now',
   /** What a screen reader says of a step before its name. */
-  stateOf: { done: 'Done', now: 'In progress', todo: 'Waiting', failed: 'Failed' },
+  stateOf: { done: 'Done', now: 'In progress', todo: 'Waiting', never: 'Not done', failed: 'Failed' },
 
   /** An order that could not be made: the reason, and where the refund is. */
   refund: {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatusJson } from '../src/payments/orders';
 import { ORDER_STATUSES, type StepName, type StepState } from '../src/ports';
+import { ORDER_PAGE } from '../src/site/copy';
 import { followStatus, isTerminal, phaseOf, POLL_MS, progressRows } from '../src/site/progress';
 
 /** Every step of the status, in order; those not in `steps` are `pending`, and `refund` is there only when it is given. */
@@ -85,8 +86,8 @@ describe('progressRows', () => {
     const rows = progressRows(refunding, 'music');
     expect(rows.at(-1)).toEqual({ label: 'Refund sent', state: 'now' });
     expect(rows[1]?.state).toBe('failed');
-    // The steps after the one that failed were never reached: none of them is the current one.
-    expect(states(rows)).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'now']);
+    // The steps after the one that failed will not be done: none of them is waiting, and none is the current one.
+    expect(states(rows)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'now']);
 
     const sent = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'done' }, { status: 'refunded' }), 'music');
     expect(sent.at(-1)).toEqual({ label: 'Refund sent', state: 'done' });
@@ -100,18 +101,24 @@ describe('progressRows', () => {
     // The flow moves the order to `refunded` and then its step; the reconciliation moves the order and not the step.
     const sent = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refunded' }), 'music');
     expect(sent.at(-1)).toEqual({ label: 'Refund sent', state: 'done' });
-    expect(states(sent)).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'done']);
+    expect(states(sent)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'done']);
 
     const delayed = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refund_failed' }), 'music');
     expect(delayed.at(-1)).toEqual({ label: 'Refund sent', state: 'failed' });
     expect(states(delayed)).not.toContain('now');
   });
 
+  it('says a step an order that has ended never got to was not done, instead of waiting', () => {
+    const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'done', preview: 'done', review: 'failed', refund: 'done' }, { status: 'refunded' }), 'music');
+    expect(rows.find(({ label }) => label === 'Final video')).toEqual({ label: 'Final video', state: 'never' });
+    expect(ORDER_PAGE.stateOf.never).toBe('Not done');
+  });
+
   it('has no step now once the order is over, even one the order left running', () => {
     for (const end of ORDER_STATUSES.filter(isTerminal)) {
       const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'running', refund: 'running' }, { status: end }), 'music');
       expect(states(rows), end).not.toContain('now');
-      expect(rows[1]?.state, end).toBe('todo');
+      expect(rows[1]?.state, end).toBe('never');
     }
     // While the refund is on its way, it is the step being done.
     expect(progressRows(status({ payment: 'done', capture: 'failed', refund: 'running' }, { status: 'refunding' }), 'music').at(-1)?.state).toBe('now');

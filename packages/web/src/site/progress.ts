@@ -8,8 +8,8 @@ type OrderState = StatusJson['status'];
 type StepState = StatusJson['steps'][number]['state'];
 type StepName = StatusJson['steps'][number]['name'];
 
-/** `now` is the step being done, `todo` one not reached. */
-export type RowState = 'done' | 'now' | 'todo' | 'failed';
+/** `now` is the step being done, `todo` one not reached yet, `never` one an order no longer being made will not reach. */
+export type RowState = 'done' | 'now' | 'todo' | 'never' | 'failed';
 export type ProgressRow = { label: string; state: RowState };
 
 /** How often the page asks for the order's status while the order is not over. */
@@ -100,9 +100,11 @@ export function progressRows(status: StatusJson, audio: 'music' | 'none'): Progr
     now = rows.findIndex((row) => row.seen === 'running');
     if (now === -1 && phaseOf(status.status) === 'making') now = rows.findIndex((row) => row.seen === 'pending');
   }
+  // Once the video is no longer being made (it is refunded, or the order is over), what it did not get to never comes.
+  const making = phaseOf(status.status) === 'making';
   return rows.map(({ label, seen: state }, index) => ({
     label,
-    state: state === 'done' ? 'done' : state === 'failed' ? 'failed' : index === now ? 'now' : 'todo',
+    state: state === 'done' ? 'done' : state === 'failed' ? 'failed' : index === now ? 'now' : making ? 'todo' : 'never',
   }));
 }
 

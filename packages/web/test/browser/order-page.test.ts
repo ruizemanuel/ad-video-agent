@@ -168,7 +168,7 @@ describe('the order page', () => {
     try {
       expect(await open(page, orderUrl(app, id))).toBe(200);
       expect((await said(page)).replace(/’/g, "'")).toContain("We couldn't make a video that passes our check. Your payment is on its way back. Refund: on its way.");
-      expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'now']);
+      expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'now']);
 
       // It is not over, so the page goes on asking, and shows the end when it comes. The order is moved and its refund
       // step is left `running`, as the reconciliation leaves a refund it settles: the order's status is the last word.
@@ -177,7 +177,7 @@ describe('the order page', () => {
       await store.transition(id, 'refunded');
       await waitForText(page, 'Refund: sent.', FOLLOWS);
       expect(await page.$$eval('a', (links) => links.map((link) => link.href))).toContain(`https://celoscan.io/tx/${txHash}`);
-      expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'todo', 'todo', 'todo', 'todo', 'todo', 'done']);
+      expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'done']);
       expect(await page.$(CURRENT)).toBeNull();
       expect(blockedRequests()).toEqual([]);
     } finally {

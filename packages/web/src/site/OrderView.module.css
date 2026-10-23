@@ -112,7 +112,8 @@
   border-bottom: 1px solid var(--line);
 }
 
-.step[data-state='todo'] {
+.step[data-state='todo'],
+.step[data-state='never'] {
   color: var(--muted);
 }
 
@@ -152,6 +153,10 @@
 
 .todo {
   border: 2px solid var(--line);
+}
+
+.never {
+  border: 2px dashed var(--line);
 }
 
 .failed {
