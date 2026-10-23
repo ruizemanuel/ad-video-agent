@@ -350,8 +350,8 @@ export interface BlobPort {
   get(path: string): Promise<Uint8Array>;
   /** A URL that writes that path once (it will not overwrite), with that content type and no more than `maxBytes`. */
   presignPut(path: string, contentType: string, maxBytes: number, minutes: number): Promise<string>;
-  /** A URL that reads that path. */
-  presignGet(path: string, minutes: number): Promise<string>;
+  /** A URL that reads that path. With `attachment`, a browser that opens it saves the file instead of showing it. */
+  presignGet(path: string, minutes: number, options?: { attachment?: boolean }): Promise<string>;
   /** Deletes every blob whose path starts with `prefix`, and says how many. An empty prefix is refused. */
   deletePrefix(prefix: string): Promise<number>;
 }

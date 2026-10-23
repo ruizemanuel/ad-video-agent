@@ -1,7 +1,7 @@
 // The BlobPort on a private Vercel Blob store. Nothing in it is public: reading goes through a signed URL, and a
 // signed URL is made the way the spike did it (a delegated token for one path, then `presignUrl`), so the VM and
 // the client never hold the store's token.
-import { del, issueSignedToken, list, presignUrl, put as putBlob } from '@vercel/blob';
+import { del, getDownloadUrl, issueSignedToken, list, presignUrl, put as putBlob } from '@vercel/blob';
 import type { BlobPort } from '../../ports';
 
 const MINUTE_MS = 60_000;
@@ -40,11 +40,12 @@ export class VercelBlob implements BlobPort {
     }
   }
 
-  async presignGet(path: string, minutes: number): Promise<string> {
+  async presignGet(path: string, minutes: number, options?: { attachment?: boolean }): Promise<string> {
     const validUntil = this.expiry(minutes);
     const signed = await issueSignedToken({ token: this.token, pathname: path, operations: ['get'], validUntil });
     const { presignedUrl } = await presignUrl(signed, { operation: 'get', pathname: path, access: 'private', validUntil });
-    return presignedUrl;
+    // download=1 makes the store answer with Content-Disposition: attachment. It is not part of what is signed.
+    return options?.attachment === true ? getDownloadUrl(presignedUrl) : presignedUrl;
   }
 
   async presignPut(path: string, contentType: string, maxBytes: number, minutes: number): Promise<string> {

@@ -25,6 +25,16 @@ type DeliveredFile = NonNullable<StatusJson['files']>[number];
 
 const isMuted = ({ name }: DeliveredFile): boolean => name.endsWith('-muted.mp4');
 
+/**
+ * A file's link for a download button: the same signed link, asking for the file to be saved. The file comes from
+ * another origin, where the `download` attribute alone would leave it playing in the tab.
+ */
+function toSave(link: string): string {
+  const url = new URL(link);
+  url.searchParams.set('download', '1');
+  return url.href;
+}
+
 /** Where a quote is from, as a link: only a page on the web is one. */
 function pageOf(address: string): { href: string; label: string } | null {
   try {
@@ -84,11 +94,11 @@ export function DeliveredView({ status, site, siteUrl, shortId }: DeliveredViewP
         {video !== undefined && (
           <>
             <div className={styles.actions}>
-              <a className={styles.primary} href={video.url} download={video.name}>
+              <a className={styles.primary} href={toSave(video.url)} download={video.name}>
                 {copy.actions.download}
               </a>
               {mutedVersion !== undefined && (
-                <a className={styles.ghost} href={mutedVersion.url} download={mutedVersion.name}>
+                <a className={styles.ghost} href={toSave(mutedVersion.url)} download={mutedVersion.name}>
                   {copy.actions.muted}
                 </a>
               )}

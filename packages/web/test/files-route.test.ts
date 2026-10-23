@@ -69,6 +69,15 @@ describe('GET /v1/files/<orderId>/<name>', () => {
     expect(res.headers.get('location')).toBe(await fakeBlob.presignGet(`orders/${order.id}/out/${NAME}`, 10));
   });
 
+  it('redirects a link with download=1 to a presigned GET that saves the file instead of showing it', async () => {
+    const order = await deliveredOrder();
+    const link = `${signFileLink({ orderId: order.id, name: NAME, exp: inDays(30) }, SECRET, BASE)}&download=1`;
+    const res = await GET(request(link), ctxFor(order.id, NAME));
+    expect(res.status).toBe(302);
+    expect(fakeBlob.lastPresignGet).toEqual({ path: `orders/${order.id}/out/${NAME}`, minutes: 10, attachment: true });
+    expect(res.headers.get('location')).toBe(await fakeBlob.presignGet(`orders/${order.id}/out/${NAME}`, 10, { attachment: true }));
+  });
+
   it('serves each file of the order from its own path', async () => {
     const order = await deliveredOrder();
     const link = signFileLink({ orderId: order.id, name: 'claims.md', exp: inDays(30) }, SECRET, BASE);

@@ -75,6 +75,14 @@ function describeBlobContract(name: string, make: () => Promise<BlobPort>) {
       expect(new URL(put).protocol).toBe('https:');
       expect(get).not.toBe(put);
     });
+
+    it('gives another URL for a presigned read that saves the file instead of showing it', async () => {
+      const blob = await make();
+      const shown = await blob.presignGet('orders/ord_a/out/hook-a-9x16.mp4', 10);
+      const saved = await blob.presignGet('orders/ord_a/out/hook-a-9x16.mp4', 10, { attachment: true });
+      expect(new URL(saved).protocol).toBe('https:');
+      expect(saved).not.toBe(shown);
+    });
   });
 }
 
@@ -123,6 +131,8 @@ describe('FileBlob', () => {
     expect(blob.lastPresignGet).toEqual({ path: 'orders/ord_a/out/hook-a-9x16.mp4', minutes: 10 });
     await blob.presignGet('orders/ord_a/out/claims.md', 2);
     expect(blob.lastPresignGet).toEqual({ path: 'orders/ord_a/out/claims.md', minutes: 2 });
+    await blob.presignGet('orders/ord_a/out/claims.md', 2, { attachment: true });
+    expect(blob.lastPresignGet).toEqual({ path: 'orders/ord_a/out/claims.md', minutes: 2, attachment: true });
   });
 
   it('records the last presigned write with what it allows', async () => {

@@ -11,6 +11,8 @@ const SITE_URL = 'https://cobrame.example/';
 const FILE = (name: string): string => `${BASE}/v1/files/${ID}/${name}?exp=1800000000&sig=${'a'.repeat(64)}`;
 const WITH_MUSIC = FILE('hook-a-9x16.mp4');
 const MUTED = FILE('hook-a-9x16-muted.mp4');
+// A download button asks the service for the file to be saved, not shown: the same signed link, with download=1.
+const SAVE = (link: string): string => `${link}&download=1`;
 
 const CLAIMS = [
   { onScreen: 'Get paid on time', quote: 'Invoices that chase themselves, so you get paid on time.', url: 'https://cobrame.example/', section: 'Get paid' },
@@ -83,8 +85,8 @@ describe('the delivery view', () => {
     expect(video['aria-label']).toBe('The video made from cobrame.example');
 
     const found = links(html);
-    expect(found.find(({ words }) => words === 'Download MP4')).toMatchObject({ href: WITH_MUSIC, download: 'hook-a-9x16.mp4' });
-    expect(found.find(({ words }) => words === 'Muted version')).toMatchObject({ href: MUTED, download: 'hook-a-9x16-muted.mp4' });
+    expect(found.find(({ words }) => words === 'Download MP4')).toMatchObject({ href: SAVE(WITH_MUSIC), download: 'hook-a-9x16.mp4' });
+    expect(found.find(({ words }) => words === 'Muted version')).toMatchObject({ href: SAVE(MUTED), download: 'hook-a-9x16-muted.mp4' });
     // X opens in a tab of its own with the first line of the video and the site: nothing of ours.
     expect(found.find(({ words }) => words === 'Post on X')).toEqual({
       href: xIntentUrl('Get paid on time', SITE_URL),
@@ -147,7 +149,7 @@ describe('the delivery view', () => {
     expect(attributes(html, /<video[^>]*>/).src).toBe(MUTED);
     const found = links(html);
     // The one video is the download; a second button to the same file would only confuse.
-    expect(found.find(({ words }) => words === 'Download MP4')).toMatchObject({ href: MUTED, download: 'hook-a-9x16-muted.mp4' });
+    expect(found.find(({ words }) => words === 'Download MP4')).toMatchObject({ href: SAVE(MUTED), download: 'hook-a-9x16-muted.mp4' });
     expect(found.map(({ words }) => words)).not.toContain('Muted version');
     // And an order without music says nothing about music.
     expect(words(html)).not.toContain('Music');

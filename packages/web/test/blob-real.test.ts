@@ -79,6 +79,14 @@ describe('VercelBlob.presignGet', () => {
     expect(parsed.searchParams.get('vercel-blob-signature')).toBeTruthy();
   });
 
+  it('asks the store to send the file as an attachment when it is to be saved, and only then', async () => {
+    const blob = new VercelBlob(TOKEN);
+    const saved = new URL(await blob.presignGet('orders/ord_a/out/hook-a-9x16.mp4', 10, { attachment: true }));
+    expect(saved.searchParams.get('download')).toBe('1');
+    expect(saved.searchParams.get('vercel-blob-signature')).toBeTruthy();
+    expect(new URL(await blob.presignGet('orders/ord_a/out/hook-a-9x16.mp4', 10)).searchParams.has('download')).toBe(false);
+  });
+
   it('fails if the token is not for that path, which the SDK checks', async () => {
     issued().mockImplementationOnce(async () => ({
       delegationToken: `${Buffer.from(JSON.stringify({ storeId: 'store_store123', pathname: 'other', operations: ['get'], validUntil: NOW + MINUTE })).toString('base64url')}.signature`,

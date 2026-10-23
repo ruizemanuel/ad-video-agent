@@ -1,6 +1,8 @@
 // GET /v1/files/<orderId>/<name>?exp=<unix>&sig=<hex>: a delivery link. If the signature and the time are good and
 // the name is a deliverable of the order, it redirects (302) to a 10-minute presigned read of the blob. The links
-// live 30 days; the presign lives only as long as the download needs to start.
+// live 30 days; the presign lives only as long as the download needs to start. With download=1 (the page's download
+// buttons), the read makes the browser save the file: the blob is on another origin, where the `download` attribute of
+// a link does nothing. download=1 is not signed: it changes only how the file arrives.
 import { getAdapters } from '../../../../../adapters';
 import { env } from '../../../../../env';
 import { verifyFileLink } from '../../../../../links';
@@ -34,6 +36,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ orderId: string
   const deliverable = order.deliverables.find((file) => file.name === name);
   if (deliverable === undefined) return refuse(404, 'No such file for this order.');
 
-  const location = await blob.presignGet(deliverable.path, PRESIGN_MINUTES);
+  const location = await blob.presignGet(deliverable.path, PRESIGN_MINUTES, { attachment: query.get('download') === '1' });
   return new Response(null, { status: 302, headers: { ...NO_STORE, location } });
 }

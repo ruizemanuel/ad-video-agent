@@ -14,7 +14,7 @@ export class FileBlob implements BlobPort {
   private readonly root: string;
 
   /** What the last `presignGet` was asked for. */
-  lastPresignGet: { path: string; minutes: number } | undefined;
+  lastPresignGet: { path: string; minutes: number; attachment?: true } | undefined;
   /** What the last `presignPut` was asked for. */
   lastPresignPut: { path: string; contentType: string; maxBytes: number; minutes: number } | undefined;
 
@@ -53,9 +53,10 @@ export class FileBlob implements BlobPort {
     return `https://fake-blob.invalid/${urlPath(path)}?op=put&type=${encodeURIComponent(contentType)}&max=${maxBytes}&minutes=${minutes}`;
   }
 
-  async presignGet(path: string, minutes: number): Promise<string> {
-    this.lastPresignGet = { path, minutes };
-    return `https://fake-blob.invalid/${urlPath(path)}?op=get&minutes=${minutes}`;
+  async presignGet(path: string, minutes: number, options?: { attachment?: boolean }): Promise<string> {
+    const attachment = options?.attachment === true;
+    this.lastPresignGet = attachment ? { path, minutes, attachment } : { path, minutes };
+    return `https://fake-blob.invalid/${urlPath(path)}?op=get&minutes=${minutes}${attachment ? '&download=1' : ''}`;
   }
 
   async deletePrefix(prefix: string): Promise<number> {
