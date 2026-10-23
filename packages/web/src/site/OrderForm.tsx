@@ -1,6 +1,7 @@
 'use client';
 // The order form of the home. One press of its button runs the whole order: the free quote, the wallet (connected and
 // moved to Celo), that wallet's own quote and price, the token it holds enough of, one signature, and the order page.
+// A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on.
 // Wherever the order cannot go on, it stops, keeps everything the person typed and says why. It is rendered in the
 // browser only: everything it does needs the person's wallet, which the server cannot see.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -108,6 +109,8 @@ function Form({ price, promoSlots }: Props) {
   const [invalid, setInvalid] = useState<Invalid | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [thin, setThin] = useState(false);
+  // The site (its address as quoted) the form already stopped for because it shows little: the next press goes on.
+  const [thinPausedFor, setThinPausedFor] = useState<string | null>(null);
   const [briefOpen, setBriefOpen] = useState(false);
   const [pagesOpen, setPagesOpen] = useState(false);
   const [walletPrice, setWalletPrice] = useState<WalletPrice | null>(null);
@@ -157,7 +160,15 @@ function Form({ price, promoSlots }: Props) {
       const first = await requestQuote(input);
       if (!priced(first)) return false;
       setThin(first.thin);
-      if (first.thin) setPagesOpen(true);
+      // A site that shows little: before any wallet prompt, the person gets the chance to add pages, once per site.
+      // The next press goes on with whatever the form holds then (added pages are checked by that press's quote; they
+      // cannot make the site itself less thin, so it never stops twice).
+      if (first.thin && thinPausedFor !== input.url) {
+        setThinPausedFor(input.url);
+        setPagesOpen(true);
+        setNotice(progress(ORDER_FORM.progress.thinPaused));
+        return false;
+      }
 
       stage = 'connect';
       setNotice(progress(ORDER_FORM.progress.connecting));
@@ -232,7 +243,12 @@ function Form({ price, promoSlots }: Props) {
   const own = walletPrice !== null && walletPrice.address === connection.address ? walletPrice : null;
   const shownPrice = own?.price ?? fullPrice;
   const token = own?.token ?? 'USDT';
-  const label = connection.isConnected ? ORDER_FORM.button.pay(shownPrice, token) : ORDER_FORM.button.connectAndPay(shownPrice, token);
+  const paused = thinPausedFor !== null && normalizeUrl(fields.url) === thinPausedFor;
+  const label = paused
+    ? ORDER_FORM.button.continueAndPay(shownPrice, token)
+    : connection.isConnected
+      ? ORDER_FORM.button.pay(shownPrice, token)
+      : ORDER_FORM.button.connectAndPay(shownPrice, token);
   const promo = offer.data?.promo;
   const banner = promo !== null && promo !== undefined && promo.left > 0 && promoSlots > 0 ? ORDER_FORM.promo(promoSlots, promo.price, promo.left) : null;
 

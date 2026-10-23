@@ -77,10 +77,14 @@ export const ORDER_FORM = {
   button: {
     connectAndPay: (price: string, token: string) => `Connect wallet and pay ${price} ${token}`,
     pay: (price: string, token: string) => `Pay ${price} ${token}`,
+    /** After the form stopped to suggest more pages for a site that shows little. */
+    continueAndPay: (price: string, token: string) => `Continue and pay ${price} ${token}`,
   },
   /** What is going on while the button waits. */
   progress: {
     checking: 'Checking your site…',
+    /** The form stopped before the wallet, for a site that shows little. */
+    thinPaused: 'Add pages above if you can, or continue as it is.',
     connecting: 'Connect your wallet to go on…',
     switching: 'Switch your wallet to Celo to go on…',
     signing: 'Confirm the payment in your wallet. It’s one signature, with no gas.',

@@ -251,17 +251,36 @@ describe('the order form', () => {
   });
 
   it('suggests extra pages for a thin site', async () => {
-    const { browser, page, wallet, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY }, rejectSignature: true });
+    const before = (await storedOrders(app.fakeDir)).length;
+    const { browser, page, wallet, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY } });
     try {
       await fill(page, { url: 'https://thin.tiendita.example/' });
       await page.click(BUTTON);
-      // The suggestion does not hold the payment back: the wallet is still asked to sign.
-      await waitForText(page, 'You cancelled the signature. Nothing was charged.');
-      expect(await orderText(page)).toContain('Your site shows little of the product. Adding up to 3 public pages makes a better video.');
-      expect(wallet.signatureRequests()).toBe(1);
-      // The place to add them is open.
+      // The form stops before the wallet: the suggestion, the place to add pages open, and a button to go on.
+      await waitForText(page, 'Your site shows little of the product. Adding up to 3 public pages makes a better video.');
+      await page.waitForFunction((selector) => document.querySelector(selector)?.textContent?.startsWith('Continue and pay') === true, WAIT, BUTTON);
+      expect(await page.$eval(BUTTON, (button) => ({ disabled: (button as HTMLButtonElement).disabled, text: button.textContent }))).toEqual({
+        disabled: false,
+        text: 'Continue and pay 0.05 USDT',
+      });
       expect(await page.$eval(`${FORM} details[data-part="pages"]`, (details) => (details as HTMLDetailsElement).open)).toBe(true);
+      expect(wallet.signatureRequests()).toBe(0);
+      // Not even asked to connect.
+      expect(await askWallet(page, 'eth_accounts')).toEqual([]);
+      expect(await storedOrders(app.fakeDir)).toHaveLength(before);
       expectPlainWords(await orderText(page));
+
+      // The person adds a page and goes on: one press, one payment, with what the form holds now.
+      await page.type(`${FORM} input[name="extraUrls.0"]`, 'tiendita.example/app');
+      await page.click(BUTTON);
+      const id = await waitForOrderPage(page);
+      const order = (await storedOrders(app.fakeDir)).find((stored) => stored.id === id);
+      expect(order).toMatchObject({
+        amount: 50_000n,
+        payer: wallet.address,
+        request: { url: 'https://thin.tiendita.example/', extraUrls: ['https://tiendita.example/app'] },
+      });
+      expect(wallet.signatureRequests()).toBe(1);
       expect(blockedRequests()).toEqual([]);
     } finally {
       await browser.close();
