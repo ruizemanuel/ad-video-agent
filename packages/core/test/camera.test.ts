@@ -971,6 +971,7 @@ describe('the edge rules, against a search of every top', () => {
   const onTolerance = (edge: number, regions: readonly Region[]): boolean =>
     regions.some((r) => [r.y, r.y + r.h].some((at) => Math.abs(Math.abs(at - edge) - TOLERANCE) < 1e-6));
 
+  // Over 20,000 searches take about 5 s: past the default limit on a busy machine, as in CI on 24/10.
   it('lands each piece where the reference does, in every format, on 500 layouts', () => {
     const rand = seeded(20261021);
     const differences: string[] = [];
@@ -998,7 +999,7 @@ describe('the edge rules, against a search of every top', () => {
     expect(differences.slice(0, 5)).toEqual([]);
     expect(compared).toBeGreaterThan(20_000);
     expect(ties).toBeLessThan(compared / 1000);
-  });
+  }, 30_000);
 });
 
 describe("the card raised into the caption's slack", () => {
