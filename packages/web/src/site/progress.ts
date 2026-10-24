@@ -91,14 +91,20 @@ export function progressRows(status: StatusJson, audio: 'music' | 'none'): Progr
     { label: steps.preview, seen: seen(status, 'preview') },
     { label: steps.review, seen: seen(status, 'review') },
     { label: steps.render, seen: folded(status, 'render', 'delivery') },
-    ...(status.steps.some((step) => step.name === 'refund') ? [{ label: steps.refund, seen: refundSeen(status) }] : []),
   ];
+  const refundAt = status.steps.some((step) => step.name === 'refund') ? rows.length : -1;
+  if (refundAt !== -1) rows.push({ label: steps.refund, seen: refundSeen(status) });
 
-  // The step being done; or, while the video is being made and none has begun, the one that comes next.
+  // The step being done: while the refund is on its way, the refund, whatever step a lost run left running; otherwise
+  // the step running or, while the video is being made and none has begun, the one that comes next.
   let now = -1;
   if (!isTerminal(status.status)) {
-    now = rows.findIndex((row) => row.seen === 'running');
-    if (now === -1 && phaseOf(status.status) === 'making') now = rows.findIndex((row) => row.seen === 'pending');
+    if (phaseOf(status.status) === 'refund') {
+      now = refundAt;
+    } else {
+      now = rows.findIndex((row) => row.seen === 'running');
+      if (now === -1 && phaseOf(status.status) === 'making') now = rows.findIndex((row) => row.seen === 'pending');
+    }
   }
   // Once the video is no longer being made (it is refunded, or the order is over), what it did not get to never comes.
   const making = phaseOf(status.status) === 'making';

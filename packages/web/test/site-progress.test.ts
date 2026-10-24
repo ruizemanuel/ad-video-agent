@@ -114,6 +114,12 @@ describe('progressRows', () => {
     expect(ORDER_PAGE.stateOf.never).toBe('Not done');
   });
 
+  it('makes the refund the step being done while it is on its way, even when the run was lost with a step running', () => {
+    // A lost run is refunded with its last step still `running` (the reconciliation's refundLostRun).
+    const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'running', refund: 'running' }, { status: 'refunding' }), 'music');
+    expect(states(rows)).toEqual(['done', 'never', 'never', 'never', 'never', 'never', 'never', 'now']);
+  });
+
   it('has no step now once the order is over, even one the order left running', () => {
     for (const end of ORDER_STATUSES.filter(isTerminal)) {
       const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'running', refund: 'running' }, { status: end }), 'music');
