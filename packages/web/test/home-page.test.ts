@@ -42,7 +42,7 @@ const words = (html: string): string => text(html, ' ').replace(/\s+/g, ' ');
 
 /** The example the agents section gives, as the design fixes it. */
 const BUY_EXAMPLE = `npx @celo/buy curl --token USDT --max-amount 2 -X POST -H 'content-type: application/json' \\
-  --data '{"url":"https://yourproject.xyz"}' https://ad-video-agent-ten.vercel.app/v1/videos`;
+  --data '{"url":"https://yourproject.xyz"}' https://advideoagent.com/v1/videos`;
 
 /** The element with this id, from its opening tag to the closing tag of the same name (no element of that name inside). */
 const byId = (html: string, id: string): string => {

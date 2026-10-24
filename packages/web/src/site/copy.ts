@@ -150,7 +150,7 @@ export const AGENTS = {
   example: {
     intro: 'With the buy CLI, one command gets the quote, pays it and places the order:',
     command: `npx @celo/buy curl --token USDT --max-amount 2 -X POST -H 'content-type: application/json' \\
-  --data '{"url":"https://yourproject.xyz"}' https://ad-video-agent-ten.vercel.app/v1/videos`,
+  --data '{"url":"https://yourproject.xyz"}' https://advideoagent.com/v1/videos`,
   },
 } as const;
 
