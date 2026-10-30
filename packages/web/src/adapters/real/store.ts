@@ -1,7 +1,7 @@
 // The OrderStore on Postgres (Neon over HTTP in production, PGlite in the tests), through drizzle. Neon's HTTP
 // driver has no interactive transactions, so every operation that must be atomic is one statement.
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, eq, getTableColumns, gt, gte, inArray, is, isNotNull, isNull, lt, lte, ne, or, SQL, sql, type AnyColumn } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, gte, inArray, is, isNull, lt, lte, ne, or, SQL, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
 import { costs, feedback, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
 import {
@@ -458,7 +458,7 @@ export class DrizzleStore implements OrderStore {
     return this.db
       .select()
       .from(orders)
-      .where(and(or(and(eq(orders.status, 'paid'), isNotNull(orders.runId)), eq(orders.status, 'running')), lt(orders.paidAt, paidBefore), next))
+      .where(and(inArray(orders.status, ['paid', 'running']), lt(orders.paidAt, paidBefore), next))
       .orderBy(asc(orders.paidAt), asc(orders.id))
       .limit(limit);
   }

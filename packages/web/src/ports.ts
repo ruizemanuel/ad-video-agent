@@ -329,8 +329,9 @@ export interface OrderStore {
   /** The orders `paid` with no run, paid before `olderThan`. */
   paidWithoutRun(olderThan: Date, limit: number): Promise<Order[]>;
   /**
-   * The orders whose run should be over: `paid` with a run, or `running`, paid before `paidBefore`, by their payment and
-   * then their id. With `after`, those that come after that order in this order: the next page.
+   * The orders whose run should be over: `paid` (with a run or none: one that never started) or `running`, paid before
+   * `paidBefore`, by their payment and then their id. With `after`, those that come after that order in this order: the
+   * next page.
    */
   runsOverdue(paidBefore: Date, limit: number, after?: OrderCursor): Promise<Order[]>;
   /** The orders `refund_failed`. */

@@ -2,7 +2,8 @@
 // refund that landed after the flow gave up on it or stopped watching it (the run died, or the store failed between two
 // writes), an order a run left refunding with no refund signed (handed to a person), a paid order whose run was lost
 // (refunded here), a settlement that landed on chain but was never reported (the facilitator timed out, or the request
-// died), an authorization that expired without settling, and a paid order whose run never started. It also keeps the
+// died), an authorization that expired without settling, and a paid order whose run never started (started, or refunded
+// once two hours have passed since its payment). It also keeps the
 // refunds that could not be paid in the log, every run, until someone pays them by hand.
 //
 // The only refund it signs and sends is that of an order whose run was lost, through the same functions the flow uses
@@ -55,6 +56,8 @@ export const RUN_DEFER_CEILING_MS = 24 * 60 * MINUTE_MS;
 
 /** Why the order of a run that was lost is refunded: its `failureReason`, and its refund's. */
 const RUN_LOST = 'run-lost';
+/** Why a paid order whose run never started (each pass's start failed) is refunded. */
+const RUN_NOT_STARTED = 'run-not-started';
 
 export type ReconcileDeps = {
   store: Pick<
@@ -145,7 +148,8 @@ async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' 
 /**
  * A paid order whose run should be over and has not let go of it: the run died with the order still `paid` or `running`
  * (the platform failed or cancelled it, the store was down for longer than its refund's watch, Workflow failed before the
- * first step and the run stays `pending`). It is logged, and refunded as `run-lost` unless its run reports `running`,
+ * first step and the run stays `pending`), or it never started (every pass's start failed, and the order is still `paid`
+ * with no run: refunded as `run-not-started`). It is logged, and refunded as `run-lost` unless its run reports `running`,
  * and then only until RUN_DEFER_CEILING_MS after the payment: the order moves to `refunding` and its refund is signed,
  * kept and sent, as the flow does it. A refund that cannot be paid leaves it `refund_failed` (the pass after this one
  * logs it); the pass for stalled refunds looks the refund up later. A run that is `pending`, or cannot be asked, does not
@@ -168,7 +172,8 @@ async function refundLostRun(order: Order, deps: ReconcileDeps, now: Date): Prom
       outcome = 'deferred';
       return;
     }
-    const prepared = await prepareRefund(order.id, RUN_LOST, { store, refunds, dailyCapUsd: refundDailyCapUsd });
+    const reason = order.status === 'paid' && order.runId === null ? RUN_NOT_STARTED : RUN_LOST;
+    const prepared = await prepareRefund(order.id, reason, { store, refunds, dailyCapUsd: refundDailyCapUsd });
     // Its run moved it on meanwhile (delivered it, or refunded it): nothing of it is this pass's.
     if ('failed' in prepared && prepared.failed === 'not-refundable') return;
     outcome = 'refunded';
@@ -260,7 +265,8 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
     });
   }
 
-  // Measured from the payment, so a run that the paying request is still starting is not started twice.
+  // Measured from the payment, so a run that the paying request is still starting is not started twice. Two hours after
+  // the payment, the pass for lost runs (above) has refunded the order instead: it is no longer `paid`, and not started.
   for (const order of await store.paidWithoutRun(olderThan, PAID_WITHOUT_RUN_PER_PASS)) {
     await attempt(order.id, async () => {
       await startRun(order.id, store);

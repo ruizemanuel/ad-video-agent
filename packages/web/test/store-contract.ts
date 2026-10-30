@@ -1064,16 +1064,17 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
         expect(await s.refundFailures(10)).toEqual([]);
       });
 
-      it('lists the paid orders whose run should be over: paid with a run, or running, paid before a date', async () => {
+      it('lists the paid orders whose run should be over: paid (with a run or not), or running, paid before a date', async () => {
         const started = await orderIn('paid');
         await s.setRunId(started.id, 'wrun_1');
         const running = await orderIn('running');
         await s.setRunId(running.id, 'wrun_2');
-        // Not these: a paid order with no run yet (another pass starts it), and the orders past running.
-        await orderIn('paid');
+        // A run that never started is overdue too: its order is refunded as one whose run was lost.
+        const neverStarted = await orderIn('paid');
+        // Not these: the orders past running, and one never paid.
         for (const status of ['delivered', 'refunding', 'refunded', 'refund_failed', 'unpaid', 'expired'] as const) await orderIn(status);
         await create();
-        expect(ids(await s.runsOverdue(ahead(minutes(1)), 10))).toEqual([started.id, running.id].sort());
+        expect(ids(await s.runsOverdue(ahead(minutes(1)), 10))).toEqual([started.id, running.id, neverStarted.id].sort());
         expect(await s.runsOverdue(ago(minutes(1)), 10)).toEqual([]);
       });
 

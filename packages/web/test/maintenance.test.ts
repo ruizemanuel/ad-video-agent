@@ -418,6 +418,25 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(sorted((await reconcile(deps(), after(2 * HOUR + MINUTE))).runLost)).toEqual(sorted([unknown.id, anonymous.id]));
   });
 
+  it('refunds, as run-not-started, a paid order whose run could not be started for two hours, and stops starting it', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await paid();
+    const unavailable = new Error('workflow unavailable');
+    vi.mocked(start).mockRejectedValueOnce(unavailable).mockRejectedValueOnce(unavailable);
+
+    // Each pass before the two hours tries to start it again.
+    for (const now of [after(6 * MINUTE), after(2 * HOUR - MINUTE)]) expect((await reconcile(deps(), now)).runLost).toEqual([]);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(await statusOf(order)).toBe('paid');
+
+    expect(await reconcile(deps(), after(2 * HOUR + MINUTE))).toEqual({ started: [], unpaid: [], refundFailed: [], runLost: [order.id] });
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refunding', failureReason: 'run-not-started', steps: { refund: 'running' } });
+    expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast', to: PAYER, amount: order.amount, reason: 'run-not-started' });
+    expect(refunds.broadcasts).toHaveLength(1);
+    expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'paid', 'missing');
+  });
+
   it('refunds an order whose run cannot be read: two hours after the payment, no run of an order is still at work', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const order = await taken();

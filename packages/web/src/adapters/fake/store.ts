@@ -539,7 +539,7 @@ export class FileStore implements OrderStore {
   }
 
   runsOverdue(paidBefore: Date, limit: number, after?: OrderCursor): Promise<Order[]> {
-    return this.locked(() => this.paidBefore(paidBefore, limit, (o) => (o.status === 'paid' && o.runId !== null) || o.status === 'running', after));
+    return this.locked(() => this.paidBefore(paidBefore, limit, (o) => o.status === 'paid' || o.status === 'running', after));
   }
 
   ordersToExpire(createdBefore: Date): Promise<Order[]> {
