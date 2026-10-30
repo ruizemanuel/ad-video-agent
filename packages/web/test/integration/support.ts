@@ -12,6 +12,7 @@ import { resumeHook, type Run } from 'workflow/api';
 import { hydrateResourceIO, observabilityRevivers } from 'workflow/observability';
 import { getWorld } from 'workflow/runtime';
 import { getAdapters } from '../../src/adapters';
+import type { FakeAlerts } from '../../src/adapters/fake/alerts';
 import type { FileBlob } from '../../src/adapters/fake/blob';
 import type { FakeBuy } from '../../src/adapters/fake/buy';
 import type { FakeLlm } from '../../src/adapters/fake/llm';
@@ -33,7 +34,7 @@ export const PRICE = 50_000n;
  * The doubles the steps use: the very object getAdapters() hands out, so a test can also put a fresh double in it (a model
  * double per test, say) and the next step uses that one.
  */
-export type Fakes = { store: FileStore; blob: FileBlob; buy: FakeBuy; llm: FakeLlm; music: FakeMusic; refunds: FakeRefunds };
+export type Fakes = { store: FileStore; blob: FileBlob; buy: FakeBuy; llm: FakeLlm; music: FakeMusic; refunds: FakeRefunds; alerts: FakeAlerts };
 
 /**
  * Sets up the fake service for one test file: the settings the steps read, and a FAKE_DIR of its own. `settings` adds to

@@ -63,8 +63,11 @@ const ADAPTER_SCALE = 10n ** 12n;
 
 /** A Celo node that answers what viem asks to prepare, sign and send a transaction, and keeps what it was asked. */
 class FakeNode {
-  /** What `balanceOf` answers, for every token and owner. */
+  /** What `balanceOf` answers, for every token and owner, unless `tokenBalances` names the token (by its address, lowercase). */
   balance = 1_000_000_000n;
+  readonly tokenBalances = new Map<string, bigint>();
+  /** Every `balanceOf` asked: the token, and whose balance. */
+  readonly balanceQueries: { token: string; owner: string }[] = [];
   gas = 120_000n;
   /** What eth_gasPrice and eth_maxPriorityFeePerGas answer for a fee currency: in the adapter's units (18 decimals). */
   gasPrice = 10_000_000_000n;
@@ -106,9 +109,11 @@ class FakeNode {
       case 'eth_chainId':
         return numberToHex(42220);
       case 'eth_call': {
-        const { data } = params[0] as { data: Hex };
-        decodeFunctionData({ abi: erc20Abi, data });
-        return encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: this.balance });
+        const { to, data } = params[0] as { to: string; data: Hex };
+        const call = decodeFunctionData({ abi: erc20Abi, data });
+        const owner = call.functionName === 'balanceOf' ? call.args[0] : '';
+        this.balanceQueries.push({ token: to.toLowerCase(), owner: owner.toLowerCase() });
+        return encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: this.tokenBalances.get(to.toLowerCase()) ?? this.balance });
       }
       case 'eth_estimateGas':
         return numberToHex(this.gas);
@@ -502,6 +507,16 @@ describe('CeloRefunds.receipt', () => {
     expect(await refunds.receipt(hash)).toBe('success');
     node.receipts.set(hash.toLowerCase(), 'reverted');
     expect(await refunds.receipt(hash)).toBe('reverted');
+  });
+});
+
+describe('CeloRefunds.balances', () => {
+  it("reads what the refunds' wallet holds of each token, and only reads", async () => {
+    node.tokenBalances.set(TOKENS.USDT.address.toLowerCase(), 688_377n);
+    node.tokenBalances.set(TOKENS.USDC.address.toLowerCase(), 0n);
+    expect(await adapter().balances()).toEqual({ USDT: 688_377n, USDC: 0n });
+    expect(new Set(node.balanceQueries.map((q) => q.owner))).toEqual(new Set([WALLET.toLowerCase()]));
+    expect(node.sent).toEqual([]);
   });
 });
 

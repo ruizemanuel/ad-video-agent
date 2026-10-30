@@ -122,6 +122,7 @@ Set them in the Vercel project, for Production. `packages/web/src/env.ts` checks
 | `SPEND_CAP_PER_ORDER_USD` | No, default `2.5` | No | The most an order may spend on model and music calls. A call that only improves the video (a correction, the review, a third music track) is not made if it would pass the cap. |
 | `BUY_DAILY_CAP_USD` | No, default `2` | No | The most the service may pay buy for machines in a UTC day, every order together. When what was paid today, plus 0.07 for each order paid today whose machine is not paid yet and for one more order, would pass it, `POST /v1/videos` answers `503 at_capacity` until the next UTC day, before any payment. |
 | `REFUND_DAILY_CAP_USD` | No, default `10` | No | The most it may refund in a UTC day, every order together. |
+| `ALERT_URL` | No | Yes | Where the alerts go: an [ntfy](https://ntfy.sh) topic's URL, `https://ntfy.sh/<topic>`, that the operator's phone is subscribed to (see [Alerts](#alerts)). The topic's name is the secret: whoever has it reads the alerts, so make it long and random. Without it, the alerts are only logged. |
 | `PRECHECK_DAILY_CAP_USD` | No, default `2` | No | The most the free site check's model calls may cost in a UTC day, every quote together. Past it, a site that was not checked in the last 24 hours gets a 503 until the next UTC day. |
 | `VERCEL_ENV` | Set by Vercel | No | `production` turns on the checks that keep a test setup out of production: no fake adapters, no in-memory or local database, and a commit for the machine. |
 | `VERCEL_GIT_COMMIT_SHA` | Set by Vercel | No | The deployed commit, which the machine downloads. Needs the system variables turned on. |
@@ -139,7 +140,22 @@ Only for tests and for the refund run, never for a normal deployment:
 
 ## Operations
 
-- An order whose refund could not be paid stays `refund_failed`, and the reconciliation logs it as `[refund_failed]` every 10 minutes; once the cause is fixed, `pnpm --filter @app/web refund:retry <orderId>`, run with the production settings in the environment, moves it back to `refunding` and signs and sends its refund in one go (the reconciliation then confirms it).
+- An order whose refund could not be paid stays `refund_failed`: a "Refund not paid" alert rings once (see [Alerts](#alerts)), and the reconciliation logs it as `[refund_failed]` every 10 minutes; once the cause is fixed, `pnpm --filter @app/web refund:retry <orderId>`, run with the production settings in the environment, moves it back to `refunding` and signs and sends its refund in one go (the reconciliation then confirms it).
+
+- A paid order is refunded by the reconciliation two hours after its payment when its run was lost (its run failed, was cancelled or is unknown) or never started (every start failed). A run that says it is still running is given until a day after the payment.
+
+### Alerts
+
+Vercel keeps the logs for an hour on this plan, so what needs a person also goes to the operator's phone, through [ntfy](https://ntfy.sh), once `ALERT_URL` is set:
+
+- **Refund not paid** (rings): an order was handed to a person as `refund_failed`. It says why and what to do; sent once, when the order gets there.
+- **Payment with no order** (rings): a payment settled with no order to run. It names the token, the payer and the transaction: pay it back by hand.
+- **Run lost, refunded**: the reconciliation refunded an order whose run was lost or never started.
+- **Daily summary**, on the reconciliation's pass at 12:03 UTC, sent even when nothing is open: how many refunds are not paid, how many runs past two hours still say they are running, and what the refund and spend wallets hold, with a warning when the refund wallet cannot pay one refund at the full price (and its gas) in a token, or the spend wallet one machine. It rings when something needs a look. A morning with no summary means that the clock, the route or the alerts are down.
+
+An alert names an order by the start of its id only (`ord_` and six characters), enough to find it in the store: ntfy.sh keeps a topic's messages for a while, and whoever knows the topic's name can read them.
+
+To set it up, install the ntfy app, subscribe to a new topic with a long random name, set `ALERT_URL` to `https://ntfy.sh/<that name>` in the Vercel project (Production, Sensitive) and redeploy.
 
 ### Reconcile clock
 

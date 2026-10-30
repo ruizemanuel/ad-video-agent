@@ -49,6 +49,8 @@ export class FakeBuy implements BuyPort {
 
   /** The answer for an authorization the test (and FAKE_SCENARIO) said nothing about: the chain could not be asked. */
   fallback: AuthorizationSettlement = 'unknown';
+  /** What the spend wallet holds of USDT, in atomic units. */
+  spendWalletBalance = 1_000_000_000n;
 
   private readonly answers = new Map<string, AuthorizationSettlement | Error>();
   private readonly transfers = new Map<string, Transfer>();
@@ -66,6 +68,10 @@ export class FakeBuy implements BuyPort {
    */
   consumed(nonce: string, transfer: Transfer): void {
     this.transfers.set(nonce.toLowerCase(), transfer);
+  }
+
+  async spendBalance(): Promise<bigint> {
+    return this.spendWalletBalance;
   }
 
   async authorizationSettled(input: SettlementQuery): Promise<AuthorizationSettlement> {

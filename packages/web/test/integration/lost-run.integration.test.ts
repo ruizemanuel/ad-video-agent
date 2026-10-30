@@ -27,7 +27,7 @@ it('pays the order back once: the run that wakes after the reconciliation refund
 
   // Two hours after the payment, the runtime says (wrongly) that the run failed: the reconciliation refunds the order.
   const twoHoursOn = new Date(Date.now() + 2 * 60 * 60_000 + 60_000);
-  const deps = { store: fakes.store, buy: fakes.buy, refunds: fakes.refunds, payTo: `0x${'1'.repeat(40)}`, refundDailyCapUsd: 10 };
+  const deps = { store: fakes.store, buy: fakes.buy, refunds: fakes.refunds, payTo: `0x${'1'.repeat(40)}`, refundDailyCapUsd: 10, refundAtMostAtomic: 100_000n, alerts: fakes.alerts };
   const result = await reconcile({ ...deps, runStatus: async () => 'failed' }, twoHoursOn);
   expect(result.runLost).toEqual([id]);
   const kept = await fakes.store.getRefund(id);

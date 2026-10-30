@@ -30,6 +30,7 @@ import {
 import { createHook, FatalError, getStepMetadata, getWorkflowMetadata, RetryableError, sleep } from 'workflow';
 import { getAdapters } from '../adapters';
 import { env } from '../env';
+import { refundFailedAlert } from '../maintenance/alerts';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
 import { payForVm, resolveVmPayment, vmPaymentKey, type PayResult } from '../payments/vm-payment';
 import { canAfford, EST } from '../pipeline/budget';
@@ -776,16 +777,16 @@ async function deliver(
 // ---------------------------------------------------------------- steps: the refund
 
 /**
- * Signs the order's refund, or gives back the one it has. A refund that cannot be paid leaves the order `refund_failed`.
- * An order that is not one to refund because it was delivered (its delivery step failed after delivering it) says so,
- * with its files.
+ * Signs the order's refund, or gives back the one it has. A refund that cannot be paid leaves the order `refund_failed`,
+ * and rings an alert: the money is owed. An order that is not one to refund because it was delivered (its delivery step
+ * failed after delivering it) says so, with its files.
  */
 async function prepareOrderRefund(
   orderId: string,
   reason: Failure,
 ): Promise<{ status: 'prepared' } | { status: 'failed' } | { status: 'delivered'; files: string[]; warnings: string[] }> {
   'use step';
-  const { store, refunds } = await getAdapters();
+  const { store, refunds, alerts } = await getAdapters();
   const prepared = await prepareRefund(orderId, reason, { store, refunds, dailyCapUsd: env().REFUND_DAILY_CAP_USD });
   if ('failed' in prepared) {
     if (prepared.failed === 'not-refundable') {
@@ -794,7 +795,10 @@ async function prepareOrderRefund(
     }
     // The order now says why the refund failed: why the order did is kept here.
     console.error('[refund_failed]', orderId, reason, prepared.failed);
-    if (prepared.failed !== 'not-refundable') await store.setStep(orderId, 'refund', 'failed');
+    if (prepared.failed !== 'not-refundable') {
+      await store.setStep(orderId, 'refund', 'failed');
+      await alerts.send(refundFailedAlert(orderId, prepared.failed));
+    }
     return { status: 'failed' };
   }
   await store.setStep(orderId, 'refund', 'running');
@@ -809,10 +813,13 @@ async function broadcastOrderRefund(orderId: string): Promise<void> {
 }
 broadcastOrderRefund.maxRetries = 0;
 
-/** What the chain says of the refund: `refunded`, `failed` (mined and reverted), or `waiting` for a later look. */
+/**
+ * What the chain says of the refund: `refunded`, `failed` (mined and reverted, which rings an alert: the money is owed),
+ * or `waiting` for a later look.
+ */
 async function confirmOrderRefund(orderId: string): Promise<'refunded' | 'failed' | 'waiting'> {
   'use step';
-  const { store, refunds } = await getAdapters();
+  const { store, refunds, alerts } = await getAdapters();
   const answer = await confirmRefund(orderId, { store, refunds });
   // Mined while the order was somewhere else: it goes back through `refunding`, the only way, to `refunded`.
   const landed = answer === 'confirmed' || (answer === 'confirmed-unapplied' && (await store.transition(orderId, 'refunding')) && (await store.transition(orderId, 'refunded')));
@@ -823,6 +830,8 @@ async function confirmOrderRefund(orderId: string): Promise<'refunded' | 'failed
   if (answer === 'reverted' || answer === 'confirmed-unapplied') {
     console.error('[refund_failed]', orderId, answer);
     await store.setStep(orderId, 'refund', 'failed');
+    // A reverted refund moved no money: it is owed.
+    if (answer === 'reverted') await alerts.send(refundFailedAlert(orderId, 'refund-reverted'));
     return 'failed';
   }
   return 'waiting';

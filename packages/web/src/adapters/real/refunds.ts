@@ -24,7 +24,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts';
 import { parseTransaction, type CeloTransactionSerializable } from 'viem/celo';
 import { celo } from 'viem/chains';
-import { FEE_ADAPTER_DECIMALS, FEE_ADAPTERS, TOKENS, tokenSymbol } from '../../payments/tokens';
+import { FEE_ADAPTER_DECIMALS, FEE_ADAPTERS, TOKENS, tokenSymbol, type TokenSymbol } from '../../payments/tokens';
 import { FeeTooHigh, InsufficientBalance, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRequest } from '../../ports';
 
 export type CeloRefundsSettings = {
@@ -198,6 +198,12 @@ export class CeloRefunds implements RefundPort {
     } catch (error) {
       throw chainError('nonce check', error);
     }
+  }
+
+  async balances(): Promise<Record<TokenSymbol, bigint>> {
+    const of = (symbol: TokenSymbol) => this.#chain.readContract({ address: TOKENS[symbol].address, abi: erc20Abi, functionName: 'balanceOf', args: [this.wallet] });
+    const [USDT, USDC] = await Promise.all([of('USDT'), of('USDC')]);
+    return { USDT, USDC };
   }
 
   async minedSafely(hash: Hex): Promise<boolean> {

@@ -252,6 +252,10 @@ export class CeloBuy implements BuyPort {
     return same(from, p.from) && same(to, p.to) && value >= p.value ? 'settled' : 'unsettled';
   }
 
+  async spendBalance(): Promise<bigint> {
+    return this.#balance(TOKENS.USDT.address, (await this.#account()).address);
+  }
+
   #balance(token: Address, owner: Address): Promise<bigint> {
     return this.#chain.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [owner] });
   }

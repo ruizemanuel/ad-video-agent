@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
+import { FakeAlerts } from '../src/adapters/fake/alerts';
 import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FakeRefunds } from '../src/adapters/fake/refunds';
@@ -12,6 +13,7 @@ import { FileStore } from '../src/adapters/fake/store';
 import { setCronDeps } from '../src/app/api/cron/deps';
 import { GET as cleanupRoute } from '../src/app/api/cron/cleanup/route';
 import { GET as reconcileRoute } from '../src/app/api/cron/reconcile/route';
+import { refundFailedAlert, runLostAlert } from '../src/maintenance/alerts';
 import { cleanup } from '../src/maintenance/cleanup';
 import {
   AWAITING_SETTLEMENT_PER_PASS,
@@ -65,6 +67,7 @@ let store: FileStore;
 let blob: FileBlob;
 let buy: FakeBuy;
 let refunds: FakeRefunds;
+let alerts: FakeAlerts;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -75,6 +78,7 @@ beforeEach(async () => {
   blob = new FileBlob(dir);
   buy = new FakeBuy();
   refunds = new FakeRefunds();
+  alerts = new FakeAlerts();
 });
 
 afterEach(() => {
@@ -126,8 +130,9 @@ async function delivered(): Promise<Order> {
 }
 
 /**
- * What reconcile runs on: the service's wallet is where the payments go, a day's refunds may reach US$ 10, and the
- * workflow runtime is the mocked one (runStatus over `runs`).
+ * What reconcile runs on: the service's wallet is where the payments go, a day's refunds may reach US$ 10, a refund at the
+ * full price takes up to 5.05 (the 5 USDT the orders here are paid, and its gas), the workflow runtime is the mocked one
+ * (runStatus over `runs`), and the alerts are kept.
  */
 const deps = (chain: FakeBuy = buy, over: Partial<ReconcileDeps> = {}): ReconcileDeps => ({
   store,
@@ -135,7 +140,9 @@ const deps = (chain: FakeBuy = buy, over: Partial<ReconcileDeps> = {}): Reconcil
   refunds,
   payTo: PAYTO,
   refundDailyCapUsd: 10,
+  refundAtMostAtomic: 5_050_000n,
   runStatus,
+  alerts,
   ...over,
 });
 const statusOf = async (order: Order) => (await store.getOrder(order.id))!.status;
@@ -380,6 +387,74 @@ describe('reconcile: paid orders without a run', () => {
   });
 });
 
+describe('reconcile: the daily summary', () => {
+  const HOUR = 60 * MINUTE;
+  /** The clock's pass at 12:03 UTC, the one in the summary's hour, on a day well after the orders the tests make. */
+  const SUMMARY_PASS = new Date(Date.UTC(2031, 0, 15, 12, 3));
+  const summaries = () => alerts.sent.filter((alert) => alert.title === 'Daily summary');
+
+  it('sends it on the pass of 12:00 UTC even with nothing open: a morning without it says the clock or the alerts are down', async () => {
+    await reconcile(deps(), SUMMARY_PASS);
+    expect(summaries()).toHaveLength(1);
+    const [summary] = summaries();
+    expect(summary).toMatchObject({ priority: 'default' });
+    expect(summary!.message).toContain('Refunds not paid: 0');
+    expect(summary!.message).toContain('Runs past 2 h that say they are running: 0');
+    expect(summary!.message).not.toContain('cannot pay');
+  });
+
+  it.each([
+    ['11:53', 11, 53],
+    ['12:13', 12, 13],
+    ['03:08, the daily backstop', 3, 8],
+  ])('sends none on the pass of %s', async (_, hour, minute) => {
+    await reconcile(deps(), new Date(Date.UTC(2031, 0, 15, hour, minute)));
+    expect(alerts.sent).toEqual([]);
+  });
+
+  it('counts the refunds not paid and the runs past two hours that say they are running, and rings', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failed = await paid();
+    await store.transition(failed.id, 'refunding');
+    await store.transition(failed.id, 'refund_failed', { failureReason: 'insufficient_balance' });
+    const busy = await awaiting(unixSeconds(after(5 * MINUTE)));
+    await store.transition(busy.id, 'paid', { paidAt: new Date(SUMMARY_PASS.getTime() - 3 * HOUR) });
+    await store.setRunId(busy.id, 'wrun_busy');
+    await store.transition(busy.id, 'running');
+    runs.set('wrun_busy', 'running');
+
+    await reconcile(deps(), SUMMARY_PASS);
+    const [summary] = summaries();
+    expect(summary).toMatchObject({ priority: 'high' });
+    expect(summary!.message).toContain('Refunds not paid: 1');
+    expect(summary!.message).toContain('Runs past 2 h that say they are running: 1');
+  });
+
+  it('says what the wallets hold, and warns when the refund wallet cannot pay one refund in a token or the spend wallet one machine', async () => {
+    vi.spyOn(refunds, 'balances').mockResolvedValue({ USDT: 2_500_000n, USDC: 0n });
+    buy.spendWalletBalance = 30_000n;
+
+    await reconcile(deps(buy, { refundAtMostAtomic: 2_050_000n }), SUMMARY_PASS);
+    const [summary] = summaries();
+    expect(summary).toMatchObject({ priority: 'high' });
+    expect(summary!.message).toContain('Refund wallet: 2.5 USDT, 0 USDC');
+    expect(summary!.message).toContain('Spend wallet: 0.03 USDT');
+    expect(summary!.message).toContain('The refund wallet cannot pay one refund in USDC');
+    expect(summary!.message).not.toContain('one refund in USDT');
+    expect(summary!.message).toContain('The spend wallet cannot pay one machine');
+  });
+
+  it('still sends it when a wallet cannot be read, and says so', async () => {
+    vi.spyOn(refunds, 'balances').mockRejectedValue(new Error('the chain could not be read'));
+    vi.spyOn(buy, 'spendBalance').mockRejectedValue(new Error('the chain could not be read'));
+
+    await reconcile(deps(), SUMMARY_PASS);
+    const [summary] = summaries();
+    expect(summary!.message).toContain('Refund wallet: could not be read');
+    expect(summary!.message).toContain('Spend wallet: could not be read');
+  });
+});
+
 describe('reconcile: paid orders whose run was lost', () => {
   const HOUR = 60 * MINUTE;
 
@@ -407,6 +482,17 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(refunds.prepareCalls).toBe(1);
     expect(refunds.broadcasts).toHaveLength(1);
     expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, status, run);
+    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-lost', run)]);
+  });
+
+  it('shows the alert of a lost run once: the passes after it find the order refunding', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await taken();
+    runs.set('wrun_lost', 'failed');
+
+    await reconcile(deps(), after(2 * HOUR + MINUTE));
+    await reconcile(deps(), after(2 * HOUR + 11 * MINUTE));
+    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-lost', 'failed')]);
   });
 
   it('refunds an order whose run the runtime does not know, or that has no run id', async () => {
@@ -435,6 +521,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast', to: PAYER, amount: order.amount, reason: 'run-not-started' });
     expect(refunds.broadcasts).toHaveLength(1);
     expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'paid', 'missing');
+    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-not-started', 'missing')]);
   });
 
   it('refunds an order whose run cannot be read: two hours after the payment, no run of an order is still at work', async () => {
@@ -458,6 +545,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     }
     expect(await statusOf(order)).toBe('running');
     expect(refunds.prepareCalls).toBe(0);
+    expect(alerts.sent).toEqual([]);
   });
 
   it('refunds an order whose run is still pending: its first step never ran, and a run that starts later finds the order taken', async () => {
@@ -558,6 +646,8 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-daily-cap' });
     expect(refunds.broadcasts).toEqual([]);
     expect(logged).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+    // The money is owed: that alert rings, and the lost run's own is not sent.
+    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-daily-cap')]);
   });
 
   it('hands to a person, in the next pass, a lost-run order whose refund could not be signed', async () => {
@@ -688,6 +778,8 @@ describe('reconcile: refund failures', () => {
     expect((await reconcile(deps(), after(MINUTE))).refundFailed).toEqual([order.id]);
     expect(await statusOf(order)).toBe('refund_failed');
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
+    // It was handed to a person before: its alert went out then, not on every pass that logs it.
+    expect(alerts.sent).toEqual([]);
   });
 
   it('does not look up a refund that already reverted', async () => {
@@ -740,6 +832,7 @@ describe('reconcile: refund failures', () => {
     expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unconfirmed' });
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
+    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-unconfirmed')]);
     expect(refunds.prepareCalls).toBe(1);
     expect(refunds.broadcasts).toHaveLength(1);
 
@@ -747,6 +840,16 @@ describe('reconcile: refund failures', () => {
     refunds.receiptAnswer = undefined;
     expect((await reconcile(deps(), after(41 * MINUTE))).refundFailed).toEqual([]);
     expect(await statusOf(order)).toBe('refunded');
+  });
+
+  it('hands to a person, with an alert, an order left refunding whose refund was mined and reverted', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const order = await leftRefunding();
+    refunds.receiptAnswer = 'reverted';
+
+    expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([order.id]);
+    expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-reverted' });
+    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-reverted')]);
   });
 
   /** An order moved to `refunding` whose refund was never signed: the chain could not be read, and the run died. */
@@ -764,6 +867,10 @@ describe('reconcile: refund failures', () => {
     expect((await reconcile(deps(), after(2 * 60 * MINUTE + MINUTE))).refundFailed).toEqual([order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unsigned' });
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
+    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-unsigned')]);
+    // The passes after it log it again, and send no other alert.
+    await reconcile(deps(), after(2 * 60 * MINUTE + 11 * MINUTE));
+    expect(alerts.sent).toHaveLength(1);
     // It signs and sends nothing.
     expect(refunds.prepareCalls).toBe(0);
     expect(refunds.broadcasts).toEqual([]);
@@ -874,7 +981,7 @@ describe('the cron routes', () => {
   });
 
   it('rejects cron calls without the CRON_SECRET bearer, and does not run the job', async () => {
-    setCronDeps({ store, blob, buy, refunds });
+    setCronDeps({ store, blob, buy, refunds, alerts });
     const old = await delivered();
     vi.useFakeTimers({ toFake: ['Date'], now: after(31 * DAY) });
 
@@ -884,7 +991,7 @@ describe('the cron routes', () => {
   });
 
   it('runs the reconciliation for the bearer, and answers what it did', async () => {
-    setCronDeps({ store, blob, buy, refunds });
+    setCronDeps({ store, blob, buy, refunds, alerts });
     const order = await awaiting(unixSeconds(after(10 * MINUTE)));
     // Settled only if the payment went to PAYTO_ADDRESS, the service's wallet.
     buy.consumed(order.nonce, { to: PAYTO, value: order.amount });
@@ -898,7 +1005,7 @@ describe('the cron routes', () => {
   });
 
   it('runs the cleanup for the bearer, and answers what it did', async () => {
-    setCronDeps({ store, blob, buy, refunds });
+    setCronDeps({ store, blob, buy, refunds, alerts });
     const old = await delivered();
     vi.useFakeTimers({ toFake: ['Date'], now: after(31 * DAY) });
 

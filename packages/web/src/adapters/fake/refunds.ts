@@ -7,6 +7,7 @@
 // back, spend a nonce outside the refunds, or change the wallet's key (`wallet`).
 import { randomBytes } from 'node:crypto';
 import { hexToString, keccak256, toHex, type Hex } from 'viem';
+import type { TokenSymbol } from '../../payments/tokens';
 import { InsufficientBalance, type PreparedRefund, type RefundPort, type RefundReceipt, type RefundRequest } from '../../ports';
 
 /** What the double's signed bytes say. */
@@ -91,6 +92,10 @@ export class FakeRefunds implements RefundPort {
       this.used.set(from, nonce + 1);
     }
     return hash;
+  }
+
+  async balances(): Promise<Record<TokenSymbol, bigint>> {
+    return { USDT: this.balance, USDC: this.balance };
   }
 
   async receipt(hash: Hex): Promise<RefundReceipt> {

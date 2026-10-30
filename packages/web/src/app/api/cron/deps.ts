@@ -1,10 +1,10 @@
-// What the cron routes need from outside: the store and the blob store, buy to ask the chain about a payment, and the
-// refunds' adapter to ask it about a refund (and to refund an order whose run was lost).
+// What the cron routes need from outside: the store and the blob store, buy to ask the chain about a payment, the
+// refunds' adapter to ask it about a refund (and to refund an order whose run was lost), and where the alerts go.
 // The service builds them from its settings; a test hands the routes its doubles instead.
 import { getAdapters } from '../../../adapters';
-import type { BlobPort, BuyPort, OrderStore, RefundPort } from '../../../ports';
+import type { AlertPort, BlobPort, BuyPort, OrderStore, RefundPort } from '../../../ports';
 
-export type CronDeps = { store: OrderStore; blob: BlobPort; buy: BuyPort; refunds: RefundPort };
+export type CronDeps = { store: OrderStore; blob: BlobPort; buy: BuyPort; refunds: RefundPort; alerts: AlertPort };
 
 let given: CronDeps | undefined;
 let built: Promise<CronDeps> | undefined;
@@ -16,6 +16,6 @@ export function setCronDeps(deps: CronDeps | undefined): void {
 
 export async function cronDeps(): Promise<CronDeps> {
   if (given !== undefined) return given;
-  built ??= getAdapters().then(({ store, blob, buy, refunds }) => ({ store, blob, buy, refunds }));
+  built ??= getAdapters().then(({ store, blob, buy, refunds, alerts }) => ({ store, blob, buy, refunds, alerts }));
   return built;
 }

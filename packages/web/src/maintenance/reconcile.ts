@@ -11,9 +11,12 @@
 // later finds that one and sends the same bytes, and the order is paid back once. Every other refund it only looks up.
 //
 // Each pass takes the oldest orders first, a bounded number of them, and the refunds' passes go before the payments'.
+// Once a day, the pass at 12:03 UTC also sends the operator a summary of what is open and what the wallets hold.
 import { markPaidAndStart, startRun, type RunStatus } from '../payments/orders';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
-import { SETTLEMENT_GRACE_SECONDS, type BuyPort, type Order, type OrderCursor, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
+import { VM_MAX_ATOMIC } from '../payments/vm-payment';
+import { SETTLEMENT_GRACE_SECONDS, type AlertPort, type BuyPort, type Order, type OrderCursor, type OrderStore, type RefundPort, type RefundStatus } from '../ports';
+import { dailySummaryAlert, refundFailedAlert, runLostAlert } from './alerts';
 
 const MINUTE_MS = 60_000;
 /** How old an order has to be before this looks at it: the request that made it has had time to finish. */
@@ -45,6 +48,13 @@ export const OVERDUE_RUNS_SCANNED_PER_PASS = 100;
 export const REFUND_FAILURES_PER_PASS = 50;
 export const AWAITING_SETTLEMENT_PER_PASS = 25;
 export const PAID_WITHOUT_RUN_PER_PASS = 25;
+
+/**
+ * The hour (UTC) whose first pass sends the daily summary: the clock's pass at 12:03, which is 09:03 in Argentina, where
+ * the service is run from. Only that pass is inside the hour's first 10 minutes; Vercel's daily backstop runs at 03:08.
+ */
+export const SUMMARY_HOUR_UTC = 12;
+const isSummaryPass = (now: Date): boolean => now.getUTCHours() === SUMMARY_HOUR_UTC && now.getUTCMinutes() < 10;
 
 /**
  * How long after its payment a run that says it is `running` still holds its order's refund back. Far past every wait of
@@ -79,15 +89,20 @@ export type ReconcileDeps = {
     | 'refundsSince'
     | 'refundsByNonce'
   >;
-  buy: Pick<BuyPort, 'authorizationSettled'>;
-  /** To read the chain about a refund, and to sign and send that of an order whose run was lost. */
+  /** To read the chain about a payment, and what the spend wallet holds for the summary. */
+  buy: Pick<BuyPort, 'authorizationSettled' | 'spendBalance'>;
+  /** To read the chain about a refund, to sign and send that of an order whose run was lost, and the wallet's balances. */
   refunds: RefundPort;
   /** The wallet the payments go to (PAYTO_ADDRESS): a settlement counts only if it paid this one. */
   payTo: string;
   /** REFUND_DAILY_CAP_USD: what may be refunded in a UTC day, every order together. */
   refundDailyCapUsd: number;
+  /** What one refund at the full price may take from the refunds' wallet, its gas included: the summary warns below it. */
+  refundAtMostAtomic: bigint;
   /** What the workflow runtime says of a run (`runStatus` in payments/orders). */
   runStatus: (runId: string) => Promise<RunStatus>;
+  /** To the operator's phone: an order this hands to a person, and one it refunds as lost. */
+  alerts: AlertPort;
 };
 
 /** The refunds that may still have landed: sent, or about to be. */
@@ -131,16 +146,20 @@ async function landedLate(orderId: string, deps: Pick<ReconcileDeps, 'store' | '
 /**
  * An order its run left `refunding`: its refund is looked up by its hash, and the order moved where that says. Mined, it
  * is `refunded` (confirmRefund moves it); reverted, `refund_failed` (confirmRefund too); not mined, or proven dead, it is
- * handed to a person as `refund_failed`, where the pass below keeps looking it up and logging it.
+ * handed to a person as `refund_failed`, where the pass below keeps looking it up and logging it. Handed to a person, it
+ * rings an alert, once: the order is no longer `refunding`, so no pass after this one takes it here.
  */
-async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' | 'refunds'>): Promise<void> {
-  const { store } = deps;
+async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' | 'refunds' | 'alerts'>): Promise<void> {
+  const { store, alerts } = deps;
   await attempt(orderId, async () => {
     const answer = await confirmRefund(orderId, deps);
     if (answer === 'confirmed') {
       console.error('[refund_landed_late]', orderId, (await store.getRefund(orderId))?.txHash ?? null);
+    } else if (answer === 'reverted') {
+      await alerts.send(refundFailedAlert(orderId, 'refund-reverted'));
     } else if (answer === 'pending' || answer === 'dead') {
-      await store.transition(orderId, 'refund_failed', { failureReason: answer === 'dead' ? 'refund-dead' : 'refund-unconfirmed' });
+      const why = answer === 'dead' ? 'refund-dead' : 'refund-unconfirmed';
+      if (await store.transition(orderId, 'refund_failed', { failureReason: why })) await alerts.send(refundFailedAlert(orderId, why));
     }
   });
 }
@@ -162,7 +181,7 @@ async function settleStalled(orderId: string, deps: Pick<ReconcileDeps, 'store' 
  * logged): the order was dealt with for this pass.
  */
 async function refundLostRun(order: Order, deps: ReconcileDeps, now: Date): Promise<'deferred' | 'refunded' | 'tried'> {
-  const { store, refunds, refundDailyCapUsd, runStatus } = deps;
+  const { store, refunds, refundDailyCapUsd, runStatus, alerts } = deps;
   let outcome: 'deferred' | 'refunded' | 'tried' = 'tried';
   await attempt(order.id, async () => {
     const run = order.runId === null ? 'missing' : await runStatus(order.runId);
@@ -177,9 +196,14 @@ async function refundLostRun(order: Order, deps: ReconcileDeps, now: Date): Prom
     // Its run moved it on meanwhile (delivered it, or refunded it): nothing of it is this pass's.
     if ('failed' in prepared && prepared.failed === 'not-refundable') return;
     outcome = 'refunded';
-    if ('failed' in prepared) return;
+    // The money is owed: that alert rings, and the lost run's own is not sent.
+    if ('failed' in prepared) {
+      await alerts.send(refundFailedAlert(order.id, prepared.failed));
+      return;
+    }
     await store.setStep(order.id, 'refund', 'running');
     await broadcastRefund(order.id, { store, refunds });
+    await alerts.send(runLostAlert(order.id, reason, run));
   });
   return outcome;
 }
@@ -187,10 +211,11 @@ async function refundLostRun(order: Order, deps: ReconcileDeps, now: Date): Prom
 /**
  * The pass over the paid orders whose run should be over, oldest payment first, page after page: an order whose run is
  * still at work is passed over without using up the pass, until OVERDUE_RUNS_PER_PASS orders were dealt with, the list
- * ends, or OVERDUE_RUNS_SCANNED_PER_PASS orders were looked at.
+ * ends, or OVERDUE_RUNS_SCANNED_PER_PASS orders were looked at. It says how many it passed over.
  */
-async function refundLostRuns(deps: ReconcileDeps, now: Date, paidBefore: Date, result: ReconcileResult): Promise<void> {
+async function refundLostRuns(deps: ReconcileDeps, now: Date, paidBefore: Date, result: ReconcileResult): Promise<number> {
   let dealt = 0;
+  let deferred = 0;
   let scanned = 0;
   let after: OrderCursor | undefined;
   while (dealt < OVERDUE_RUNS_PER_PASS && scanned < OVERDUE_RUNS_SCANNED_PER_PASS) {
@@ -200,13 +225,30 @@ async function refundLostRuns(deps: ReconcileDeps, now: Date, paidBefore: Date, 
       scanned += 1;
       const outcome = await refundLostRun(order, deps, now);
       if (outcome === 'refunded') result.runLost.push(order.id);
-      if (outcome !== 'deferred') dealt += 1;
-      if (dealt === OVERDUE_RUNS_PER_PASS) return;
+      if (outcome === 'deferred') deferred += 1;
+      else dealt += 1;
+      if (dealt === OVERDUE_RUNS_PER_PASS) return deferred;
     }
     const last = page.at(-1);
-    if (page.length < asked || last === undefined || last.paidAt === null) return;
+    if (page.length < asked || last === undefined || last.paidAt === null) return deferred;
     after = { paidAt: last.paidAt, id: last.id };
   }
+  return deferred;
+}
+
+/** The daily summary: what this pass found open, and what the wallets hold now. A wallet that cannot be read says so. */
+async function sendSummary(deps: ReconcileDeps, result: ReconcileResult, runsStillRunning: number): Promise<void> {
+  const [refundWallet, spendWallet] = await Promise.all([deps.refunds.balances().catch(() => null), deps.buy.spendBalance().catch(() => null)]);
+  await deps.alerts.send(
+    dailySummaryAlert({
+      refundsNotPaid: result.refundFailed.length,
+      runsStillRunning,
+      refundWallet,
+      spendWallet,
+      refundAtMost: deps.refundAtMostAtomic,
+      machineAtMost: VM_MAX_ATOMIC,
+    }),
+  );
 }
 
 export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
@@ -218,18 +260,18 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
 
   // The refunds first: an order waiting for its money back comes before any other.
   for (const order of await store.stalledRefunds(new Date(now.getTime() - REFUND_WINDOW_MS), STALLED_REFUNDS_PER_PASS)) {
-    await settleStalled(order.id, { store, refunds });
+    await settleStalled(order.id, deps);
   }
   // Nothing was signed, so nothing is looked up nor sent: the order goes to a person. A refund its run signs and sends
   // after all is still found, by its hash, in the pass for refund failures.
   for (const order of await store.unsignedRefunds(runsOverBefore, UNSIGNED_REFUNDS_PER_PASS)) {
     await attempt(order.id, async () => {
-      await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unsigned' });
+      if (await store.transition(order.id, 'refund_failed', { failureReason: 'refund-unsigned' })) await deps.alerts.send(refundFailedAlert(order.id, 'refund-unsigned'));
     });
   }
   // After the unsigned refunds: an order whose refund this pass moved to `refunding` and then could not sign (the chain
   // could not be read) is handed to a person by the next pass, as any unsigned refund is, and not by this one.
-  await refundLostRuns(deps, now, runsOverBefore, result);
+  const runsStillRunning = await refundLostRuns(deps, now, runsOverBefore, result);
   // After every pass that may hand an order to a person, so that it is in this pass's log.
   for (const order of await store.refundFailures(REFUND_FAILURES_PER_PASS)) {
     if (await landedLate(order.id, { store, refunds })) continue;
@@ -273,5 +315,7 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
       result.started.push(order.id);
     });
   }
+
+  if (isSummaryPass(now)) await sendSummary(deps, result, runsStillRunning);
   return result;
 }

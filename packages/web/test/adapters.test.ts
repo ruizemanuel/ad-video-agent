@@ -151,12 +151,13 @@ describe('getAdapters', () => {
     for (const [name, value] of Object.entries(common)) vi.stubEnv(name, value);
     const { getAdapters } = await import('../src/adapters');
     const { cronDeps } = await import('../src/app/api/cron/deps');
-    const { store, blob, buy, refunds } = await getAdapters();
+    const { store, blob, buy, refunds, alerts } = await getAdapters();
     const deps = await cronDeps();
     expect(deps.store).toBe(store);
     expect(deps.blob).toBe(blob);
     expect(deps.buy).toBe(buy);
     expect(deps.refunds).toBe(refunds);
+    expect(deps.alerts).toBe(alerts);
     // It answers, where the cron used to get a buy that always failed.
     vi.stubEnv('FAKE_SCENARIO', JSON.stringify({ settled: 'settled' }));
     const authorization = { from: order.payer, nonce: order.nonce, validAfter: '0', validBefore: '1790000000' };

@@ -11,6 +11,7 @@ import { decodePaymentRequiredHeader, decodePaymentSignatureHeader } from '@x402
 import { withX402 } from '@x402/next';
 import { NextResponse, type NextRequest } from 'next/server';
 import { env, type Env } from '../../../env';
+import { settledWithoutOrderAlert } from '../../../maintenance/alerts';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
 import { hasVmCapacity, secondsToNextUtcDay } from '../../../payments/vm-payment';
 import {
@@ -149,10 +150,14 @@ const createOrder =
     return NextResponse.json(link, { status: 202, headers: { ...NO_STORE, 'content-location': link.statusUrl } });
   };
 
-/** Runs after each settlement that went through. A settled payment with no order is money with nowhere to go: say so. */
+/**
+ * Runs after each settlement that went through. A settled payment with no order is money with nowhere to go: say so, in
+ * the log and on the operator's phone (the log is kept an hour).
+ */
 async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promise<void> {
   if ((await markPaidAndStart(payment, { store: deps.store })) === 'unknown') {
     console.error('[settled_without_order]', payment.asset, payment.payer, payment.nonce);
+    await deps.alerts.send(settledWithoutOrderAlert(payment));
   }
 }
 

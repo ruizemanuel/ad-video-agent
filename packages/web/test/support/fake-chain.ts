@@ -61,6 +61,8 @@ export class FakeChain {
   receiptsDown = false;
   /** What `balanceOf` answers for every token and owner. */
   balance = 1_000_000_000n;
+  /** Every `balanceOf` asked: the token, and whose balance. */
+  readonly balanceQueries: { token: Address; owner: Address }[] = [];
   /** The JSON-RPC methods asked, in order. */
   readonly methods: string[] = [];
 
@@ -108,7 +110,10 @@ export class FakeChain {
 
   private call({ to, data }: { to: Address; data: Hex }): Hex {
     const call = decodeFunctionData({ abi, data });
-    if (call.functionName === 'balanceOf') return encodeFunctionResult({ abi, functionName: 'balanceOf', result: this.balance });
+    if (call.functionName === 'balanceOf') {
+      this.balanceQueries.push({ token: to, owner: call.args[0] });
+      return encodeFunctionResult({ abi, functionName: 'balanceOf', result: this.balance });
+    }
     const [authorizer, nonce] = call.args;
     // A token marks a nonce spent when an authorization with it transfers, and when one is cancelled.
     const used = authorizationUsedLog(to, authorizer, nonce).topics;

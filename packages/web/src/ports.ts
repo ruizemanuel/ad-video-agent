@@ -21,6 +21,7 @@ import type {
 import type { Hex } from 'viem';
 import { FatalError } from 'workflow';
 import type { z } from 'zod';
+import type { TokenSymbol } from './payments/tokens';
 
 export type OrderRequest = z.infer<typeof OrderRequestSchema>;
 
@@ -454,6 +455,9 @@ export interface BuyPort {
     to: string;
     value: bigint;
   }): Promise<AuthorizationSettlement>;
+
+  /** What the spend wallet holds of USDT, the token buy is paid in, in atomic units. It only reads. */
+  spendBalance(): Promise<bigint>;
 }
 
 /** What the model says about a site: `usd` is what the call cost. */
@@ -570,6 +574,8 @@ export interface RefundPort {
    * receipt, a newer block, or a block since replaced, is false. It only reads.
    */
   minedSafely(hash: Hex): Promise<boolean>;
+  /** What the refunds' wallet holds of each token a refund may be paid in, in atomic units. It only reads. */
+  balances(): Promise<Record<TokenSymbol, bigint>>;
 }
 
 /** The refunds' wallet holds less of the token than a refund needs (`needed`: the amount, and its gas when known). */

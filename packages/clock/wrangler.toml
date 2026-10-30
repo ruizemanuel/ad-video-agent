@@ -6,7 +6,8 @@
 #
 # A run's log line holds only how many orders each list of the route's answer has, never their ids (an order id lets
 # whoever has it read the order's status). A green run means the route answered 2xx with its summary, not that the pass
-# was clean: what went wrong with one order is in Vercel's logs, as [reconcile_error], [order_stuck] or [refund_failed].
+# was clean: what went wrong with one order is in Vercel's logs, as [reconcile_error], [order_stuck] or [refund_failed],
+# and what needs a person also goes to the operator's phone as an alert (README, "Alerts").
 #
 # Secret: CRON_SECRET, the same value Vercel has, set with `wrangler secret put CRON_SECRET` (never in this file).
 # Deploy from the repository's root: pnpm dlx wrangler@4.151.2 deploy --config packages/clock/wrangler.toml

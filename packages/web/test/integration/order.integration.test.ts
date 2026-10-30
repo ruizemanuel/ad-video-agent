@@ -4,8 +4,10 @@ import { clickWav } from '@app/core/testing';
 import { waitForHook, waitForSleep } from '@workflow/vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRun, start } from 'workflow/api';
+import { FakeAlerts } from '../../src/adapters/fake/alerts';
 import { FakeLlm } from '../../src/adapters/fake/llm';
 import { FakeMusic } from '../../src/adapters/fake/music';
+import { refundFailedAlert } from '../../src/maintenance/alerts';
 import { renderPaths } from '../../src/vm/tasks';
 import { vmTokenHash } from '../../src/vm/token';
 import { orderWorkflow } from '../../src/workflows/order';
@@ -49,11 +51,12 @@ afterAll(async () => {
   await removeFakeService(dir);
 });
 
-// Each test gets models and music of its own; buy and the refunds' wallet are one for the file, as on the chain.
+// Each test gets models, music and alerts of its own; buy and the refunds' wallet are one for the file, as on the chain.
 beforeEach(async () => {
   fakes.llm = new FakeLlm();
   fakes.llm.edl = edlShop;
   fakes.music = new FakeMusic();
+  fakes.alerts = new FakeAlerts();
   id = await paidOrder(fakes.store);
 });
 
@@ -402,7 +405,43 @@ describe('an order that is refunded', () => {
     expect(order).toMatchObject({ status: 'refunded', failureReason: reason, deliverables: [] });
     expect(order?.steps.refund).toBe('done');
     expect((await fakes.store.getRefund(orderId))?.status).toBe('confirmed');
+    // A refund that went through needs no one: no alert.
+    expect(fakes.alerts.sent).toEqual([]);
   };
+
+  it('leaves the order refund_failed, and rings an alert, when its refund cannot be paid', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    scenario({ buy: 'rejected' });
+    // Today's refunds have reached REFUND_DAILY_CAP_USD (10, the default): the refund of another order fills it. (Not a
+    // refunds' wallet short of the token: the double's InsufficientBalance is another copy of the class than the one the
+    // steps' bundle checks for, so the step would only be retried.)
+    const other = await paidOrder(fakes.store);
+    await fakes.store.transition(other, 'running');
+    await fakes.store.transition(other, 'refunding');
+    const filler = `0x${'f1'.repeat(32)}`;
+    await fakes.store.insertRefund({ orderId: other, to: PAYER, asset: USDT, amount: 10_000_000n, status: 'prepared', reason: 'render', rawTx: '0x00', txHash: filler, nonce: null, signer: null });
+    try {
+      expect(await (await start(orderWorkflow, [id])).returnValue).toEqual({ status: 'refund_failed', reason: 'vm-unavailable' });
+    } finally {
+      // Out of the day's count, for the tests that follow.
+      await fakes.store.updateRefund(other, filler, { status: 'failed' });
+    }
+    expect(await fakes.store.getOrder(id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-daily-cap' });
+    expect(fakes.alerts.sent).toEqual([refundFailedAlert(id, 'refund-daily-cap')]);
+  });
+
+  it('leaves the order refund_failed, and rings an alert, when its refund is mined and reverted', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    scenario({ buy: 'rejected' });
+    fakes.refunds.receiptAnswer = 'reverted';
+    try {
+      expect(await (await start(orderWorkflow, [id])).returnValue).toEqual({ status: 'refund_failed', reason: 'vm-unavailable' });
+    } finally {
+      fakes.refunds.receiptAnswer = undefined;
+    }
+    expect(await fakes.store.getOrder(id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-reverted' });
+    expect(fakes.alerts.sent).toEqual([refundFailedAlert(id, 'refund-reverted')]);
+  });
 
   it('refunds when the VM payment was uncertain and did not settle, without any VM task', async () => {
     scenario({ buy: 'ambiguous', settled: 'unsettled' });

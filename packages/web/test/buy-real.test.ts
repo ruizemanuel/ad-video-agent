@@ -1,7 +1,7 @@
 // The buy adapter's chain reads, its VM poll and the backstops around a payment, against a chain and a gateway that
 // never leave the test. The usual ways of paying are in vm-payment.test.ts, through payForVm.
 import { inspect } from 'node:util';
-import { generatePrivateKey } from 'viem/accounts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Address, Hex } from 'viem';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CeloBuy } from '../src/adapters/real/buy';
@@ -249,6 +249,17 @@ describe('CeloBuy.authorizationSettled', () => {
       value: VALUE,
     });
     expect(settled).toBe('settled');
+  });
+
+  it('reads what the spend wallet holds of USDT, the token buy is paid in, and only reads', async () => {
+    const key = generatePrivateKey();
+    const spender = new CeloBuy({ spendKey: key, rpcUrl: RPC_URL, fetch: async () => json(404, {}), transport: chain.transport });
+    chain.balance = 195_868n;
+    expect(await spender.spendBalance()).toBe(195_868n);
+    expect(chain.balanceQueries.map(({ token, owner }) => [token.toLowerCase(), owner.toLowerCase()])).toEqual([
+      [USDT.toLowerCase(), privateKeyToAccount(key).address.toLowerCase()],
+    ]);
+    expect(chain.methods.every((method) => ['eth_call', 'eth_chainId'].includes(method))).toBe(true);
   });
 
   it('reads the chain through the transport it is given', async () => {

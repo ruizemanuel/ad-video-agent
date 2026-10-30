@@ -8,10 +8,12 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { getAdapters } from '../src/adapters';
+import { FakeAlerts } from '../src/adapters/fake/alerts';
 import { FAKE_SETTLE_TX, FakeFacilitator } from '../src/adapters/fake/facilitator';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
+import { settledWithoutOrderAlert } from '../src/maintenance/alerts';
 import { POST } from '../src/app/v1/videos/route';
 import { ModelCallFailed, ModelOutputInvalid, type NewOrder, type OrderStore } from '../src/ports';
 import { PROMO_PRICE_ATOMIC, TOKENS } from '../src/payments/x402';
@@ -51,11 +53,12 @@ afterAll(async () => {
 const { store } = await getAdapters();
 const llm = new FakeLlm();
 const facilitator = new FakeFacilitator();
+const alerts = new FakeAlerts();
 const fetchPage = vi.fn(async (url: string): Promise<FetchedPage> => {
   const html = url.includes('login') ? loginHtml : url.includes('rich') ? richHtml : thinHtml;
   return { finalUrl: url, status: 200, html };
 });
-const deps = { store, llm, fetchPage, facilitator };
+const deps = { store, llm, fetchPage, facilitator, alerts };
 setVideosDeps(deps);
 
 // Each request reaches the route the way Next hands it over in production: see requestFromNext.
@@ -393,7 +396,7 @@ describe('POST /v1/videos with a payment', () => {
     });
   });
 
-  it('logs a settled payment that has no order, without starting anything', async () => {
+  it('logs a settled payment that has no order, and rings an alert, without starting anything', async () => {
     // A store that cannot find the order the request has just made: the settlement then belongs to no order.
     const forgetful = new Proxy(store, {
       get(target, name) {
@@ -410,6 +413,7 @@ describe('POST /v1/videos with a payment', () => {
       const { from, nonce } = (decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']).payload as { authorization: { from: string; nonce: string } })
         .authorization;
       expect(logged).toHaveBeenCalledWith('[settled_without_order]', TOKENS.USDT.address, from, nonce);
+      expect(alerts.sent.at(-1)).toEqual(settledWithoutOrderAlert({ asset: TOKENS.USDT.address, payer: from, nonce, txHash: FAKE_SETTLE_TX }));
       expect(start).not.toHaveBeenCalled();
     } finally {
       setVideosDeps(deps);
