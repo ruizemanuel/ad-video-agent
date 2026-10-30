@@ -39,10 +39,10 @@ describe('NtfyAlerts.send', () => {
     expect(new Headers(asked[0]!.init.headers).get('priority')).toBe('high');
   });
 
-  it('sends an alert of default priority as one', async () => {
+  it('sends an alert of low priority as one: ntfy shows it in the list, without a sound', async () => {
     const { asked, fetch } = recording(ok);
-    await new NtfyAlerts({ url: TOPIC, fetch }).send({ ...urgent, priority: 'default' });
-    expect(new Headers(asked[0]!.init.headers).get('priority')).toBe('default');
+    await new NtfyAlerts({ url: TOPIC, fetch }).send({ ...urgent, priority: 'low' });
+    expect(new Headers(asked[0]!.init.headers).get('priority')).toBe('low');
   });
 
   it('logs, and does not throw, when ntfy answers with an error', async () => {

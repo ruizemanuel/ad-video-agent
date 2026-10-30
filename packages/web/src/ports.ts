@@ -650,9 +650,10 @@ export class ModelCallFailed extends Error {
 /**
  * An alert for whoever runs the service, on their phone: something that needs a person (money owed, money with no order)
  * or that they should know of (a run lost). It never holds a whole order id (one lets whoever has it read the order) nor
- * anything secret. `high` alerts ring; `default` ones only show.
+ * anything secret. `high` alerts ring (sound, vibration and a pop-up); `low` ones only wait in the notification list,
+ * silently (ntfy's `default` would play a sound).
  */
-export type Alert = { title: string; message: string; priority: 'high' | 'default' };
+export type Alert = { title: string; message: string; priority: 'high' | 'low' };
 
 /** Where the alerts go. `send` never throws and gives up quickly: an alert that could not go out is logged, nothing more. */
 export interface AlertPort {

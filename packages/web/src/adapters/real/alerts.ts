@@ -36,6 +36,8 @@ export class NtfyAlerts implements AlertPort {
         signal: AbortSignal.timeout(this.#timeoutMs),
       });
       if (!res.ok) console.error('[alert_failed]', title, res.status);
+      // Its answer is not read: the connection is let go.
+      await res.body?.cancel().catch(() => undefined);
     } catch (error) {
       // Only the kind of failure: a fetch error's message may hold the URL.
       console.error('[alert_failed]', title, error instanceof Error ? error.name : 'error');

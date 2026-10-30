@@ -44,7 +44,7 @@ export function runLostAlert(orderId: string, reason: 'run-lost' | 'run-not-star
     reason === 'run-not-started'
       ? `${shortOrderId(orderId)} never started: every start failed for two hours.`
       : `${shortOrderId(orderId)}'s run was ${run} two hours or more after its payment.`;
-  return { title: 'Run lost, refunded', message: `${what} Its refund is on its way.`, priority: 'default' };
+  return { title: 'Run lost, refunded', message: `${what} Its refund is on its way.`, priority: 'low' };
 }
 
 /** What the daily summary says: what is open, and what the wallets hold (null: could not be read). */
@@ -68,7 +68,7 @@ const tokens = (atomic: bigint): string => formatUnits(atomic, 6);
 
 /**
  * The summary the reconciliation sends once a day, even when nothing is open: a day without it says the clock, the route
- * or the alerts are down. It rings when something is open, or a wallet cannot pay for one more order.
+ * or the alerts are down. It rings when something is open, or a wallet cannot pay for one more order or cannot be read.
  */
 export function dailySummaryAlert(summary: DailySummary): Alert {
   const { refundWallet, spendWallet, refundAtMost, machineAtMost } = summary;
@@ -84,6 +84,6 @@ export function dailySummaryAlert(summary: DailySummary): Alert {
     ),
     ...(spendWallet !== null && spendWallet < machineAtMost ? [`The spend wallet cannot pay one machine: one costs up to ${tokens(machineAtMost)}.`] : []),
   ];
-  const open = summary.refundsNotPaid > 0 || summary.runsStillRunning > 0 || warnings.length > 0;
-  return { title: 'Daily summary', message: [...lines, ...warnings].join('\n'), priority: open ? 'high' : 'default' };
+  const open = summary.refundsNotPaid > 0 || summary.runsStillRunning > 0 || warnings.length > 0 || refundWallet === null || spendWallet === null;
+  return { title: 'Daily summary', message: [...lines, ...warnings].join('\n'), priority: open ? 'high' : 'low' };
 }

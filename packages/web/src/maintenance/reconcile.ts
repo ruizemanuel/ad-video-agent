@@ -3,15 +3,16 @@
 // writes), an order a run left refunding with no refund signed (handed to a person), a paid order whose run was lost
 // (refunded here), a settlement that landed on chain but was never reported (the facilitator timed out, or the request
 // died), an authorization that expired without settling, and a paid order whose run never started (started, or refunded
-// once two hours have passed since its payment). It also keeps the
-// refunds that could not be paid in the log, every run, until someone pays them by hand.
+// once two hours have passed since its payment). It also keeps the refunds that could not be paid in the log, every run,
+// until someone pays them by hand.
 //
 // The only refund it signs and sends is that of an order whose run was lost, through the same functions the flow uses
 // (prepareRefund, then broadcastRefund): an order has one refund at most that can still be mined, so a run that wakes
 // later finds that one and sends the same bytes, and the order is paid back once. Every other refund it only looks up.
 //
 // Each pass takes the oldest orders first, a bounded number of them, and the refunds' passes go before the payments'.
-// Once a day, the pass at 12:03 UTC also sends the operator a summary of what is open and what the wallets hold.
+// Once a day, the pass at 12:03 UTC also sends the operator a summary of what is open and what the wallets hold. The
+// alerts go out as the passes go, and are waited for once, at the end: an alert that hangs holds up no order.
 import { markPaidAndStart, startRun, type RunStatus } from '../payments/orders';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
 import { VM_MAX_ATOMIC } from '../payments/vm-payment';
@@ -29,7 +30,8 @@ export const REFUND_WINDOW_MS = 30 * MINUTE_MS;
 /**
  * How long after its payment a run may still be at work on its order. Longer than any run: VM, capture, script, music,
  * reviews, render and the refund's own watch together take well under an hour. After it, an order `refunding` with no
- * refund signed is handed to a person, and one still `paid` (with a run) or `running` is refunded as its run's loss.
+ * refund signed is handed to a person, one still `paid` with a run, or `running`, is refunded as its run's loss, and one
+ * still `paid` with no run is refunded as one whose run never started.
  */
 export const UNSIGNED_REFUND_AFTER_MS = 2 * 60 * MINUTE_MS;
 
@@ -251,7 +253,11 @@ async function sendSummary(deps: ReconcileDeps, result: ReconcileResult, runsSti
   );
 }
 
-export async function reconcile(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
+export async function reconcile(given: ReconcileDeps, now: Date): Promise<ReconcileResult> {
+  // Each alert is sent at once and not waited for here (each gives up within seconds, and never throws): all of them are
+  // waited for at the end of the pass, so none holds up the orders after it.
+  const sending: Promise<void>[] = [];
+  const deps: ReconcileDeps = { ...given, alerts: { send: async (alert) => void sending.push(given.alerts.send(alert)) } };
   const { store, buy, refunds, payTo } = deps;
   const result: ReconcileResult = { started: [], unpaid: [], refundFailed: [], runLost: [] };
   const olderThan = new Date(now.getTime() - GRACE_MS);
@@ -308,7 +314,8 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
   }
 
   // Measured from the payment, so a run that the paying request is still starting is not started twice. Two hours after
-  // the payment, the pass for lost runs (above) has refunded the order instead: it is no longer `paid`, and not started.
+  // the payment, the pass for lost runs (above) refunds the order instead, and it is no longer `paid`; one past that pass's
+  // limit may still be started here, and its run then takes it as any run does.
   for (const order of await store.paidWithoutRun(olderThan, PAID_WITHOUT_RUN_PER_PASS)) {
     await attempt(order.id, async () => {
       await startRun(order.id, store);
@@ -317,5 +324,6 @@ export async function reconcile(deps: ReconcileDeps, now: Date): Promise<Reconci
   }
 
   if (isSummaryPass(now)) await sendSummary(deps, result, runsStillRunning);
+  await Promise.all(sending);
   return result;
 }

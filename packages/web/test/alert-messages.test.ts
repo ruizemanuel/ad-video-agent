@@ -49,7 +49,7 @@ describe('settledWithoutOrderAlert', () => {
 describe('runLostAlert', () => {
   it('shows, without ringing, an order refunded because its run was lost, with what the runtime said of the run', () => {
     const alert = runLostAlert(ORDER, 'run-lost', 'failed');
-    expect(alert).toMatchObject({ title: 'Run lost, refunded', priority: 'default' });
+    expect(alert).toMatchObject({ title: 'Run lost, refunded', priority: 'low' });
     expect(alert.message).toContain('ord_js2sr2…');
     expect(alert.message).toContain('failed');
     expect(alert.message).not.toContain(ORDER);

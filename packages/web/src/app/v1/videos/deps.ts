@@ -1,7 +1,7 @@
 // What POST /v1/videos needs from outside: the store, what the pre-check uses (a page fetcher and the site classifier),
-// the x402 facilitator, and where the alerts go. The service builds them from its settings; a test hands the route its doubles instead. On
-// the fake adapters (AD_AGENT_ADAPTERS=fake, never in production) the page fetcher and the facilitator are doubles too,
-// so the app runs locally with no site fetched and no payment sent to Celo's facilitator.
+// the x402 facilitator, and where the alerts go. The service builds them from its settings; a test hands the route its
+// doubles instead. On the fake adapters (AD_AGENT_ADAPTERS=fake, never in production) the page fetcher and the
+// facilitator are doubles too, so the app runs locally with no site fetched and no payment sent to Celo's facilitator.
 import type { FacilitatorClient } from '@x402/core/server';
 import { getAdapters } from '../../../adapters';
 import { FakeFacilitator } from '../../../adapters/fake/facilitator';

@@ -30,7 +30,7 @@ import {
 import { runStatus, type RunStatus } from '../src/payments/orders';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/x402';
-import type { Order } from '../src/ports';
+import type { AlertPort, Order } from '../src/ports';
 import { orderWorkflow } from '../src/workflows/order';
 import { config } from '../vercel';
 
@@ -397,7 +397,7 @@ describe('reconcile: the daily summary', () => {
     await reconcile(deps(), SUMMARY_PASS);
     expect(summaries()).toHaveLength(1);
     const [summary] = summaries();
-    expect(summary).toMatchObject({ priority: 'default' });
+    expect(summary).toMatchObject({ priority: 'low' });
     expect(summary!.message).toContain('Refunds not paid: 0');
     expect(summary!.message).toContain('Runs past 2 h that say they are running: 0');
     expect(summary!.message).not.toContain('cannot pay');
@@ -444,7 +444,7 @@ describe('reconcile: the daily summary', () => {
     expect(summary!.message).toContain('The spend wallet cannot pay one machine');
   });
 
-  it('still sends it when a wallet cannot be read, and says so', async () => {
+  it('still sends it when a wallet cannot be read, says so, and rings: the wallet may be short', async () => {
     vi.spyOn(refunds, 'balances').mockRejectedValue(new Error('the chain could not be read'));
     vi.spyOn(buy, 'spendBalance').mockRejectedValue(new Error('the chain could not be read'));
 
@@ -452,6 +452,7 @@ describe('reconcile: the daily summary', () => {
     const [summary] = summaries();
     expect(summary!.message).toContain('Refund wallet: could not be read');
     expect(summary!.message).toContain('Spend wallet: could not be read');
+    expect(summary).toMatchObject({ priority: 'high' });
   });
 });
 
@@ -859,6 +860,24 @@ describe('reconcile: refund failures', () => {
     await store.transition(order.id, 'refunding', { failureReason: 'render' });
     return order;
   }
+
+  it('waits for its alerts only at the end, all at once: an alert that hangs holds up no other order of the pass', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await leftUnsigned();
+    // An order whose settlement landed: the pass for settlements, after the refunds' passes, starts its run.
+    const settling = await awaiting(unixSeconds(after(3 * 60 * MINUTE)));
+    buy.consumed(settling.nonce, { to: PAYTO, value: settling.amount });
+    // ntfy does not answer (until the test lets it).
+    let answer = () => {};
+    const hanging: AlertPort = { send: () => new Promise<void>((resolve) => (answer = resolve)) };
+
+    let over = false;
+    const pass = reconcile(deps(buy, { alerts: hanging }), after(2 * 60 * MINUTE + MINUTE)).then(() => (over = true));
+    await vi.waitFor(() => expect(start).toHaveBeenCalledWith(orderWorkflow, [settling.id]));
+    expect(over).toBe(false);
+    answer();
+    await pass;
+  });
 
   it('hands to a person, as refund_failed, an order left refunding with no refund signed two hours after it was paid', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
