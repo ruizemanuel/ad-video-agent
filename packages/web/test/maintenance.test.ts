@@ -146,6 +146,11 @@ const deps = (chain: FakeBuy = buy, over: Partial<ReconcileDeps> = {}): Reconcil
   ...over,
 });
 const statusOf = async (order: Order) => (await store.getOrder(order.id))!.status;
+/**
+ * The alerts about orders, without the daily summary: a pass whose moment (the real one, and what a test adds to it) falls
+ * between 12:00 and 12:10 UTC sends that one too.
+ */
+const orderAlerts = () => alerts.sent.filter((alert) => alert.title !== 'Daily summary');
 /** Orders made in the same millisecond have no fixed order between them. */
 const sorted = (ids: string[]): string[] => [...ids].sort();
 
@@ -483,7 +488,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(refunds.prepareCalls).toBe(1);
     expect(refunds.broadcasts).toHaveLength(1);
     expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, status, run);
-    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-lost', run)]);
+    expect(orderAlerts()).toEqual([runLostAlert(order.id, 'run-lost', run)]);
   });
 
   it('shows the alert of a lost run once: the passes after it find the order refunding', async () => {
@@ -493,7 +498,7 @@ describe('reconcile: paid orders whose run was lost', () => {
 
     await reconcile(deps(), after(2 * HOUR + MINUTE));
     await reconcile(deps(), after(2 * HOUR + 11 * MINUTE));
-    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-lost', 'failed')]);
+    expect(orderAlerts()).toEqual([runLostAlert(order.id, 'run-lost', 'failed')]);
   });
 
   it('refunds an order whose run the runtime does not know, or that has no run id', async () => {
@@ -522,7 +527,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(await store.getRefund(order.id)).toMatchObject({ status: 'broadcast', to: PAYER, amount: order.amount, reason: 'run-not-started' });
     expect(refunds.broadcasts).toHaveLength(1);
     expect(logged).toHaveBeenCalledWith('[order_stuck]', order.id, 'paid', 'missing');
-    expect(alerts.sent).toEqual([runLostAlert(order.id, 'run-not-started', 'missing')]);
+    expect(orderAlerts()).toEqual([runLostAlert(order.id, 'run-not-started', 'missing')]);
   });
 
   it('refunds an order whose run cannot be read: two hours after the payment, no run of an order is still at work', async () => {
@@ -546,7 +551,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     }
     expect(await statusOf(order)).toBe('running');
     expect(refunds.prepareCalls).toBe(0);
-    expect(alerts.sent).toEqual([]);
+    expect(orderAlerts()).toEqual([]);
   });
 
   it('refunds an order whose run is still pending: its first step never ran, and a run that starts later finds the order taken', async () => {
@@ -648,7 +653,7 @@ describe('reconcile: paid orders whose run was lost', () => {
     expect(refunds.broadcasts).toEqual([]);
     expect(logged).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
     // The money is owed: that alert rings, and the lost run's own is not sent.
-    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-daily-cap')]);
+    expect(orderAlerts()).toEqual([refundFailedAlert(order.id, 'refund-daily-cap')]);
   });
 
   it('hands to a person, in the next pass, a lost-run order whose refund could not be signed', async () => {
@@ -780,7 +785,7 @@ describe('reconcile: refund failures', () => {
     expect(await statusOf(order)).toBe('refund_failed');
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
     // It was handed to a person before: its alert went out then, not on every pass that logs it.
-    expect(alerts.sent).toEqual([]);
+    expect(orderAlerts()).toEqual([]);
   });
 
   it('does not look up a refund that already reverted', async () => {
@@ -833,7 +838,7 @@ describe('reconcile: refund failures', () => {
     expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unconfirmed' });
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, 'broadcast', txHash);
-    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-unconfirmed')]);
+    expect(orderAlerts()).toEqual([refundFailedAlert(order.id, 'refund-unconfirmed')]);
     expect(refunds.prepareCalls).toBe(1);
     expect(refunds.broadcasts).toHaveLength(1);
 
@@ -850,7 +855,7 @@ describe('reconcile: refund failures', () => {
 
     expect((await reconcile(deps(), after(31 * MINUTE))).refundFailed).toEqual([order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-reverted' });
-    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-reverted')]);
+    expect(orderAlerts()).toEqual([refundFailedAlert(order.id, 'refund-reverted')]);
   });
 
   /** An order moved to `refunding` whose refund was never signed: the chain could not be read, and the run died. */
@@ -868,15 +873,35 @@ describe('reconcile: refund failures', () => {
     const settling = await awaiting(unixSeconds(after(3 * 60 * MINUTE)));
     buy.consumed(settling.nonce, { to: PAYTO, value: settling.amount });
     // ntfy does not answer (until the test lets it).
-    let answer = () => {};
-    const hanging: AlertPort = { send: () => new Promise<void>((resolve) => (answer = resolve)) };
+    const answers: (() => void)[] = [];
+    const hanging: AlertPort = { send: () => new Promise<void>((resolve) => answers.push(resolve)) };
 
     let over = false;
     const pass = reconcile(deps(buy, { alerts: hanging }), after(2 * 60 * MINUTE + MINUTE)).then(() => (over = true));
     await vi.waitFor(() => expect(start).toHaveBeenCalledWith(orderWorkflow, [settling.id]));
     expect(over).toBe(false);
-    answer();
+    for (const answer of answers) answer();
     await pass;
+  });
+
+  it('waits for the alerts it sent even when a later pass fails, so that none is lost with the call', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await leftUnsigned();
+    vi.spyOn(store, 'ordersAwaitingSettlement').mockRejectedValue(new Error('the store did not answer'));
+    const answers: (() => void)[] = [];
+    const hanging: AlertPort = { send: () => new Promise<void>((resolve) => answers.push(resolve)) };
+
+    let failed: unknown;
+    let over = false;
+    const pass = reconcile(deps(buy, { alerts: hanging }), after(2 * 60 * MINUTE + MINUTE))
+      .catch((error: unknown) => (failed = error))
+      .then(() => (over = true));
+    await vi.waitFor(() => expect(answers.length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(over).toBe(false);
+    for (const answer of answers) answer();
+    await pass;
+    expect(failed).toBeInstanceOf(Error);
   });
 
   it('hands to a person, as refund_failed, an order left refunding with no refund signed two hours after it was paid', async () => {
@@ -886,10 +911,10 @@ describe('reconcile: refund failures', () => {
     expect((await reconcile(deps(), after(2 * 60 * MINUTE + MINUTE))).refundFailed).toEqual([order.id]);
     expect(await store.getOrder(order.id)).toMatchObject({ status: 'refund_failed', failureReason: 'refund-unsigned' });
     expect(spy).toHaveBeenCalledWith('[refund_failed]', order.id, null, null);
-    expect(alerts.sent).toEqual([refundFailedAlert(order.id, 'refund-unsigned')]);
+    expect(orderAlerts()).toEqual([refundFailedAlert(order.id, 'refund-unsigned')]);
     // The passes after it log it again, and send no other alert.
     await reconcile(deps(), after(2 * 60 * MINUTE + 11 * MINUTE));
-    expect(alerts.sent).toHaveLength(1);
+    expect(orderAlerts()).toHaveLength(1);
     // It signs and sends nothing.
     expect(refunds.prepareCalls).toBe(0);
     expect(refunds.broadcasts).toEqual([]);

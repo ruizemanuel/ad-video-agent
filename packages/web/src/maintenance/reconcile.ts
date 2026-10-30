@@ -254,10 +254,20 @@ async function sendSummary(deps: ReconcileDeps, result: ReconcileResult, runsSti
 }
 
 export async function reconcile(given: ReconcileDeps, now: Date): Promise<ReconcileResult> {
-  // Each alert is sent at once and not waited for here (each gives up within seconds, and never throws): all of them are
-  // waited for at the end of the pass, so none holds up the orders after it.
+  // Each alert is sent at once and not waited for in the passes (each gives up within seconds, and never throws): all of
+  // them are waited for at the end, so none holds up the orders after it. Even when a pass failed: each alert goes out
+  // once, so one sent before the failure must not be lost with the call.
   const sending: Promise<void>[] = [];
   const deps: ReconcileDeps = { ...given, alerts: { send: async (alert) => void sending.push(given.alerts.send(alert)) } };
+  try {
+    return await passes(deps, now);
+  } finally {
+    await Promise.allSettled(sending);
+  }
+}
+
+/** The passes, in their order (see the top of this file), and the summary on its pass. */
+async function passes(deps: ReconcileDeps, now: Date): Promise<ReconcileResult> {
   const { store, buy, refunds, payTo } = deps;
   const result: ReconcileResult = { started: [], unpaid: [], refundFailed: [], runLost: [] };
   const olderThan = new Date(now.getTime() - GRACE_MS);
@@ -324,6 +334,5 @@ export async function reconcile(given: ReconcileDeps, now: Date): Promise<Reconc
   }
 
   if (isSummaryPass(now)) await sendSummary(deps, result, runsStillRunning);
-  await Promise.all(sending);
   return result;
 }
