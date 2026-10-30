@@ -139,6 +139,12 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...real, PRICE_ATOMIC: '50000', DEV_MODE: '1', FORCE_FAIL_AT: 'before-vn' })).toThrow('FORCE_FAIL_AT');
   });
 
+  it('takes the alerts topic as an https URL, and none when it is unset or empty', () => {
+    expect(parseEnv({ ...real, ALERT_URL: 'https://ntfy.sh/ad-video-ops-k3j4h5' }).ALERT_URL).toBe('https://ntfy.sh/ad-video-ops-k3j4h5');
+    expect(parseEnv(real).ALERT_URL).toBeUndefined();
+    expect(parseEnv({ ...real, ALERT_URL: '' }).ALERT_URL).toBeUndefined();
+  });
+
   it.each([
     ['PRICE_ATOMIC', '5 USDT'],
     ['PRICE_ATOMIC', '0'],
@@ -174,6 +180,8 @@ describe('parseEnv', () => {
     ['AGENT_ID', '12a'],
     ['AGENT_ID', ' 7'],
     ['AGENT_ID', '1'.repeat(79)],
+    ['ALERT_URL', 'ntfy.sh/topic'],
+    ['ALERT_URL', 'http://ntfy.sh/topic'],
   ])('rejects %s = %s', (name, value) => {
     expect(() => parseEnv({ ...real, [name]: value })).toThrow(name);
   });

@@ -640,3 +640,15 @@ export class ModelCallFailed extends Error {
     this.name = 'ModelCallFailed';
   }
 }
+
+/**
+ * An alert for whoever runs the service, on their phone: something that needs a person (money owed, money with no order)
+ * or that they should know of (a run lost). It never holds a whole order id (one lets whoever has it read the order) nor
+ * anything secret. `high` alerts ring; `default` ones only show.
+ */
+export type Alert = { title: string; message: string; priority: 'high' | 'default' };
+
+/** Where the alerts go. `send` never throws and gives up quickly: an alert that could not go out is logged, nothing more. */
+export interface AlertPort {
+  send(alert: Alert): Promise<void>;
+}

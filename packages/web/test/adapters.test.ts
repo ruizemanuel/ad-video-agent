@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { scenePaths } from '@app/core';
 import { createAdapters } from '../src/adapters';
+import { FakeAlerts } from '../src/adapters/fake/alerts';
 import { FakeBuy } from '../src/adapters/fake/buy';
 import { FileBlob } from '../src/adapters/fake/blob';
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FakeMusic } from '../src/adapters/fake/music';
 import { FakeRefunds } from '../src/adapters/fake/refunds';
 import { FileStore } from '../src/adapters/fake/store';
+import { LogAlerts, NtfyAlerts } from '../src/adapters/real/alerts';
 import { VercelBlob } from '../src/adapters/real/blob';
 import { CeloBuy } from '../src/adapters/real/buy';
 import { GatewayLlm } from '../src/adapters/real/llm';
@@ -47,9 +49,10 @@ const order = {
 };
 
 describe('createAdapters on the fake adapters', () => {
-  it('gives a file-backed store and blob over FAKE_DIR, and the buy, model, music and refund doubles', async () => {
+  it('gives a file-backed store and blob over FAKE_DIR, and the buy, model, music, refund and alert doubles', async () => {
     const dir = await tempDir();
-    const { store, blob, buy, llm, music, refunds } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
+    const { store, blob, buy, llm, music, refunds, alerts } = await createAdapters(parseEnv({ ...common, AD_AGENT_ADAPTERS: 'fake', FAKE_DIR: dir }));
+    expect(alerts).toBeInstanceOf(FakeAlerts);
     expect(store).toBeInstanceOf(FileStore);
     expect(blob).toBeInstanceOf(FileBlob);
     expect(buy).toBeInstanceOf(FakeBuy);
@@ -74,18 +77,25 @@ describe('createAdapters on the fake adapters', () => {
 });
 
 describe('createAdapters on the real adapters', () => {
+  const realSettings = {
+    ...common,
+    DATABASE_URL: 'memory',
+    BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_secretpart',
+    X402_API_KEY: 'x402_abc',
+    SPEND_WALLET_PRIVATE_KEY: `0x${'2'.repeat(64)}`,
+    REFUND_WALLET_PRIVATE_KEY: `0x${'3'.repeat(64)}`,
+    GEMINI_API_KEY: 'gemini-key',
+    PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
+    GITHUB_REPO: 'ruizemanuel/ad-video-agent',
+  };
+
+  it('sends the alerts to the ntfy topic of ALERT_URL, and only logs them without one', async () => {
+    expect((await createAdapters(parseEnv({ ...realSettings, ALERT_URL: 'https://ntfy.sh/ad-video-ops-k3j4h5' }))).alerts).toBeInstanceOf(NtfyAlerts);
+    expect((await createAdapters(parseEnv(realSettings))).alerts).toBeInstanceOf(LogAlerts);
+  });
+
   it('gives the Postgres store, the Vercel Blob adapter, buy on Celo, the models over the AI Gateway, Lyria over the Gemini API and the refunds on Celo, built from the settings and not yet used', async () => {
-    const settings = parseEnv({
-      ...common,
-      DATABASE_URL: 'memory',
-      BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_secretpart',
-      X402_API_KEY: 'x402_abc',
-      SPEND_WALLET_PRIVATE_KEY: `0x${'2'.repeat(64)}`,
-      REFUND_WALLET_PRIVATE_KEY: `0x${'3'.repeat(64)}`,
-      GEMINI_API_KEY: 'gemini-key',
-      PUBLIC_BASE_URL: 'https://ad-video-agent.vercel.app',
-      GITHUB_REPO: 'ruizemanuel/ad-video-agent',
-    });
+    const settings = parseEnv(realSettings);
     const { store, blob, buy, llm, music, refunds } = await createAdapters(settings);
     expect(store).toBeInstanceOf(DrizzleStore);
     expect(blob).toBeInstanceOf(VercelBlob);

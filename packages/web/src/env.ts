@@ -94,6 +94,11 @@ const schema = z
     PRECHECK_DAILY_CAP_USD: blank(positive.default(2)),
     CELO_RPC_URL: blank(httpUrl.default('https://forno.celo.org')),
     /**
+     * Where the alerts go: an ntfy topic's URL, https://ntfy.sh/<topic>, which the operator's phone is subscribed to. The
+     * topic's name is a secret (whoever has it reads the alerts). Without it, the alerts are only logged.
+     */
+    ALERT_URL: blank(z.url({ protocol: /^https$/ }).optional()),
+    /**
      * The ERC-8021 tag. The hackathon assigns it, so it is optional: without it, nothing is tagged. Its format is the
      * one the x402 builder-code extension and @celo/attribution-tags both accept.
      */

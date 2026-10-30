@@ -4,13 +4,15 @@ import { GoogleGenAI } from '@google/genai';
 import type { Hex } from 'viem';
 import { openDb } from '../db/client';
 import { env, type Env } from '../env';
-import type { BlobPort, BuyPort, LlmPort, MusicPort, OrderStore, RefundPort } from '../ports';
+import type { AlertPort, BlobPort, BuyPort, LlmPort, MusicPort, OrderStore, RefundPort } from '../ports';
+import { FakeAlerts } from './fake/alerts';
 import { FileBlob } from './fake/blob';
 import { FakeBuy } from './fake/buy';
 import { FakeLlm } from './fake/llm';
 import { FakeMusic } from './fake/music';
 import { FakeRefunds } from './fake/refunds';
 import { FileStore } from './fake/store';
+import { LogAlerts, NtfyAlerts } from './real/alerts';
 import { VercelBlob } from './real/blob';
 import { CeloBuy } from './real/buy';
 import { GatewayLlm } from './real/llm';
@@ -25,6 +27,7 @@ export type Adapters = {
   llm: LlmPort;
   music: MusicPort;
   refunds: RefundPort;
+  alerts: AlertPort;
 };
 
 /** The adapters for a set of settings. It is async because the database opens asynchronously. */
@@ -38,10 +41,11 @@ export async function createAdapters(settings: Env): Promise<Adapters> {
       llm: new FakeLlm(),
       music: new FakeMusic(),
       refunds: new FakeRefunds(),
+      alerts: new FakeAlerts(),
     };
   }
   // env.ts has already required these when the adapters are the real ones.
-  const { DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY, REFUND_WALLET_PRIVATE_KEY, GEMINI_API_KEY, CELO_RPC_URL, ERC8021_CODE } = settings;
+  const { DATABASE_URL, BLOB_READ_WRITE_TOKEN, SPEND_WALLET_PRIVATE_KEY, REFUND_WALLET_PRIVATE_KEY, GEMINI_API_KEY, CELO_RPC_URL, ERC8021_CODE, ALERT_URL } = settings;
   if (
     DATABASE_URL === undefined ||
     BLOB_READ_WRITE_TOKEN === undefined ||
@@ -62,6 +66,8 @@ export async function createAdapters(settings: Env): Promise<Adapters> {
     music: new LyriaMusic(new GoogleGenAI({ apiKey: GEMINI_API_KEY })),
     // The refunds' wallet, which pays gas in the refunded token; ERC8021_CODE tags every refund once it is set.
     refunds: new CeloRefunds({ refundKey: REFUND_WALLET_PRIVATE_KEY as Hex, rpcUrl: CELO_RPC_URL, erc8021Code: ERC8021_CODE }),
+    // To the operator's phone, through ntfy; a deployment with no topic (a preview, a local run) only logs them.
+    alerts: ALERT_URL === undefined ? new LogAlerts() : new NtfyAlerts({ url: ALERT_URL }),
   };
 }
 
