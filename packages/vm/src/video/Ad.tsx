@@ -1,12 +1,12 @@
 // The video of one hook: its scenes back to back on the beat, the brand wipe on the cuts that ask for it, the brand's
-// fonts (and the size of its logo) loaded before anything is measured, and, for the key frames, the probe that measures
-// the text of each frame.
+// fonts (and the size and ink of its logo) loaded before anything is measured, and, for the key frames, the probe that
+// measures the text of each frame.
 import { useEffect, useLayoutEffect, useMemo, useState, type FC } from 'react';
 import { loadFont } from '@remotion/fonts';
 import { Audio } from '@remotion/media';
 import { AbsoluteFill, cancelRender, continueRender, delayRender, Sequence, staticFile, useCurrentFrame } from 'remotion';
 import { fontFaces, layoutScenes, theme as makeTheme, opensWithBrand, WIPE_FRAMES, type Edl, type Format, type PieceName, type ProbeItem, type SiteData } from '@app/core';
-import { recordedLogoSize, videoShowsLogo, type Size } from './logo';
+import { averageInk, logoBackgrounds, recordedLogoSize, videoShowsLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
@@ -68,30 +68,51 @@ const Probe: FC = () => {
 
 const LOGO_TRIES = 3;
 const LOGO_RETRY_MS = 250;
+// The logo is drawn at most this many pixels on its longer side to measure its ink: a DPR 4 raster has no more to tell.
+const INK_SAMPLE_SIDE = 256;
 
-/** The natural size of a picture of the public dir; rejects when it does not load. */
-const naturalSize = (file: string): Promise<Size> =>
+/** A picture of the public dir, loaded; rejects when it does not load. */
+const loadImage = (file: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onload = () => resolve(image);
     image.onerror = () => reject(new Error(`The logo ${file} did not load.`));
     image.src = staticFile(file);
   });
 
 /**
- * The natural size of the site's logo, null when it has none: the size the capture recorded or, without one, the
- * picture's own, loaded in a few tries. A logo that never loads fails the render, as a font does: a video whose
- * frames or key frames came out of different tabs could otherwise close on the logo in some and on the name in others.
+ * The mean color of the logo's ink, null when it cannot be measured: the canvas refuses (a picture that is not
+ * readable back, one without a size) or no pixel is opaque enough. Null means the name is shown, never a failed render.
  */
-const logoSizeOf = async (site: SiteData): Promise<Size | null> => {
+const measureInk = (image: HTMLImageElement): string | null => {
+  try {
+    const scale = Math.min(1, INK_SAMPLE_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return averageInk(context.getImageData(0, 0, canvas.width, canvas.height).data);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The site's logo, null when it has none: its natural size (the one the capture recorded or, without one, the
+ * picture's own) and the color of its ink. The picture is loaded in a few tries even when its size is recorded, to
+ * measure the ink. A logo that never loads fails the render, as a font does: a video whose frames or key frames came
+ * out of different tabs could otherwise close on the logo in some and on the name in others.
+ */
+const loadLogo = async (site: SiteData): Promise<{ size: Size; ink: string | null } | null> => {
   const logo = site.brand.logo;
   if (!logo) return null;
-  const recorded = recordedLogoSize(logo);
-  if (recorded) return recorded;
   const file = logo.png ?? logo.file;
   for (let attempt = 1; ; attempt++) {
     try {
-      return await naturalSize(file);
+      const image = await loadImage(file);
+      return { size: recordedLogoSize(logo) ?? { width: image.naturalWidth, height: image.naturalHeight }, ink: measureInk(image) };
     } catch {
       if (attempt >= LOGO_TRIES) throw new Error(`The logo ${file} could not be loaded in ${LOGO_TRIES} tries.`);
       await new Promise((done) => setTimeout(done, LOGO_RETRY_MS * attempt));
@@ -101,18 +122,19 @@ const logoSizeOf = async (site: SiteData): Promise<Size | null> => {
 
 /**
  * Text is measured while the pieces render, and whether the video shows the logo or the brand's name depends on the
- * logo's size (see videoShowsLogo), so nothing renders until the brand's fonts are in and that is decided. The render
- * is held until the tree with the pieces is laid out: their own holds (images, the probe) start before this one ends.
+ * logo's size and ink (see videoShowsLogo) against the `backgrounds` it appears on, so nothing renders until the brand's
+ * fonts are in and that is decided. The render is held until the tree with the pieces is laid out: their own holds
+ * (images, the probe) start before this one ends.
  */
-const useBrand = (site: SiteData, format: Format): { logoShown: Size | null } | null => {
+const useBrand = (site: SiteData, format: Format, backgrounds: readonly string[]): { logoShown: Size | null } | null => {
   const [handle] = useState(() => delayRender('brand fonts and logo'));
   const [brand, setBrand] = useState<{ logoShown: Size | null } | null>(null);
   useEffect(() => {
     const fonts = Promise.all(fontFaces(site).map((face) => loadFont({ family: face.family, url: staticFile(face.file), weight: face.weight, stretch: face.stretch })));
-    Promise.all([fonts, logoSizeOf(site)])
-      .then(([, size]) => setBrand({ logoShown: videoShowsLogo(size, format) ? size : null }))
+    Promise.all([fonts, loadLogo(site)])
+      .then(([, logo]) => setBrand({ logoShown: logo && videoShowsLogo(logo.size, format, logo.ink, backgrounds) ? logo.size : null }))
       .catch((error: unknown) => cancelRender(error));
-  }, [site, format]);
+  }, [site, format, backgrounds]);
   useLayoutEffect(() => {
     if (brand) continueRender(handle);
   }, [brand, handle]);
@@ -120,8 +142,11 @@ const useBrand = (site: SiteData, format: Format): { logoShown: Size | null } | 
 };
 
 const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> = ({ edl, site, format, hook, probe, music }) => {
-  const brand = useBrand(site, format);
   const theme = useMemo(() => makeTheme(site), [site]);
+  // The logo is decided once per video, on the first hook's version: the close is common to all of them and the branded
+  // opening is always on the page background (see logoBackgrounds), so every version shows the same mark.
+  const backgrounds = useMemo(() => logoBackgrounds(layoutScenes(edl, 0).scenes, theme.surfaces), [edl, theme]);
+  const brand = useBrand(site, format, backgrounds);
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
   if (!brand) return <AbsoluteFill style={{ background: theme.bg }} />;
   return (

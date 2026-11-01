@@ -1,8 +1,10 @@
 // Whether the site's logo can close the video, as plain math. The capture keeps a DPR 4 raster of whatever the header
 // marks as the logo; some sites mark a whole text header (a strip many times wider than tall) or a small icon. Shown in
 // the EndCard's box, the first is a sliver and the second a blur, so the video sets the brand's name instead: at the
-// close and at the opening alike, decided once per video against the close's box.
-import { FORMATS, TYPE, type Format, type SiteData } from '@app/core';
+// close and at the opening alike, decided once per video against the close's box. A logo also has to stand out on the
+// backgrounds it appears on: a dark mark on a dark brand color is a smudge, and the name (set in a color that does
+// read) is better than that.
+import { contrast, FORMATS, opensWithBrand, sceneSurfaces, TYPE, type Format, type SiteData, type Surfaces, type TimedScene } from '@app/core';
 
 export type Size = { width: number; height: number };
 
@@ -30,11 +32,51 @@ export const closeLogoBox = (format: Format): Size => {
   return { width: Math.round((width - 2 * Math.max(safe.left, safe.right)) * 0.7), height: Math.round(TYPE[format].logo * 3.2) };
 };
 
+// WCAG 1.4.11 asks 3:1 of a graphic against what is around it, where text needs 4.5:1: a logo is recognized by its shape
+// as much as by its color.
+export const LOGO_MIN_CONTRAST = 3;
+// A pixel at least half opaque (alpha 128 of 255) counts as ink; fainter ones are antialiasing and shadow.
+const INK_MIN_ALPHA = 128;
+
+/** The mean color of a logo's ink: the pixels at least half opaque, weighted by their alpha; null when there are none. */
+export const averageInk = (rgba: Uint8ClampedArray): string | null => {
+  let [red, green, blue, weight] = [0, 0, 0, 0];
+  for (let at = 0; at + 3 < rgba.length; at += 4) {
+    const alpha = rgba[at + 3] ?? 0;
+    if (alpha < INK_MIN_ALPHA) continue;
+    red += (rgba[at] ?? 0) * alpha;
+    green += (rgba[at + 1] ?? 0) * alpha;
+    blue += (rgba[at + 2] ?? 0) * alpha;
+    weight += alpha;
+  }
+  if (weight === 0) return null;
+  return '#' + [red, green, blue].map((total) => Math.round(total / weight).toString(16).padStart(2, '0')).join('');
+};
+
+/** Whether ink of this color stands out on every one of `backgrounds`; null ink (not measured) never does. */
+export const inkReads = (ink: string | null, backgrounds: readonly string[]): boolean =>
+  ink !== null && backgrounds.every((bg) => contrast(ink, bg) >= LOGO_MIN_CONTRAST);
+
 /**
- * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once,
- * against the close's box, the larger one. A logo that reads there reads at the opening's height too.
+ * The backgrounds the logo appears on, from the scenes of one version of the video: the close's and, when the opening
+ * is the branded one, the opening's. The close is common to every version and the branded opening is always on the
+ * page background, so any one version gives the same answer for all of them.
  */
-export const videoShowsLogo = (natural: Size | null, format: Format): boolean => logoReads(natural, closeLogoBox(format));
+export const logoBackgrounds = (scenes: readonly TimedScene[], surfaces: Surfaces): string[] => {
+  const names = sceneSurfaces(scenes, surfaces);
+  return scenes.flatMap((timed, i) => {
+    const colors = surfaces[names[i] ?? 'base'];
+    return colors && (timed.role === 'cta' || opensWithBrand(timed)) ? [colors.bg] : [];
+  });
+};
+
+/**
+ * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once.
+ * Against the close's box, the larger one (a logo that reads there reads at the opening's height too), and against the
+ * `backgrounds` it appears on, with the `ink` it was measured to have (null: not measured, so the name).
+ */
+export const videoShowsLogo = (natural: Size | null, format: Format, ink: string | null, backgrounds: readonly string[]): boolean =>
+  logoReads(natural, closeLogoBox(format)) && inkReads(ink, backgrounds);
 
 /** The natural size of the logo as the capture recorded it, or null when it did not. */
 export const recordedLogoSize = (logo: SiteData['brand']['logo']): Size | null =>
