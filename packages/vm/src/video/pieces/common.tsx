@@ -159,6 +159,9 @@ type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: stri
 // to leave of their margins (they collapsed to the larger). The layout keeps it, whatever room the clips have.
 const LINE_GAP = 0.14;
 
+/** How tall `count` lines set at `size` px are laid out at `lineHeight` (see TypeLines), the gaps between them included. */
+export const linesHeight = (count: number, size: number, lineHeight: number): number => (count * lineHeight + Math.max(0, count - 1) * LINE_GAP) * size;
+
 /**
  * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: hidden
  * under its clip). A clip has room for the ink of the lines of the block above and below its line (see useInkRoom), taken
@@ -313,7 +316,7 @@ export type CaptionSet = { lines: TypeLine[]; size: number };
 export const raisedCardTop = (format: Format, captions: readonly CaptionSet[], lineHeight: number, overhang: number): number | undefined => {
   const line = CAPTION_LINE[format];
   if (line === undefined) return undefined;
-  const block = Math.max(0, ...captions.map(({ lines, size }) => (lines.length * lineHeight + (lines.length - 1) * LINE_GAP) * size));
+  const block = Math.max(0, ...captions.map(({ lines, size }) => linesHeight(lines.length, size, lineHeight)));
   return Math.min(stageLayout(format).cardTop, Math.ceil(line + overhang + block + CAPTION_GAP));
 };
 

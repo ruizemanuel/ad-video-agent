@@ -1,6 +1,6 @@
 import { safeWidth, TYPE } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { fitAddress, fitHeadline, glyphOverhang, hideTravel, inkOverhang, layoutCaptions, layoutLines, lineSources, lineText, maskRoom, pillSize, ROOM, toWords, type Ink, type Measure } from '../src/video/type';
+import { fitAddress, fitHeadline, glyphOverhang, hideTravel, inkOverhang, layoutCaptions, layoutLines, layoutSeries, lineSources, lineText, maskRoom, pillSize, ROOM, toWords, type Ink, type Measure } from '../src/video/type';
 
 // A stand-in for the browser's measure: every character is 0.6 em wide.
 const perChar: Measure = (text) => text.length * 0.6;
@@ -106,6 +106,41 @@ describe('captions that replace one another', () => {
   it('never sets them below the smallest size of the format', () => {
     const long = words('A caption far too long to be set at any readable size in this block');
     expect(layoutCaptions([words('Pro plan'), long], caption).size).toBe(TYPE['9x16'].min);
+  });
+});
+
+describe('the texts of a series of cards', () => {
+  const title = { width: safeWidth('9x16'), max: TYPE['9x16'].headline, min: TYPE['9x16'].min, maxLines: 2, measure: perChar };
+
+  it('sets every text of a series at the smallest size any takes on its own', () => {
+    const texts = [words('Vendé lo tuyo.'), words('Un solo link para tu bio con productos'), words('Cobrás todo.')];
+    const own = texts.map((text) => layoutLines(text, title).size);
+    const set = layoutSeries(texts, title);
+    expect(set.size).toBe(Math.min(...own));
+    expect(set.size).toBeLessThan(Math.max(...own));
+    expect(set.lines.map((lines) => lines.map(lineText).join(' '))).toEqual(['Vendé lo tuyo.', 'Un solo link para tu bio con productos', 'Cobrás todo.']);
+  });
+
+  it('breaks a text that fits one line only below the shared size into two lines at that size', () => {
+    // About as wide as cobrame's display font: "0% de comisión." fits one line at about 103 px, "Cobrás como querés." only
+    // at about 81, so on its own it is split, and the series is set at the first one's size.
+    const cobrame: Measure = (text) => text.length * 0.55;
+    const fit = { ...title, measure: cobrame };
+    const [short, long] = [words('0% de comisión.'), words('Cobrás como querés.')];
+    expect(layoutLines(short, fit)).toMatchObject({ size: 102 });
+    expect(Math.floor((fit.width * 0.98) / cobrame('Cobrás como querés.'))).toBe(80);
+    const set = layoutSeries([short, long], fit);
+    expect(set.size).toBe(102);
+    expect(set.lines.map((lines) => lines.map(lineText))).toEqual([['0% de comisión.'], ['Cobrás como', 'querés.']]);
+    for (const line of set.lines.flat()) expect(set.size * cobrame(lineText(line))).toBeLessThanOrEqual(fit.width * 0.98);
+  });
+
+  it('gives no lines for a card without that text', () => {
+    const subline = { width: safeWidth('9x16'), max: Math.round(TYPE['9x16'].caption * 0.62), min: TYPE['9x16'].min, maxLines: 2, measure: perChar };
+    const set = layoutSeries([words('Directo a tu cuenta.'), [], words('Sin saber nada de tecnología.')], subline);
+    expect(set.lines[1]).toEqual([]);
+    expect(set.lines[0]!.map(lineText)).toEqual(['Directo a tu cuenta.']);
+    expect(set.size).toBe(layoutLines(words('Sin saber nada de tecnología.'), subline).size);
   });
 });
 

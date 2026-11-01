@@ -1,15 +1,21 @@
 import { useMemo, type CSSProperties, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type Line, type Scene, type SurfaceColors } from '@app/core';
-import { layoutLines, toWords } from '../type';
-import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
+import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type SurfaceColors } from '@app/core';
+import { layoutSeries, toWords, type TypeLine } from '../type';
+import { fontStyle, linesHeight, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
 
 // The number stands this many headline sizes tall, but never more than this share of the safe zone's height: in a wide
 // frame it would leave the title no room.
 const NUMBER_HEADLINES = 2.4;
 const NUMBER_SHARE = 0.3;
 // The segments of the series' bar are this many px apart.
-const BAR_GAP = 12;
+export const BAR_GAP = 12;
+// The title, the rule and the subline are this share of the title's size apart; the rule is this share of it thick, and
+// never thinner than 4 px.
+const GAP_SHARE = 0.3;
+const RULE_SHARE = 0.05;
+const textGap = (title: number): number => Math.round(title * GAP_SHARE);
+const ruleHeight = (title: number): number => Math.max(4, Math.round(title * RULE_SHARE));
 
 /** The number of card `at`: two digits. */
 export const pointLabel = (at: number): string => String(at).padStart(2, '0');
@@ -29,6 +35,29 @@ export const numberStyle = (size: number, surface: SurfaceColors): CSSProperties
   paintOrder: 'stroke fill',
 });
 
+/** The height of the series' bar in px: 18 % of the format's smallest type, never under 6. */
+export const barHeight = (format: Format): number => Math.max(6, Math.round(TYPE[format].min * 0.18));
+
+/** A text of every card of a series as layoutSeries sets it (no lines on a card without it), and its font's line height. */
+export type SeriesText = { lines: TypeLine[][]; size: number; lineHeight: number };
+
+/**
+ * The height in px of the text block of every card of a series: the tallest card's, of its title's lines, the gap and the
+ * rule and, on a card with a subline, the gap and the subline's lines. Each card sets its text at the top of a block this
+ * tall, centered between the number and the bar: the title stands at one height on every card, whatever each one holds.
+ */
+export const seriesBlock = (title: SeriesText, subline: SeriesText): number => {
+  const gap = textGap(title.size);
+  return Math.max(
+    0,
+    ...title.lines.map((lines, i) => {
+      const under = subline.lines[i] ?? [];
+      const rest = under.length ? gap + linesHeight(under.length, subline.size, subline.lineHeight) : 0;
+      return linesHeight(lines.length, title.size, title.lineHeight) + gap + ruleHeight(title.size) + rest;
+    }),
+  );
+};
+
 /** How full each segment of the series' bar is at `frame` of card `at`: the cards before it full, its own from 0 to 1 over the scene, the rest empty. */
 export const seriesBar = (at: number, of: number, frame: number, duration: number): number[] =>
   Array.from({ length: of }, (_, i) => (i + 1 < at ? 1 : i + 1 > at ? 0 : Math.min(1, Math.max(0, frame / duration))));
@@ -37,9 +66,10 @@ export const seriesBar = (at: number, of: number, frame: number, duration: numbe
 // bottom: at the top, its number, large and in outline in the accent of its background; in the middle, its title
 // (lines[0]) in the display font, a rule, and the optional subline (lines[1]) in the body font and the secondary color, a
 // beat after the title; at the bottom, the series' bar, filled up to this card and through it as the scene plays. Every
-// title of the series is set at one size and every subline at another, so the cards read as one set. The subline stands
-// apart by its font, its size and the rule over it, not by a dimmer color: on the loud backgrounds the secondary color can
-// be nearly the text's own.
+// title of the series is set at one size, up to the format's headline, and every subline at another, so the cards read as
+// one set; and every card's text sits at the top of one block, so its title does not move at the cut to the next card. The
+// subline stands apart by its font, its size and the rule over it, not by a dimmer color: on the loud backgrounds the
+// secondary color can be nearly the text's own.
 export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
   const { theme, format, edl } = useAd();
   const surface = useSurface();
@@ -48,20 +78,25 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
   const type = TYPE[format];
   // A card without a series (a lone one, which validateEdl refuses) is drawn as a series of one.
   const { at, of } = series ?? { at: 1, of: 1 };
-  const { title, subline } = useMemo(() => {
+  const { title, subline, block } = useMemo(() => {
     const cards = series?.cards ?? [scene];
     const width = safeWidth(format);
-    const titleOf = (card: Scene) =>
-      layoutLines(card.lines.slice(0, 1).map(toWords), { width, max: Math.round(type.headline * 0.8), min: type.min, maxLines: 2, measure: measureWith(theme.display) });
-    const sublineOf = (line: Line) => layoutLines([toWords(line)], { width, max: Math.round(type.caption * 0.62), min: type.min, maxLines: 2, measure: measureWith(theme.body) });
-    // One size for the titles of the series, and one for its sublines: the smallest any card needs.
-    const sublines = cards.flatMap((card) => (card.lines[1] ? [sublineOf(card.lines[1]).size] : []));
-    const own = scene.lines[1];
+    // One size for the titles of the series, and one for its sublines, each broken into lines at the size it is drawn at.
+    const titles = layoutSeries(
+      cards.map((card) => card.lines.slice(0, 1).map(toWords)),
+      { width, max: type.headline, min: type.min, maxLines: 2, measure: measureWith(theme.display) },
+    );
+    const sublines = layoutSeries(
+      cards.map((card) => card.lines.slice(1, 2).map(toWords)),
+      { width, max: Math.round(type.caption * 0.62), min: type.min, maxLines: 2, measure: measureWith(theme.body) },
+    );
+    const [ownTitle, ownSubline] = [titles.lines[at - 1] ?? [], sublines.lines[at - 1] ?? []];
     return {
-      title: { lines: titleOf(scene).lines, size: Math.min(...cards.map((card) => titleOf(card).size)) },
-      subline: own ? { lines: sublineOf(own).lines, size: Math.min(...sublines) } : null,
+      title: { lines: ownTitle, size: titles.size },
+      subline: ownSubline.length ? { lines: ownSubline, size: sublines.size } : null,
+      block: seriesBlock({ ...titles, lineHeight: theme.display.lineHeight }, { ...sublines, lineHeight: theme.body.lineHeight }),
     };
-  }, [scene, series, format, type, theme]);
+  }, [scene, series, at, format, type, theme]);
   // On the beat grid of the whole video. Every line of type of the title rises at once, and every one of the subline,
   // so that each is in when textWindows says.
   const starts = { title: pointLineStart(0, timed, edl.bpm), subline: pointLineStart(1, timed, edl.bpm) };
@@ -90,23 +125,26 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
         >
           {pointLabel(at)}
         </div>
-        <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: items, gap: Math.round(title.size * 0.3) }}>
-          <RevealLines lines={title.lines} size={title.size} font={theme.display} color={surface.fg} accent={surface.accent} starts={title.lines.map(() => starts.title)} align={type.align} />
-          <div
-            style={{
-              width: Math.round(safeWidth(format) * 0.16),
-              height: Math.max(4, Math.round(title.size * 0.05)),
-              background: surface.accent,
-              transform: `scaleX(${ruleIn})`,
-              transformOrigin: center ? 'center' : 'left',
-            }}
-          />
-          {/* The title's accent is the card's only one: the subline is in the secondary color throughout. */}
-          {subline && (
-            <RevealLines lines={subline.lines} size={subline.size} font={theme.body} color={surface.muted} accent={surface.muted} starts={subline.lines.map(() => starts.subline)} align={type.align} />
-          )}
+        <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          {/* The series' block, the same on every card, centered; the card's own text at its top. */}
+          <div style={{ height: block, display: 'flex', flexDirection: 'column', alignItems: items, gap: textGap(title.size) }}>
+            <RevealLines lines={title.lines} size={title.size} font={theme.display} color={surface.fg} accent={surface.accent} starts={title.lines.map(() => starts.title)} align={type.align} />
+            <div
+              style={{
+                width: Math.round(safeWidth(format) * 0.16),
+                height: ruleHeight(title.size),
+                background: surface.accent,
+                transform: `scaleX(${ruleIn})`,
+                transformOrigin: center ? 'center' : 'left',
+              }}
+            />
+            {/* The title's accent is the card's only one: the subline is in the secondary color throughout. */}
+            {subline && (
+              <RevealLines lines={subline.lines} size={subline.size} font={theme.body} color={surface.muted} accent={surface.muted} starts={subline.lines.map(() => starts.subline)} align={type.align} />
+            )}
+          </div>
         </div>
-        <div style={{ alignSelf: 'stretch', display: 'flex', gap: BAR_GAP, height: Math.max(6, Math.round(type.min * 0.18)) }}>
+        <div style={{ alignSelf: 'stretch', display: 'flex', gap: BAR_GAP, height: barHeight(format) }}>
           {seriesBar(at, of, frame, timed.duration).map((fill, i) => (
             <div key={i} style={{ flex: 1, background: alpha(surface.fg, 0.18) }}>
               <div style={{ width: `${fill * 100}%`, height: '100%', background: surface.accent }} />

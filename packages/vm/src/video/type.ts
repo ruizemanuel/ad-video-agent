@@ -173,6 +173,17 @@ export const layoutCaptions = (captions: readonly TypeLine[][], fit: Fit & { mea
   return { lines: options.map(({ own, split }) => (own.size >= size ? own : split).lines), size };
 };
 
+/**
+ * Texts of a series (one per card, each its source lines) set at one size: the smallest any of them takes on its own
+ * (see layoutLines), then each laid out again at that size in the fewest lines that fit it (splitBelow: 1), so the
+ * breaks match the size drawn and no line overflows the width.
+ */
+export const layoutSeries = (texts: readonly (readonly TypeLine[])[], fit: Fit & { measure: Measure; maxLines: number }): { lines: TypeLine[][]; size: number } => {
+  const shared = Math.min(fit.max, ...texts.map((text) => layoutLines(text, fit).size));
+  const set = texts.map((text) => layoutLines(text, { ...fit, max: shared, splitBelow: 1 }));
+  return { lines: set.map(({ lines }) => lines), size: Math.min(shared, ...set.map(({ size }) => size)) };
+};
+
 // An address is set on at most this many lines before it is broken inside a name.
 const MAX_ADDRESS_LINES = 3;
 

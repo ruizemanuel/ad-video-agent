@@ -28,7 +28,7 @@ import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
-import { numberSize } from '../../src/video/pieces/PointCard';
+import { BAR_GAP, barHeight, numberSize } from '../../src/video/pieces/PointCard';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -225,6 +225,35 @@ function makeCardsEdl(site: SiteData): Edl {
   };
 }
 
+/**
+ * makeCardsEdl with a first card as long as a card gets: a title of 40 characters, which takes two lines, and a subline of
+ * 32, the most the director's table gives a subline (see TABLE_LIMITS), each quoted from the site.
+ */
+function makeLongCardsEdl(site: SiteData): Edl {
+  const cards = makeCardsEdl(site);
+  const [first, ...rest] = cards.body;
+  return {
+    ...cards,
+    body: [
+      {
+        ...first!,
+        // The fewest beats in which both texts are read at 112 bpm (see fewestBeats).
+        beats: 6,
+        lines: [
+          { text: 'Your money goes straight to your account', kind: 'claim', claimId: 'c5', accent: 'straight' },
+          { text: 'Your customers pay you directly.', kind: 'claim', claimId: 'c6' },
+        ],
+      },
+      ...rest,
+    ],
+    claims: [
+      ...cards.claims,
+      { id: 'c5', text: "Sales are paid into the seller's account.", sectionId: sectionIdOf(site, 'Why Tiendita'), quote: 'your money goes straight to your account' },
+      { id: 'c6', text: 'Customers pay the seller directly.', sectionId: sectionIdOf(site, 'Sell on WhatsApp with no fees'), quote: 'Your customers pay you directly.' },
+    ],
+  };
+}
+
 /** The paths of the three numbered cards of makeCardsEdl. */
 const CARDS = ['body[0]', 'body[1]', 'body[2]'];
 
@@ -403,6 +432,23 @@ describe('the other formats', () => {
     const stills = await renderKeyframes({ edl: cards, site, runDir: dir, format, hook: 0 });
     expect(checkStills(stills, cards, site, format).filter((c) => !c.pass)).toEqual([]);
     for (const path of CARDS) expect(stills.find((s) => s.path === path)!.text[0]!.y, path).toBeGreaterThanOrEqual(FORMATS[format].safe.top + numberSize(format));
+  });
+
+  it.each(['16x9', '4x5'] as Format[])('keeps a series with a title of two lines and a full subline clear of its bar in %s', async (format) => {
+    const cards = makeLongCardsEdl(site);
+    expect(validateEdl(cards, site)).toEqual([]);
+    const stills = await renderKeyframes({ edl: cards, site, runDir: dir, format, hook: 0 });
+    expect(checkStills(stills, cards, site, format).filter((c) => !c.pass)).toEqual([]);
+    const long = stills.find((s) => s.path === CARDS[0])!;
+    const title = long.text.filter((t) => t.fontSize === long.text[0]!.fontSize).map((t) => t.text);
+    expect(title, 'the lines of the long title').toHaveLength(2);
+    expect(title.join(' ')).toBe('Your money goes straight to your account');
+    // The text of every card ends above the bar, with at least the room its segments leave between them.
+    const { height, safe } = FORMATS[format];
+    for (const path of CARDS) {
+      const last = stills.find((s) => s.path === path)!.text.at(-1)!;
+      expect(last.y + last.h, path).toBeLessThanOrEqual(height - safe.bottom - barHeight(format) - BAR_GAP);
+    }
   });
 
   it('registers one composition per format, at its size and the length of the edit list', async () => {
@@ -588,6 +634,12 @@ describe('the numbered cards', () => {
     const shown = cardsOf(stills, site);
     for (const { still, surface } of shown) expect(still.text.map((t) => t.bg), still.path).toEqual(still.text.map(() => cssRgb(surface.bg)));
     expect(new Set(shown.map(({ still }) => still.text[0]!.fontSize)).size, 'the sizes of the titles').toBe(1);
+  });
+
+  it('sets the title of every card of the series at the same height', () => {
+    // The cards differ in what they hold: a title of one line or two, a subline or none.
+    const tops = CARDS.map((path) => stills.find((s) => s.path === path)!.text[0]!.y);
+    expect(Math.max(...tops) - Math.min(...tops), `the tops of the titles: ${tops.join(', ')}`).toBeLessThanOrEqual(1);
   });
 
   it("draws the card's number at the top of the safe zone and its bar at the bottom, inside it", async () => {
