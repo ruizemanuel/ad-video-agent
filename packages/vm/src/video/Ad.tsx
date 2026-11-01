@@ -19,7 +19,7 @@ import {
   type ProbeItem,
   type SiteData,
 } from '@app/core';
-import { averageInk, logoBackgrounds, recordedLogoSize, videoShowsLogo, type Size } from './logo';
+import { averageInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, SurfaceCtx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
@@ -156,9 +156,9 @@ const useBrand = (site: SiteData, format: Format, backgrounds: readonly string[]
 
 const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> = ({ edl, site, format, hook, probe, music }) => {
   const theme = useMemo(() => makeTheme(site), [site]);
-  // The logo is decided once per video, on the first hook's version: the close is common to all of them and the branded
-  // opening is always on the page background (see logoBackgrounds), so every version shows the same mark.
-  const backgrounds = useMemo(() => logoBackgrounds(layoutScenes(edl, 0).scenes, theme.surfaces), [edl, theme]);
+  // The logo is decided once per video, against the backgrounds it appears on in any of its versions (see
+  // videoLogoBackgrounds), so every version shows the same mark and it reads wherever it is shown.
+  const backgrounds = useMemo(() => videoLogoBackgrounds(edl, theme.surfaces), [edl, theme]);
   const brand = useBrand(site, format, backgrounds);
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
   // The background of each scene of this version: its hook changes which ones the type scenes of the body take.

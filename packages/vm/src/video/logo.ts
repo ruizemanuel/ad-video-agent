@@ -4,7 +4,7 @@
 // close and at the opening alike, decided once per video against the close's box. A logo also has to stand out on the
 // backgrounds it appears on: a dark mark on a dark brand color is a smudge, and the name (set in a color that does
 // read) is better than that.
-import { contrast, FORMATS, opensWithBrand, sceneSurfaces, TYPE, type Format, type SiteData, type Surfaces, type TimedScene } from '@app/core';
+import { contrast, FORMATS, layoutScenes, opensWithBrand, sceneSurfaces, TYPE, type Edl, type Format, type SiteData, type Surfaces, type TimedScene } from '@app/core';
 
 export type Size = { width: number; height: number };
 
@@ -59,8 +59,8 @@ export const inkReads = (ink: string | null, backgrounds: readonly string[]): bo
 
 /**
  * The backgrounds the logo appears on, from the scenes of one version of the video: the close's and, when the opening
- * is the branded one, the opening's. The close is common to every version and the branded opening is always on the
- * page background, so any one version gives the same answer for all of them.
+ * is the branded one, the opening's. The versions do not all agree: one hook may open with the brand and another not,
+ * so the video asks this of each of them (see videoLogoBackgrounds).
  */
 export const logoBackgrounds = (scenes: readonly TimedScene[], surfaces: Surfaces): string[] => {
   const names = sceneSurfaces(scenes, surfaces);
@@ -69,6 +69,15 @@ export const logoBackgrounds = (scenes: readonly TimedScene[], surfaces: Surface
     return colors && (timed.role === 'cta' || opensWithBrand(timed)) ? [colors.bg] : [];
   });
 };
+
+/**
+ * The backgrounds the logo appears on in any version of the video, each once: those of every hook's version (see
+ * logoBackgrounds). The logo is decided once for all of them, so a logo the close of one version shows has to read on the
+ * branded opening of another too.
+ */
+export const videoLogoBackgrounds = (edl: Edl, surfaces: Surfaces): string[] => [
+  ...new Set(edl.hooks.flatMap((_, hook) => logoBackgrounds(layoutScenes(edl, hook).scenes, surfaces))),
+];
 
 /**
  * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once.

@@ -1,6 +1,6 @@
 import { layoutScenes, type Surfaces } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { averageInk, brandName, closeLogoBox, fitLogo, inkReads, logoBackgrounds, logoReads, recordedLogoSize, videoShowsLogo } from '../src/video/logo';
+import { averageInk, brandName, closeLogoBox, fitLogo, inkReads, logoBackgrounds, logoReads, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo } from '../src/video/logo';
 import { fixtureEdl } from './support/edl';
 
 // The box the EndCard gives the logo in 9x16: 70% of its 760 px column, 3.2 times the format's logo size.
@@ -112,6 +112,15 @@ describe('the backgrounds of the logo', () => {
   it('have the close on contrast when the site has no brand surface', () => {
     const { scenes } = layoutScenes(fixtureEdl(), 0);
     expect(logoBackgrounds(scenes, { ...surfaces, brand: null })).toEqual(['#f7f7f2', '#101820']);
+  });
+
+  it('of the whole video are those of every version, each once: a later hook that opens with the brand adds the page', () => {
+    const edl = fixtureEdl();
+    const branded = edl.hooks[0]!;
+    const plain = [{ ...edl.body[0]!, piece: 'ClaimStack' as const }];
+    expect(videoLogoBackgrounds({ ...edl, hooks: [plain, branded] }, surfaces)).toEqual(['#0b7a4b', '#f7f7f2']);
+    expect(videoLogoBackgrounds({ ...edl, hooks: [plain, plain] }, surfaces)).toEqual(['#0b7a4b']);
+    expect(videoLogoBackgrounds(edl, surfaces)).toEqual(logoBackgrounds(layoutScenes(edl, 0).scenes, surfaces));
   });
 });
 

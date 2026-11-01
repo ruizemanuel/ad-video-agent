@@ -25,7 +25,7 @@ import { capture, type CapturedSite } from '../../src/capture';
 import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
-import { averageInk, brandName, inkReads, logoBackgrounds } from '../../src/video/logo';
+import { averageInk, brandName, inkReads, videoLogoBackgrounds } from '../../src/video/logo';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -187,12 +187,14 @@ const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(he
 // Logos written into the capture before the bundle copies it: one of ordinary proportions (8:3), and one so small
 // (100x60 px) that the close would enlarge it 4.5 times, while the opening, 84 px high, would not even double it. They are
 // in the site's dark text color, which stands out on the page and on the brand color the close is on. One more is in the
-// brand color itself: it reads on the page, but would vanish into the close.
+// brand color itself: it reads on the page, but would vanish into the close. And a white one, as a logo taken from a dark
+// header is: it reads on the close, but would vanish into the page.
 const MARK_FILE = 'media/test-mark.svg';
 const markSvg = (width: number, height: number, ink = '#1a1614'): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="${ink}"/><rect x="130" y="38" width="170" height="44" rx="22" fill="${ink}"/></svg>`;
 const SMALL_MARK_FILE = 'media/small-mark.svg';
 const BRAND_MARK_FILE = 'media/brand-mark.svg';
+const LIGHT_MARK_FILE = 'media/light-mark.svg';
 
 // A phone page of one flat color, written into the capture before the bundle copies it: where the card of a UI scene that
 // films it starts can be read off the pixels of a still.
@@ -221,6 +223,7 @@ beforeAll(async () => {
   writeFileSync(join(dir, MARK_FILE), markSvg(320, 120));
   writeFileSync(join(dir, SMALL_MARK_FILE), markSvg(100, 60));
   writeFileSync(join(dir, BRAND_MARK_FILE), markSvg(320, 120, theme(site).primary));
+  writeFileSync(join(dir, LIGHT_MARK_FILE), markSvg(320, 120, '#ffffff'));
   const hex = FLAT.map((c) => c.toString(16).padStart(2, '0')).join('');
   await runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x${hex}:s=780x3000`, '-frames:v', '1', join(dir, FLAT_FILE)], 'make a flat page');
   edl = makeFixtureEdl(site);
@@ -283,6 +286,7 @@ describe('the key frames of the video', () => {
     const button = close.text.find((t) => t.text === 'Start free')!;
     const domain = close.text.find((t) => t.text === new URL(site.url).hostname)!;
     expect(button.bg).toBe(cssRgb(surfaces.base.bg));
+    expect(button.colors).toEqual([cssRgb(surfaces.brand!.button.fg)]);
     expect(domain.bg).toBe(cssRgb(surfaces.brand!.bg));
   });
 
@@ -290,7 +294,7 @@ describe('the key frames of the video', () => {
     const logo = site.brand.logo!;
     const ink = averageInk(pngPixels(readFileSync(join(dir, logo.png ?? logo.file))).rgba);
     expect(ink).not.toBeNull();
-    const reads = inkReads(ink, logoBackgrounds(layoutScenes(edl, 0).scenes, theme(site).surfaces));
+    const reads = inkReads(ink, videoLogoBackgrounds(edl, theme(site).surfaces));
     // The capture records the whole text header, a strip that never reads in the close's box: recorded at proportions that
     // do, the logo is shown or not by its ink alone.
     const sized: SiteData = { ...site, brand: { ...site.brand, logo: { ...logo, width: 320, height: 120 } } };
@@ -379,6 +383,14 @@ describe('the new pieces and the rhythm', () => {
   it('shows the name at the opening too when the ink of the logo does not stand out on the brand color of the close', async () => {
     const branded: SiteData = { ...site, brand: { ...site.brand, logo: { file: BRAND_MARK_FILE, kind: 'svg', width: 320, height: 120 } } };
     const stills = await renderKeyframes({ edl: pieces, site: branded, runDir: dir, format: '9x16', hook: 2 });
+    expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
+    expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
+  });
+
+  it('shows the name in every version when the logo would vanish into the page at the opening of one hook, though not of the first', async () => {
+    // Hook 0 opens on a typed address, with no brand over it; hook 2 opens on the brand, on the page's own background.
+    const light: SiteData = { ...site, brand: { ...site.brand, logo: { file: LIGHT_MARK_FILE, kind: 'svg', width: 320, height: 120 } } };
+    const stills = await renderKeyframes({ edl: pieces, site: light, runDir: dir, format: '9x16', hook: 2 });
     expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
     expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
   });
