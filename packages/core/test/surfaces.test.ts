@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { EdlSchema, layoutScenes, sceneSurfaces, theme, wipeColor, type PieceName, type SiteData, type Surfaces } from '../src/index';
+import { contrast, EdlSchema, layoutScenes, sceneSurfaces, SURFACE_SEPARATION, theme, wipeColor, type PieceName, type SiteData, type Surfaces } from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
 const edlShop = EdlSchema.parse(edlShopJson);
-const surfaces = theme(siteShopJson as SiteData).surfaces;
+const siteShop = siteShopJson as SiteData;
+const surfaces = theme(siteShop).surfaces;
+const recolor = (colors: SiteData['brand']['colors']): SiteData => ({ ...siteShop, brand: { ...siteShop.brand, colors } });
 
 // The scenes of a video made of these pieces: the first is its hook, the last its close, the rest its body.
 const videoOf = (...pieces: PieceName[]) => {
@@ -45,9 +47,14 @@ describe('sceneSurfaces', () => {
     expect(sceneSurfaces(scenes, surfaces)).toEqual(['contrast', 'brand', 'contrast', 'base', 'brand']);
   });
 
-  it('gives every scene a surface', () => {
+  it('gives every scene a surface the site has', () => {
     const { scenes } = layoutScenes(edlShop, 0);
-    expect(sceneSurfaces(scenes, surfaces)).toHaveLength(scenes.length);
+    const names = sceneSurfaces(scenes, surfaces);
+    expect(names).toHaveLength(scenes.length);
+    for (const name of names) expect(['base', 'contrast', 'brand']).toContain(name);
+    const without = sceneSurfaces(scenes, { ...surfaces, brand: null });
+    expect(without).toHaveLength(scenes.length);
+    expect(without).not.toContain('brand');
   });
 });
 
@@ -63,10 +70,53 @@ describe('wipeColor', () => {
     expect(wipeColor(surfaces, 'brand', 'base')).toBe(wipeColor(surfaces, 'base', 'brand'));
   });
 
-  it('falls back to the primary when no color stands apart from both scenes', () => {
-    const flat = (bg: string) => ({ bg, fg: bg, muted: bg, accent: bg, button: { bg, fg: bg } });
-    const same: Surfaces = { base: flat('#0b7a4b'), contrast: flat('#0b7a4b'), brand: flat('#0b7a4b') };
-    expect(wipeColor(same, 'base', 'contrast')).toBe('#0b7a4b');
+  describe('on a site without a brand surface, where the primary is one of the two sides', () => {
+    const shows = (s: Surfaces, color: string) => [s.base.bg, s.contrast.bg].every((bg) => contrast(color, bg) >= SURFACE_SEPARATION);
+
+    it('wipes in another color of the site that shows against both: a gray between yellow and black', () => {
+      // No primary: the black text stands for it, and it is the contrast background too, so the primary, the contrast
+      // background and the page all match a side. The gray text reads 3.66:1 on the black, more on the yellow.
+      const celo = theme(
+        recolor([
+          { hex: '#fcff52', role: 'bg', weight: 0.902 },
+          { hex: '#fcf6f1', role: 'bg', weight: 0.096 },
+          { hex: '#000000', role: 'text', weight: 0.672 },
+          { hex: '#666666', role: 'text', weight: 0.317 },
+        ]),
+      ).surfaces;
+      expect([celo.base.button.bg, celo.contrast.bg, celo.brand]).toEqual(['#000000', '#000000', null]);
+      expect(wipeColor(celo, 'base', 'contrast')).toBe('#666666');
+      expect(shows(celo, wipeColor(celo, 'base', 'contrast'))).toBe(true);
+    });
+
+    it('wipes in the accent of the site before its other colors', () => {
+      // The primary is the darkest color of the site, so it is the contrast background; the accent shows against both.
+      const navy = theme(
+        recolor([
+          { hex: '#f7f7f2', role: 'bg', weight: 0.9 },
+          { hex: '#5b655f', role: 'text', weight: 0.2 },
+          { hex: '#1f2a24', role: 'primary', weight: 0.6 },
+          { hex: '#f4b942', role: 'accent', weight: 0.2 },
+        ]),
+      ).surfaces;
+      expect(navy.contrast.bg).toBe(navy.base.button.bg);
+      expect(wipeColor(navy, 'base', 'contrast')).toBe('#f4b942');
+      expect(shows(navy, wipeColor(navy, 'base', 'contrast'))).toBe(true);
+    });
+
+    it('takes the color that stands out most on the side it stands out less on, when none stands apart from both', () => {
+      // White and near-black are the two sides; the light gray is the only other color, 1.16:1 on the white.
+      const mono = theme(
+        recolor([
+          { hex: '#ffffff', role: 'bg', weight: 0.9 },
+          { hex: '#eeeeee', role: 'bg', weight: 0.05 },
+          { hex: '#111111', role: 'text', weight: 0.8 },
+          { hex: '#111111', role: 'primary', weight: 0.5 },
+        ]),
+      ).surfaces;
+      expect([mono.base.bg, mono.contrast.bg]).toEqual(['#ffffff', '#111111']);
+      expect(wipeColor(mono, 'base', 'contrast')).toBe('#eeeeee');
+    });
   });
 
   it('rejects a brand scene when the brand surface is unusable', () => {

@@ -69,7 +69,12 @@ export type FontSpec = { family: string; weight: number; stretch?: string; lette
 export type SurfaceName = 'base' | 'contrast' | 'brand';
 /** The colors of one background: every text pair at MIN_CONTRAST or better. `button`: the call to action's pill on it. */
 export type SurfaceColors = { bg: string; fg: string; muted: string; accent: string; button: { bg: string; fg: string } };
-export type Surfaces = { base: SurfaceColors; contrast: SurfaceColors; brand: SurfaceColors | null };
+/**
+ * The backgrounds a video can cut between. `palette`: the other colors a wipe may take, when none of these backgrounds
+ * stands apart from both sides of a cut (see wipeColor): the site's accents first, then its other colors by weight, then
+ * white and near-black, each once.
+ */
+export type Surfaces = { base: SurfaceColors; contrast: SurfaceColors; brand: SurfaceColors | null; palette: string[] };
 
 export const SURFACE_SEPARATION = 1.5; // two backgrounds closer than this (contrast ratio) are not told apart
 export const DARK_ENOUGH = 10; // a site color serves as `contrast` when its ratio to WHITE (or NEAR_BLACK, for a dark base) reaches this
@@ -149,7 +154,8 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
         }
       : null;
 
-  return { base, contrast: opposite, brand };
+  const byWeight = [...colors].sort((a, b) => b.weight - a.weight).map((c) => c.hex);
+  return { base, contrast: opposite, brand, palette: [...new Set([...accents, ...byWeight, WHITE, NEAR_BLACK])] };
 };
 
 export const theme = (site: SiteData): Theme => {

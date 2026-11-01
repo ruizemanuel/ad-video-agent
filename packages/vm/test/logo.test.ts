@@ -96,7 +96,7 @@ describe('the ink of the logo', () => {
 
 describe('the backgrounds of the logo', () => {
   const colors = (bg: string) => ({ bg, fg: '#111111', muted: '#111111', accent: '#111111', button: { bg: '#111111', fg: '#ffffff' } });
-  const surfaces: Surfaces = { base: colors('#f7f7f2'), contrast: colors('#101820'), brand: colors('#0b7a4b') };
+  const surfaces: Surfaces = { base: colors('#f7f7f2'), contrast: colors('#101820'), brand: colors('#0b7a4b'), palette: [] };
 
   it('are the close and the branded opening, which the fixture video has', () => {
     const { scenes } = layoutScenes(fixtureEdl(), 0);

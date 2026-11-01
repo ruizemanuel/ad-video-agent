@@ -121,9 +121,16 @@ describe('surfaces', () => {
       expect(contrast(s.button.fg, s.button.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
   });
 
-  it.each(sites)('draws every surface from site colors plus white and near-black: %s', (_, from) => {
-    for (const s of present(theme(from).surfaces))
+  it.each(sites)('draws every surface, and the colors a wipe may take, from site colors plus white and near-black: %s', (_, from) => {
+    const surfaces = theme(from).surfaces;
+    for (const s of present(surfaces))
       for (const color of [s.bg, s.fg, s.muted, s.accent, s.button.bg, s.button.fg]) expect(palette(from)).toContain(color);
+    expect(surfaces.palette).toEqual(expect.arrayContaining(['#ffffff', '#111111']));
+    for (const color of surfaces.palette) expect(palette(from)).toContain(color);
+  });
+
+  it('lists the colors a wipe may take: the accents first, then the other site colors by weight, then white and near-black', () => {
+    expect(theme(site).surfaces.palette).toEqual(['#f4b942', '#f7f7f2', '#1f2a24', '#0b7a4b', '#5b655f', '#ffffff', '#111111']);
   });
 
   it('drops the brand surface when no text reads on the primary', () => {

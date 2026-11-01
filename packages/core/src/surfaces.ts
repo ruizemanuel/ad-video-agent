@@ -66,12 +66,14 @@ const surfaceOf = (surfaces: Surfaces, name: SurfaceName) => {
 };
 
 /**
- * The wipe's color into a cut: the first of the primary, the contrast background and the page background that stands apart
- * (SURFACE_SEPARATION) from both scenes, so the wipe shows against each side. The primary when none does.
+ * The wipe's color into a cut: the first color that stands apart (SURFACE_SEPARATION) from both scenes, so the wipe shows
+ * against each side, of the primary, the contrast background, the page background and then the rest of the site's palette
+ * (see Surfaces): on a site without a brand surface the primary is often one of the sides, and the other two backgrounds
+ * are the sides. When none does, the one that stands out most on the side it stands out less on.
  */
 export const wipeColor = (surfaces: Surfaces, before: SurfaceName, after: SurfaceName): string => {
-  const primary = surfaces.base.button.bg;
   const sides = [surfaceOf(surfaces, before).bg, surfaceOf(surfaces, after).bg];
-  const candidates = [primary, surfaces.contrast.bg, surfaces.base.bg];
-  return candidates.find((color) => sides.every((bg) => contrast(color, bg) >= SURFACE_SEPARATION)) ?? primary;
+  const pool = [surfaces.base.button.bg, surfaces.contrast.bg, surfaces.base.bg, ...surfaces.palette];
+  const weaker = (color: string) => Math.min(...sides.map((bg) => contrast(color, bg)));
+  return pool.find((color) => weaker(color) >= SURFACE_SEPARATION) ?? pool.reduce((best, color) => (weaker(color) > weaker(best) ? color : best));
 };
