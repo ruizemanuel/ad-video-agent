@@ -167,6 +167,35 @@ describe('validateEdl: banned phrases', () => {
     for (const phrase of ['llevá tu', 'al siguiente nivel', 'revolucionario']) expect(problems[0]?.detail).toContain(phrase);
   });
 
+  describe('split across the lines of a scene', () => {
+    // A WordFlash as hook 0, as long as it takes to be read at the shop's tempo (see fewestBeats).
+    const asFlash = (lines: string[]): Case => {
+      const scene: Scene = { piece: 'WordFlash', beats: 2, lines: lines.map((text) => framing(text)) };
+      return shop({ ...edlShop, hooks: [[{ ...scene, beats: fewestBeats(scene, edlShop.bpm) ?? 8 }], ...edlShop.hooks.slice(1)] });
+    };
+
+    it('flags a phrase that a WordFlash splits across its lines, at the scene', () =>
+      expect(problemsOf(asFlash(['Llevá', 'tu tienda', 'al siguiente', 'nivel.']))).toEqual([
+        { where: 'hooks[0][0]', rule: 'banned-phrase', detail: '"Llevá tu tienda al siguiente nivel." contains "al siguiente nivel", "llevá tu"' },
+      ]));
+
+    it('flags a phrase within a line at the line only, and one split across lines at the scene', () =>
+      expect(problemsOf(asFlash(['Llevá tu', 'tienda', 'al siguiente', 'nivel.']))).toEqual([
+        { where: 'hooks[0][0].lines[0]', rule: 'banned-phrase', detail: '"Llevá tu" contains "llevá tu"' },
+        { where: 'hooks[0][0]', rule: 'banned-phrase', detail: '"Llevá tu tienda al siguiente nivel." contains "al siguiente nivel"' },
+      ]));
+
+    it('flags a phrase that a headline splits across its lines, at the scene', () =>
+      expect(problemsOf(shop(withBody(1, headline([framing('Vendé sin'), framing('esfuerzo.')], 8))))).toEqual([
+        { where: 'body[1]', rule: 'banned-phrase', detail: '"Vendé sin esfuerzo." contains "sin esfuerzo"' },
+      ]));
+
+    it('adds nothing for a WordFlash or a headline whose lines are clean together', () => {
+      expect(problemsOf(asFlash(['Vendé', 'lo tuyo.', 'Cobrás', 'todo.']))).toEqual([]);
+      expect(problemsOf(shop(withBody(1, headline([framing('Vendé lo tuyo.'), framing('Cobrás todo.')], 8))))).toEqual([]);
+    });
+  });
+
   it('uses the list it is given instead of the default one', () => {
     const { edl } = withFraming('Llevá tu marca al siguiente nivel');
     expect(validateEdl(edl, siteShop).map((p) => p.rule)).toEqual(['banned-phrase']);

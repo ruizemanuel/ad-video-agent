@@ -1,5 +1,6 @@
 // Filler typical of AI-written ads. validateEdl matches these case-insensitively as substrings of a line of
-// on-screen text, ignoring accents, so "Llevá tu" and "lleva tu" are the same phrase.
+// on-screen text, and of the lines of a WordFlash or a headline joined, ignoring accents, so "Llevá tu" and "lleva tu"
+// are the same phrase.
 export type BannedPhrases = { es: string[]; en: string[] };
 
 export const BANNED_PHRASES: BannedPhrases = {

@@ -146,6 +146,17 @@ const checkLines = (path: string, scene: Scene, claims: Map<string, Claim>, bann
   });
 };
 
+// A WordFlash, and a headline revealed line by line, split a sentence across their lines, and it is read whole: a banned
+// phrase is looked for in their lines joined too. One that only the joined text holds is reported at the scene.
+const checkJoinedLines = (path: string, scene: Scene, banned: [string, string][], report: Report): void => {
+  if (scene.piece !== 'WordFlash' && scene.piece !== 'KineticHeadline') return;
+  const text = scene.lines.map((line) => line.text).join(' ');
+  const lines = scene.lines.map((line) => fold(line.text));
+  const joined = fold(text);
+  const found = banned.filter(([, phrase]) => joined.includes(phrase) && !lines.some((line) => line.includes(phrase))).map(([original]) => `"${original}"`);
+  if (found.length) report(path, 'banned-phrase', `"${text}" contains ${found.join(', ')}`);
+};
+
 // A UiFocus or a UiScroll films the page: its target is a box of the shot, and the box has to be product UI, because a
 // text card (a feature, a "why us" section) filmed under a caption reads as the product the caption talks about. The
 // camera has to frame it cleanly in the main video, too (see framesCleanly): near the end of a short page the top edge
@@ -434,6 +445,7 @@ export const validateEdl = (edl: Edl, site: SiteData, banned: BannedPhrases = BA
   const placed = placements(edl);
   for (const { path, scene } of scenePaths(edl)) {
     checkLines(path, scene, claims, bannedFolded, report);
+    checkJoinedLines(path, scene, bannedFolded, report);
     checkScene(path, scene, site, report);
     const where = placed.get(path);
     if (where) checkReading(path, scene, where.timed, where.at, edl.bpm, report);
