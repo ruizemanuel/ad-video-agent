@@ -18,10 +18,12 @@ import {
   type Edl,
   type Format,
   type SiteData,
+  type SiteFont,
   type Still,
 } from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { capture, type CapturedSite } from '../../src/capture';
+import { resolveFont } from '../../src/capture/fonts';
 import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
@@ -212,6 +214,8 @@ let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
 let dir: string;
 let site: CapturedSite;
 let edl: Edl;
+/** Source Serif 4, which the capture puts in for every serif Google Fonts does not have: its glyphs stand about 1.36 em tall. */
+let serif: SiteFont;
 /** The bundle the tests made, removed at the end. */
 let bundleDir: string | undefined;
 
@@ -226,6 +230,7 @@ beforeAll(async () => {
   writeFileSync(join(dir, LIGHT_MARK_FILE), markSvg(320, 120, '#ffffff'));
   const hex = FLAT.map((c) => c.toString(16).padStart(2, '0')).join('');
   await runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x${hex}:s=780x3000`, '-frames:v', '1', join(dir, FLAT_FILE)], 'make a flat page');
+  serif = await resolveFont('Source Serif 4', 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
   edl = makeFixtureEdl(site);
 });
 afterAll(async () => {
@@ -371,6 +376,16 @@ describe('the new pieces and the rhythm', () => {
     const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
     const marked = await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 2 });
     expect(textsOf(marked, 'hooks[2][0]')).toEqual(['Sell on WhatsApp', 'with no fees.']);
+  });
+
+  it('keeps the brand name of the opening inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {
+    // Set as the capture sets celo.org's heading font, whose content box starts above the line's own.
+    const tall: SiteData = { ...site, brand: { ...site.brand, fonts: [{ ...serif, weight: '400', letterSpacingEm: -0.01, lineHeight: 1.13 }] } };
+    const opening = (await renderKeyframes({ edl: pieces, site: tall, runDir: dir, format: '9x16', hook: 2 })).filter((s) => s.path === 'hooks[2][0]');
+    const name = opening.flatMap((s) => s.text).find((t) => t.text === brandName(site))!;
+    expect(name.h / name.fontSize, 'the content box of the name, in em').toBeGreaterThan(1.3);
+    expect(name.y).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
+    expect(checkStills(opening, pieces, tall, '9x16', 2).filter((c) => !c.pass)).toEqual([]);
   });
 
   it('decides once whether the video shows the logo: a logo too small for the close is the name at the opening too', async () => {

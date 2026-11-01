@@ -206,14 +206,25 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
   const surface = useSurface();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const set = useMemo(
-    () => layoutLines([toWords({ text: brandName(site), kind: 'framing' })], { width: name.width, max: name.max, min: TYPE[format].min, maxLines: 2, measure: measureWith(theme.display) }),
-    [site, name.width, name.max, format, theme],
-  );
+  const set = useMemo(() => {
+    const { lines, size } = layoutLines([toWords({ text: brandName(site), kind: 'framing' })], {
+      width: name.width,
+      max: name.max,
+      min: TYPE[format].min,
+      maxLines: 2,
+      measure: measureWith(theme.display),
+    });
+    const glyphs = glyphOverhang(theme.display.lineHeight) * size;
+    // The probe measures the content box of the first line, the font's own ascent and descent, which in some fonts stands
+    // taller than the glyphs allowed for (Source Serif 4, about 1.36 em): above, the room is the larger of the two, as for
+    // the first line of a caption (see useUiCaptions).
+    const above = Math.max(glyphs, Math.ceil(contentOverhang(theme.display, size, lineText(lines[0] ?? []))));
+    return { lines, size, padding: `${above}px 0 ${glyphs}px` };
+  }, [site, name.width, name.max, format, theme]);
   const logo = site.brand.logo;
   if (!logo || !logoShown)
     return (
-      <div style={{ padding: `${glyphOverhang(theme.display.lineHeight) * set.size}px 0` }}>
+      <div style={{ padding: set.padding }}>
         <RevealLines lines={set.lines} size={set.size} font={theme.display} color={surface.accent} accent={surface.accent} delay={delay} align={align} />
       </div>
     );
