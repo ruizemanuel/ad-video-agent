@@ -66,6 +66,14 @@ export const pickTextPair = (colors: Color[]): { fg: string; bg: string } => {
 
 export type FontSpec = { family: string; weight: number; stretch?: string; letterSpacingEm: number; lineHeight: number };
 
+export type SurfaceName = 'base' | 'contrast' | 'brand';
+/** The colors of one background: every text pair at MIN_CONTRAST or better. `button`: the call to action's pill on it. */
+export type SurfaceColors = { bg: string; fg: string; muted: string; accent: string; button: { bg: string; fg: string } };
+export type Surfaces = { base: SurfaceColors; contrast: SurfaceColors; brand: SurfaceColors | null };
+
+export const SURFACE_SEPARATION = 1.5; // two backgrounds closer than this (contrast ratio) are not told apart
+export const DARK_ENOUGH = 10; // a site color serves as `contrast` when its ratio to WHITE (or NEAR_BLACK, for a dark base) reaches this
+
 export type Theme = {
   bg: string;
   fg: string;
@@ -76,6 +84,7 @@ export type Theme = {
   surface: string; // card background
   display: FontSpec;
   body: FontSpec;
+  surfaces: Surfaces; // the backgrounds a video can cut between; `base` is the fields above
 };
 
 const FALLBACK_FAMILY = 'Inter, "Helvetica Neue", Arial, sans-serif';
@@ -91,6 +100,51 @@ const fontSpec = (font: SiteFont | undefined, family: string, fallbackWeight: nu
 export const DISPLAY_FAMILY = 'BrandDisplay';
 export const BODY_FAMILY = 'BrandBody';
 
+// The backgrounds a video can cut between. `base` is the theme itself. `contrast` is its opposite in lightness:
+// the site's darkest color on a light page (its lightest on a dark one), or plain near-black (white) when no
+// site color is extreme enough to read as a deliberate background. `brand` is the primary color itself, dropped
+// when it would not stand apart from the other two or when no text reads on it. Everything comes from the site
+// plus white and near-black, like the rest of the theme, so the stills check keeps judging the same palette.
+const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
+  const readers = [...byRole(colors, 'bg'), ...byRole(colors, 'text')]; // site colors that can be text on a background
+  const accents = byRole(colors, 'accent');
+  // The strongest reader on `bg` besides `fg`, so secondary text still differs from the main one.
+  const mutedOn = (bg: string, fg: string, candidates: string[]) => strongestOn(bg, candidates.filter((c) => c !== fg)) ?? fg;
+
+  const base: SurfaceColors = { bg: t.bg, fg: t.fg, muted: t.muted, accent: t.accentText, button: { bg: t.primary, fg: t.onPrimary } };
+
+  const lightBase = contrast(t.bg, NEAR_BLACK) >= contrast(t.bg, WHITE);
+  const [away, fallback] = lightBase ? [WHITE, NEAR_BLACK] : [NEAR_BLACK, WHITE];
+  const farthest = colors.map((c) => c.hex).sort((a, b) => contrast(b, away) - contrast(a, away))[0];
+  const oppositeBg = farthest && contrast(farthest, away) >= DARK_ENOUGH ? farthest : fallback;
+  const oppositeFg = fgOn(oppositeBg, readers);
+  const opposite: SurfaceColors = {
+    bg: oppositeBg,
+    fg: oppositeFg,
+    muted: mutedOn(oppositeBg, oppositeFg, readers),
+    accent: [t.primary, ...accents].find((c) => contrast(c, oppositeBg) >= MIN_CONTRAST) ?? oppositeFg,
+    button: { bg: t.primary, fg: t.onPrimary },
+  };
+
+  // White and near-black join the candidates because a primary is often mid-tone, and then no site color reads on it.
+  const onPrimary = [...readers, WHITE, NEAR_BLACK];
+  const brandFg = strongestOn(t.primary, onPrimary);
+  const apart = contrast(t.primary, base.bg) >= SURFACE_SEPARATION && contrast(t.primary, opposite.bg) >= SURFACE_SEPARATION;
+  const brand: SurfaceColors | null =
+    apart && brandFg
+      ? {
+          bg: t.primary,
+          fg: brandFg,
+          muted: mutedOn(t.primary, brandFg, onPrimary),
+          accent: accents.find((c) => contrast(c, t.primary) >= MIN_CONTRAST) ?? brandFg,
+          // The pill takes the page's color, so it stands out from the primary behind it.
+          button: { bg: base.bg, fg: contrast(t.primary, base.bg) >= MIN_CONTRAST ? t.primary : base.fg },
+        }
+      : null;
+
+  return { base, contrast: opposite, brand };
+};
+
 export const theme = (site: SiteData): Theme => {
   const colors = site.brand.colors;
   const { fg, bg } = pickTextPair(colors);
@@ -100,7 +154,7 @@ export const theme = (site: SiteData): Theme => {
   const display = site.brand.fonts.find((f) => f.role === 'display');
   const body = site.brand.fonts.find((f) => f.role === 'body') ?? (display?.alsoBody ? display : undefined);
   const bodySpec = fontSpec(body, body === display ? DISPLAY_FAMILY : BODY_FAMILY, 500);
-  return {
+  const fields = {
     bg,
     fg,
     muted,
@@ -111,6 +165,7 @@ export const theme = (site: SiteData): Theme => {
     display: fontSpec(display, DISPLAY_FAMILY, 700),
     body: { ...bodySpec, stretch: body === display ? undefined : bodySpec.stretch, letterSpacingEm: 0 },
   };
+  return { ...fields, surfaces: surfacesOf(colors, fields) };
 };
 
 // Font files to register, as loadFont() options (urls relative to the public dir).

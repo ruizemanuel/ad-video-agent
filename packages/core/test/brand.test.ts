@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_CONTRAST, alpha, contrast, fontFaces, mix, theme, type SiteData } from '../src/index';
+import { MIN_CONTRAST, alpha, contrast, fontFaces, mix, theme, type SiteData, type SurfaceColors } from '../src/index';
 import siteShop from './fixtures/site-shop.json';
 
 const site = siteShop as SiteData;
@@ -56,6 +56,75 @@ describe('theme', () => {
     const withLineHeight = (lineHeight: number) =>
       theme({ ...site, brand: { ...site.brand, fonts: site.brand.fonts.map((f) => ({ ...f, lineHeight })) } }).display.lineHeight;
     expect([withLineHeight(0.5), withLineHeight(2)]).toEqual([0.94, 1.12]);
+  });
+});
+
+describe('surfaces', () => {
+  const recolor = (colors: SiteData['brand']['colors']): SiteData => ({ ...site, brand: { ...site.brand, colors } });
+  const withPrimary = (hex: string) => recolor(site.brand.colors.map((c) => (c.role === 'primary' ? { ...c, hex } : c)));
+  const darkSite = recolor([
+    { hex: '#101418', role: 'bg', weight: 0.9 },
+    { hex: '#e8ece9', role: 'text', weight: 0.7 },
+    { hex: '#0b7a4b', role: 'primary', weight: 0.6 },
+  ]);
+  const present = (s: ReturnType<typeof theme>['surfaces']) => Object.values(s).filter((surface): surface is SurfaceColors => surface !== null);
+
+  it("keeps base as today's theme", () => {
+    const t = theme(site);
+    expect(t.surfaces.base).toEqual({ bg: '#f7f7f2', fg: '#1f2a24', muted: t.muted, accent: t.accentText, button: { bg: '#0b7a4b', fg: t.onPrimary } });
+  });
+
+  it('takes the darkest site color as the contrast background of a light site', () => {
+    const { contrast: dark } = theme(site).surfaces;
+    expect(dark.bg).toBe('#1f2a24');
+    expect(dark.fg).toBe('#ffffff');
+    // The primary reads 2.76:1 on it, so the accent falls to the site's accent color (8.39:1).
+    expect(dark.accent).toBe('#f4b942');
+  });
+
+  it('puts the brand color behind white text, with an inverted button', () => {
+    const { brand } = theme(site).surfaces;
+    expect(brand?.bg).toBe('#0b7a4b');
+    expect(brand?.fg).toBe('#ffffff'); // 5.39:1
+    expect(brand?.button).toEqual({ bg: '#f7f7f2', fg: '#0b7a4b' }); // 5.01:1
+  });
+
+  it('keeps every text pair of every surface at 4.5:1 or better', () => {
+    for (const s of present(theme(site).surfaces)) {
+      expect(contrast(s.fg, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
+      expect(contrast(s.muted, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
+      expect(contrast(s.accent, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
+      expect(contrast(s.button.fg, s.button.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
+    }
+  });
+
+  it('draws every surface from site colors plus white and near-black', () => {
+    for (const s of present(theme(site).surfaces))
+      for (const color of [s.bg, s.fg, s.muted, s.accent, s.button.bg, s.button.fg]) expect(palette(site)).toContain(color);
+  });
+
+  it('drops the brand surface when no text reads on the primary', () => {
+    expect(theme(withPrimary('#777777')).surfaces.brand).toBeNull();
+  });
+
+  it('drops the brand surface when the primary is too close to the page', () => {
+    expect(theme(withPrimary('#f0efe8')).surfaces.brand).toBeNull();
+  });
+
+  it('falls back to near-black when the site has no dark color', () => {
+    const lightOnly = recolor(site.brand.colors.filter((c) => c.hex !== '#1f2a24'));
+    expect(theme(lightOnly).surfaces.contrast.bg).toBe('#111111');
+  });
+
+  it('makes the contrast surface light on a dark site', () => {
+    const { base, contrast: light } = theme(darkSite).surfaces;
+    expect(base.bg).toBe('#101418');
+    expect(light.bg).toBe('#e8ece9'); // 15.83:1 on near-black, past the 10 a site color needs
+  });
+
+  it('keeps the page text on the brand button when the primary is too dim to read on the page', () => {
+    // The primary reads 3.43:1 on this dark page, so it cannot be the pill's text.
+    expect(theme(darkSite).surfaces.brand?.button).toEqual({ bg: '#101418', fg: '#e8ece9' });
   });
 });
 
