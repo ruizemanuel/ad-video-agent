@@ -44,6 +44,11 @@ describe('DIRECTOR_SYSTEM', () => {
     for (const rule of ['`atBeat` is 2 or later', 'It lasts 6 beats (never fewer than 4)', 'exactly the `host`']) expect(DIRECTOR_SYSTEM).toContain(rule);
   });
 
+  it('counts a series of cards as one stretch of type in the alternation of type and product scenes', () =>
+    expect(DIRECTOR_SYSTEM.replace(/\s+/g, ' ')).toContain(
+      'Alternate type scenes and product scenes (a series of `PointCard`s counts as one stretch of type); never two `UiFocus` in a row on the same shot.',
+    ));
+
   describe('WordCycle', () => {
     // The prompts wrap their lines: the rules are read as a sentence.
     const flat = (text: string): string => text.replace(/\s+/g, ' ');

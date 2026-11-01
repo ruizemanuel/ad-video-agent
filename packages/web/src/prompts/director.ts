@@ -181,7 +181,8 @@ const COMPOSITION_RULES = `Composition rules:
 - Never repeat a phrase across scenes (e.g. "en un link" in two captions).
 - A \`UiScroll\` must land on something worth seeing (\`boxIndex\` on a heading, price or button with
   \`product: true\`), not in the middle of a photo or between sections.
-- Alternate type scenes and product scenes; never two \`UiFocus\` in a row on the same shot.
+- Alternate type scenes and product scenes (a series of \`PointCard\`s counts as one stretch of type);
+  never two \`UiFocus\` in a row on the same shot.
 - Punctuation is consistent: statements end with a period, questions with a question mark.
 - **Extra pages** (shots whose id starts with \`x\`, sections in \`extraSections\`) are imagery only:
   show them, but never use their text as a claim's quote.
