@@ -1,14 +1,27 @@
-// The video of one hook: its scenes back to back on the beat, the brand wipe on the cuts that ask for it, the brand's
-// fonts (and the size and ink of its logo) loaded before anything is measured, and, for the key frames, the probe that
-// measures the text of each frame.
+// The video of one hook: its scenes back to back on the beat, each on its background (see sceneSurfaces), the wipe on the
+// cuts that ask for it in a color that shows against both sides, the brand's fonts (and the size and ink of its logo)
+// loaded before anything is measured, and, for the key frames, the probe that measures the text of each frame.
 import { useEffect, useLayoutEffect, useMemo, useState, type FC } from 'react';
 import { loadFont } from '@remotion/fonts';
 import { Audio } from '@remotion/media';
 import { AbsoluteFill, cancelRender, continueRender, delayRender, Sequence, staticFile, useCurrentFrame } from 'remotion';
-import { fontFaces, layoutScenes, theme as makeTheme, opensWithBrand, WIPE_FRAMES, type Edl, type Format, type PieceName, type ProbeItem, type SiteData } from '@app/core';
+import {
+  fontFaces,
+  layoutScenes,
+  theme as makeTheme,
+  opensWithBrand,
+  sceneSurfaces,
+  WIPE_FRAMES,
+  wipeColor,
+  type Edl,
+  type Format,
+  type PieceName,
+  type ProbeItem,
+  type SiteData,
+} from '@app/core';
 import { averageInk, logoBackgrounds, recordedLogoSize, videoShowsLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
-import { Ctx, type PieceProps } from './pieces/common';
+import { Ctx, SurfaceCtx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
 import { KineticHeadline } from './pieces/KineticHeadline';
 import { TypeIn } from './pieces/TypeIn';
@@ -148,25 +161,33 @@ const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> 
   const backgrounds = useMemo(() => logoBackgrounds(layoutScenes(edl, 0).scenes, theme.surfaces), [edl, theme]);
   const brand = useBrand(site, format, backgrounds);
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
+  // The background of each scene of this version: its hook changes which ones the type scenes of the body take.
+  const names = useMemo(() => sceneSurfaces(scenes, theme.surfaces), [scenes, theme]);
   if (!brand) return <AbsoluteFill style={{ background: theme.bg }} />;
   return (
     <Ctx.Provider value={{ theme, format, site, edl, logoShown: brand.logoShown }}>
       <AbsoluteFill style={{ background: theme.bg }}>
         {scenes.map((timed) => {
           const Piece = PIECES[timed.scene.piece];
+          // sceneSurfaces names the brand surface only for a site that has one.
+          const surface = theme.surfaces[names[timed.index] ?? 'base'] ?? theme.surfaces.base;
           return (
-            <Sequence key={timed.index} from={timed.from} durationInFrames={timed.duration} name={`${timed.role}-${timed.index}-${timed.scene.piece}`}>
-              <Piece scene={timed.scene} timed={timed} showLogo={opensWithBrand(timed)} />
-            </Sequence>
+            <SurfaceCtx.Provider key={timed.index} value={surface}>
+              <Sequence from={timed.from} durationInFrames={timed.duration} name={`${timed.role}-${timed.index}-${timed.scene.piece}`}>
+                <Piece scene={timed.scene} timed={timed} showLogo={opensWithBrand(timed)} />
+              </Sequence>
+            </SurfaceCtx.Provider>
           );
         })}
-        {scenes.map((timed) =>
-          timed.index > 0 && timed.scene.transitionIn === 'wipe' ? (
+        {scenes.map((timed) => {
+          // The first scene has none before it, and no wipe brings it in.
+          const [before, after] = [names[timed.index - 1], names[timed.index]];
+          return before && after && timed.scene.transitionIn === 'wipe' ? (
             <Sequence key={`wipe-${timed.index}`} from={timed.from - WIPE_FRAMES / 2} durationInFrames={WIPE_FRAMES} name={`wipe-${timed.index}`}>
-              <Wipe color={theme.primary} />
+              <Wipe color={wipeColor(theme.surfaces, before, after)} />
             </Sequence>
-          ) : null,
-        )}
+          ) : null;
+        })}
         {probe && <Probe />}
         {music && <Audio src={staticFile(music)} />}
       </AbsoluteFill>

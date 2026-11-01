@@ -3,7 +3,7 @@ import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import { alpha, contrast, MIN_CONTRAST, mix, TYPE, TYPED_BY, type Format } from '@app/core';
 import { pressState, typedChars, typeInPressFrame } from '../rhythm';
 import { fitAddress, layoutLines, lineText, toWords } from '../type';
-import { centeredSafeBox, fontStyle, measureWith, progress, useAd, type PieceProps } from './common';
+import { centeredSafeBox, fontStyle, measureWith, progress, useAd, useSurface, type PieceProps } from './common';
 
 // The widest the bar gets: across a whole 16:9 frame it reads as a banner, not as a field.
 const MAX_BAR = 1200;
@@ -48,6 +48,7 @@ const Arrow: FC<{ up: boolean; size: number; color: string }> = ({ up, size, col
 // field, and probed as one line, the address it is.
 export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
   const { theme, format, edl } = useAd();
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const units = useMemo(() => barUnits(format), [format]);
@@ -80,10 +81,10 @@ export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
   // The button lights up once the text is in, then it is pressed.
   const ready = progress(frame, typingEnd, typingEnd + 6);
   const press = pressState(frame, pressAt);
-  const field = contrast(theme.fg, theme.surface) >= MIN_CONTRAST ? theme.surface : theme.bg;
+  const field = contrast(surface.fg, theme.surface) >= MIN_CONTRAST ? theme.surface : surface.bg;
   const { unit, button, inset, padX, gap } = units;
   return (
-    <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(theme.bg, theme.primary, 0.1)} 0%, ${theme.bg} 70%)` }}>
+    <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(surface.bg, theme.primary, 0.1)} 0%, ${surface.bg} 70%)` }}>
       <div
         style={{
           position: 'absolute',
@@ -105,7 +106,7 @@ export const TypeIn: FC<PieceProps> = ({ scene, timed }) => {
           style={{
             ...fontStyle(theme.body),
             fontSize: bar.size,
-            color: theme.fg,
+            color: surface.fg,
             position: 'absolute',
             left: padX,
             right: inset + button + gap,

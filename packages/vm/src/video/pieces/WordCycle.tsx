@@ -2,7 +2,7 @@ import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { safeWidth, TYPE, WORD_ROLL, wordEnterFrame } from '@app/core';
 import { layoutLines, lineSources, toWords, type Measure } from '../type';
-import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, type PieceProps } from './common';
+import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, useSurface, type PieceProps } from './common';
 
 // How far a word travels through the mask, as a share of its line: past its own line, descenders included.
 const TRAVEL = 1.35;
@@ -14,6 +14,7 @@ const SLOT_LESS = 0.16;
 // rolls out, fading. For short lists of the site.
 export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
   const { theme, format, edl } = useAd();
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const type = TYPE[format];
   const words = scene.lines.slice(1);
@@ -36,12 +37,12 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
   const enters = words.map((_, k) => wordEnterFrame(k, timed, edl.bpm));
   const box = room.above + lineHeight + room.below;
   return (
-    <AbsoluteFill style={{ background: theme.bg }}>
+    <AbsoluteFill style={{ background: surface.bg }}>
       {/* Isolated, so that what is stacked inside it never rises over the wipe of the scene that follows. */}
       <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center', isolation: 'isolate' }}>
         {/* Over the mask, so that the word rolling out never draws on the prefix's descenders, which hang into it. */}
         <div style={{ position: 'relative', zIndex: 1 }}>
-          <RevealLines lines={head} size={size} font={theme.display} color={theme.fg} accent={theme.accentText} align={type.align} />
+          <RevealLines lines={head} size={size} font={theme.display} color={surface.fg} accent={surface.accent} align={type.align} />
         </div>
         <div
           style={{
@@ -59,7 +60,7 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
             margin: `0 0 ${lineHeight - SLOT_LESS - box}em`,
             whiteSpace: 'nowrap',
             textAlign: type.align,
-            color: theme.accentText,
+            color: surface.accent,
           }}
         >
           {words.map((word, k) => {

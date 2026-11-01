@@ -1,5 +1,6 @@
-// What the pieces share: the context of the Ad, easing, the brand's type set and revealed line by line, the logo, the safe
-// boxes of each format, and the stage of the UI scenes (a caption over a card with the real UI).
+// What the pieces share: the context of the Ad and the background of their scene, easing, the brand's type set and
+// revealed line by line, the logo, the safe boxes of each format, and the stage of the UI scenes (a caption over a card
+// with the real UI).
 import { createContext, useContext, useMemo, type CSSProperties, type FC, type ReactNode } from 'react';
 import { measureText } from '@remotion/layout-utils';
 import { AbsoluteFill, Easing, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
@@ -23,6 +24,7 @@ import {
   type Shot,
   type SiteData,
   type Stage,
+  type SurfaceColors,
   type Theme,
   type TimedScene,
 } from '@app/core';
@@ -40,6 +42,20 @@ export const useAd = (): AdContext => {
   const context = useContext(Ctx);
   if (!context) throw new Error('A piece was rendered outside the Ad.');
   return context;
+};
+
+/** The colors of the background a scene is on (see sceneSurfaces): the Ad gives each scene its own. */
+export const SurfaceCtx = createContext<SurfaceColors | null>(null);
+
+/**
+ * The colors of the background the piece is on, the ones its text and its button are set in: a piece paints that
+ * background itself, as a solid color the probe can read. The UI scenes and the typing are always on `base`, the page's
+ * own colors.
+ */
+export const useSurface = (): SurfaceColors => {
+  const surface = useContext(SurfaceCtx);
+  if (!surface) throw new Error('A piece was rendered outside the background of its scene.');
+  return surface;
 };
 
 export type PieceProps = { scene: Scene; timed: TimedScene; showLogo: boolean };
@@ -180,12 +196,14 @@ export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; st
 
 /**
  * The brand: the site's logo fitted in `box` when the video shows it (decided once per video, see videoShowsLogo), else
- * its name (see brandName) in the site's heading font and brand color, set as large as `name.max` in `name.width`, on up to 2 lines, with room above and
- * below for its glyphs (a mark flush with the edge of the safe zone keeps them inside it). A whole text header marked
- * as the logo would be a sliver in the box, or run off the frame at the box's height.
+ * its name (see brandName) in the site's heading font and the accent of the background it is on (the brand color on the
+ * page's own), set as large as `name.max` in `name.width`, on up to 2 lines, with room above and below for its glyphs (a
+ * mark flush with the edge of the safe zone keeps them inside it). A whole text header marked as the logo would be a
+ * sliver in the box, or run off the frame at the box's height.
  */
 export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; align: 'left' | 'center'; delay?: number }> = ({ box, name, align, delay = 0 }) => {
   const { site, theme, format, logoShown } = useAd();
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const set = useMemo(
@@ -196,7 +214,7 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
   if (!logo || !logoShown)
     return (
       <div style={{ padding: `${glyphOverhang(theme.display.lineHeight) * set.size}px 0` }}>
-        <RevealLines lines={set.lines} size={set.size} font={theme.display} color={theme.accentText} accent={theme.accentText} delay={delay} align={align} />
+        <RevealLines lines={set.lines} size={set.size} font={theme.display} color={surface.accent} accent={surface.accent} delay={delay} align={align} />
       </div>
     );
   const p = spring({ frame: frame - delay, fps, config: { damping: 200 }, durationInFrames: 14 });
@@ -319,6 +337,7 @@ export const useUiCaptions = (scene: Scene, timed: TimedScene): UiCaptions => {
  */
 export const UiStage: FC<{ captions: UiCaptions; stage: Stage; shot: Shot; placed: { x: number; y: number; scale: number } }> = ({ captions, stage, shot, placed }) => {
   const { theme, format } = useAd();
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { sets, swap } = captions;
@@ -329,9 +348,9 @@ export const UiStage: FC<{ captions: UiCaptions; stage: Stage; shot: Shot; place
   const caption = (children: ReactNode, opacity: number, y: number) => (
     <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, opacity, transform: `translateY(${y}px)` }}>{children}</div>
   );
-  const text = { font: theme.display, color: theme.fg, accent: theme.accentText };
+  const text = { font: theme.display, color: surface.fg, accent: surface.accent };
   return (
-    <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(theme.bg, theme.primary, 0.1)} 0%, ${theme.bg} 70%)` }}>
+    <AbsoluteFill style={{ background: `radial-gradient(120% 70% at 50% 100%, ${mix(surface.bg, theme.primary, 0.1)} 0%, ${surface.bg} 70%)` }}>
       <div style={{ position: 'absolute', left: captionLeft(format), top: stage.captionTop, width: captionWidth(format), height: stage.captionHeight }}>
         {/* Each caption is on screen, and probed, only while it can be seen. */}
         {first && out < 1 && caption(<RevealLines lines={first.lines} size={first.size} {...text} delay={CAPTION_DELAY} />, 1 - out, -out * drift)}

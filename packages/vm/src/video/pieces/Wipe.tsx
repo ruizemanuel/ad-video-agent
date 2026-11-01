@@ -3,8 +3,9 @@ import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from 'remo
 import { WIPE_FRAMES } from '@app/core';
 import { EASE_IN_OUT } from './common';
 
-// The brand wipe: a panel in the brand color sweeps across the frame and covers it whole exactly on the cut, WIPE_FRAMES
-// long and centered on it. A plain cut needs no component: the scenes simply change on the beat.
+// The brand wipe: a panel sweeps across the frame and covers it whole exactly on the cut, WIPE_FRAMES long and centered on
+// it, in the brand color or, when that would not show against both scenes it joins, a background that does (see
+// wipeColor). A plain cut needs no component: the scenes simply change on the beat.
 export const Wipe: FC<{ color: string }> = ({ color }) => {
   const frame = useCurrentFrame();
   const { width } = useVideoConfig();

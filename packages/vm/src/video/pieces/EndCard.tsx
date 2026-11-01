@@ -4,19 +4,22 @@ import { alpha, BUTTON_IN, endCardSteps, MARK_AT, TAGLINE_AT, TYPE } from '@app/
 import { brandName, closeLogoBox } from '../logo';
 import { pressState } from '../rhythm';
 import { fitAddress, layoutLines, pillSize, toWords } from '../type';
-import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, type PieceProps } from './common';
+import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, useSurface, type PieceProps } from './common';
 
 // The pill of the call to action: 0.62 em of padding above and below a line 1 em tall.
 const PILL_HEIGHT_EM = 2.24;
 
-// The close, in two steps (spec 6.5). First the brand: its logo, or its name in the site's heading font and brand color
-// when the logo does not read (see logoReads), with the optional tagline (lines[1]) under it. Then, on beat 2, the
-// brand moves up as the site's call to action (lines[0]) comes in under it as a button in the brand color, over the
-// domain; on beat 4.5 the button is pressed (see endCardSteps). Centered on the frame's center line, not in the safe
+// The close, in two steps (spec 6.5), on the brand color (the contrast background when the site has no brand surface,
+// see sceneSurfaces). First the brand: its logo, or its name in the site's heading font and the background's accent when
+// the logo does not read (see videoShowsLogo), with the optional tagline (lines[1]) under it. Then, on beat 2, the brand
+// moves up as the site's call to action (lines[0]) comes in under it as a button, over the domain; on beat 4.5 the
+// button is pressed (see endCardSteps). The button is the background's own: on the brand color it is inverted, in the
+// page's color, so that it does not vanish into what is behind it. Centered on the frame's center line, not in the safe
 // zone (which is lopsided in 9:16).
 export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   const ad = useAd();
   const { theme, format, site, edl } = ad;
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const layout = useMemo(() => {
     const type = TYPE[format];
@@ -53,13 +56,13 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   const domainIn = progress(frame, button + 5, button + BUTTON_IN);
   const pressed = pressState(frame, press);
   return (
-    <AbsoluteFill style={{ background: theme.bg }}>
+    <AbsoluteFill style={{ background: surface.bg }}>
       <div style={{ ...column, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: `translateY(${((1 - moved) * below) / 2}px)` }}>
           <BrandMark box={logoBox} name={{ max: Math.round(type.headline * 0.8), width: column.width }} align="center" delay={MARK_AT} />
           {tagline && (
             <div style={{ marginTop: gaps.tagline }}>
-              <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={theme.fg} accent={theme.accentText} delay={TAGLINE_AT} align="center" />
+              <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={surface.fg} accent={surface.accent} delay={TAGLINE_AT} align="center" />
             </div>
           )}
           <div style={{ marginTop: gaps.button, height: buttonHeight, display: 'flex', alignItems: 'center' }}>
@@ -71,12 +74,13 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
                   ...fontStyle(theme.display),
                   fontSize: ctaSize,
                   lineHeight: 1,
-                  color: theme.onPrimary,
-                  background: theme.primary,
+                  color: surface.button.fg,
+                  background: surface.button.bg,
                   padding: '0.62em 1.1em',
                   borderRadius: 999,
                   whiteSpace: 'nowrap',
-                  boxShadow: `0 0 0 ${Math.round(ctaSize * (0.06 + 0.24 * (1 - pressed.glow)))}px ${alpha(theme.primary, 0.3 * pressed.glow)}, 0 24px 60px ${alpha(theme.primary, 0.3)}`,
+                  // The glow is the pill's own color: one in the primary would not show on the brand color.
+                  boxShadow: `0 0 0 ${Math.round(ctaSize * (0.06 + 0.24 * (1 - pressed.glow)))}px ${alpha(surface.button.bg, 0.3 * pressed.glow)}, 0 24px 60px ${alpha(surface.button.bg, 0.3)}`,
                   opacity: pillIn,
                   transform: `translateY(${(1 - pillIn) * 40}px) scale(${pressed.scale})`,
                 }}
@@ -88,7 +92,7 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
           {domain && (
             <div style={{ marginTop: gaps.domain, height: domainHeight }}>
               {domainIn > 0 && (
-                <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: domain.size, color: theme.muted, opacity: domainIn, whiteSpace: 'nowrap', textAlign: 'center' }}>
+                <div data-qa-line style={{ ...fontStyle(theme.body), fontSize: domain.size, color: surface.muted, opacity: domainIn, whiteSpace: 'nowrap', textAlign: 'center' }}>
                   {/* One line of the probe, the whole address, however many lines it takes. */}
                   {domain.parts.map((part, i) => (
                     <Fragment key={i}>

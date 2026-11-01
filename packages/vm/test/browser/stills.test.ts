@@ -4,13 +4,30 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CAPTION_GAP, CAPTION_LINE, checkStills, FORMATS, layoutScenes, stageLayout, theme, timedScenePath, validateEdl, type Edl, type Format, type SiteData, type Still } from '@app/core';
+import {
+  CAPTION_GAP,
+  CAPTION_LINE,
+  checkStills,
+  FORMATS,
+  layoutScenes,
+  sceneSurfaces,
+  stageLayout,
+  theme,
+  timedScenePath,
+  validateEdl,
+  type Edl,
+  type Format,
+  type SiteData,
+  type Still,
+} from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { capture, type CapturedSite } from '../../src/capture';
 import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
+import { averageInk, brandName, inkReads, logoBackgrounds } from '../../src/video/logo';
 import { serveFixtureSite } from './support/fixture-site';
+import { pngPixels } from './support/png';
 
 /** Captures the fixture site into `dir` and gives back what it wrote to site.json. */
 async function captureFixture(dir: string, url: string): Promise<CapturedSite> {
@@ -168,11 +185,14 @@ const textsOf = (stills: Still[], path: string): string[] => stills.filter((s) =
 const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`;
 
 // Logos written into the capture before the bundle copies it: one of ordinary proportions (8:3), and one so small
-// (100x60 px) that the close would enlarge it 4.5 times, while the opening, 84 px high, would not even double it.
+// (100x60 px) that the close would enlarge it 4.5 times, while the opening, 84 px high, would not even double it. They are
+// in the site's dark text color, which stands out on the page and on the brand color the close is on. One more is in the
+// brand color itself: it reads on the page, but would vanish into the close.
 const MARK_FILE = 'media/test-mark.svg';
-const markSvg = (width: number, height: number): string =>
-  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="#c81e6b"/><rect x="130" y="38" width="170" height="44" rx="22" fill="#1a1614"/></svg>`;
+const markSvg = (width: number, height: number, ink = '#1a1614'): string =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="${ink}"/><rect x="130" y="38" width="170" height="44" rx="22" fill="${ink}"/></svg>`;
 const SMALL_MARK_FILE = 'media/small-mark.svg';
+const BRAND_MARK_FILE = 'media/brand-mark.svg';
 
 // A phone page of one flat color, written into the capture before the bundle copies it: where the card of a UI scene that
 // films it starts can be read off the pixels of a still.
@@ -200,6 +220,7 @@ beforeAll(async () => {
   // The bundle copies the run folder when it is made: the extra logo goes in before the first render.
   writeFileSync(join(dir, MARK_FILE), markSvg(320, 120));
   writeFileSync(join(dir, SMALL_MARK_FILE), markSvg(100, 60));
+  writeFileSync(join(dir, BRAND_MARK_FILE), markSvg(320, 120, theme(site).primary));
   const hex = FLAT.map((c) => c.toString(16).padStart(2, '0')).join('');
   await runFfmpeg(['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x${hex}:s=780x3000`, '-frames:v', '1', join(dir, FLAT_FILE)], 'make a flat page');
   edl = makeFixtureEdl(site);
@@ -244,6 +265,37 @@ describe('the key frames of the video', () => {
       expect(still.text.length, still.path).toBeGreaterThan(0);
       expect(jpegWidth(still.jpegBase64), still.path).toBe(720);
     }
+  });
+
+  it('puts a type scene of the body on the contrast surface', () => {
+    const { surfaces } = theme(site);
+    const claims = stills.find((s) => s.path === 'body[0]')!;
+    expect(claims.piece).toBe('ClaimStack');
+    expect(claims.text.map((t) => t.bg)).toEqual(claims.text.map(() => cssRgb(surfaces.contrast.bg)));
+  });
+
+  it('closes on the brand color with an inverted button', () => {
+    const { surfaces } = theme(site);
+    // The fixture's primary stands apart from its page and from its darkest color, and white reads on it: the site has a
+    // brand surface, and the close is on it.
+    expect(surfaces.brand).not.toBeNull();
+    const close = stills.find((s) => s.path === 'cta')!;
+    const button = close.text.find((t) => t.text === 'Start free')!;
+    const domain = close.text.find((t) => t.text === new URL(site.url).hostname)!;
+    expect(button.bg).toBe(cssRgb(surfaces.base.bg));
+    expect(domain.bg).toBe(cssRgb(surfaces.brand!.bg));
+  });
+
+  it("measures the logo's ink in the page as it is measured here: the close shows the name exactly when the ink does not read", async () => {
+    const logo = site.brand.logo!;
+    const ink = averageInk(pngPixels(readFileSync(join(dir, logo.png ?? logo.file))).rgba);
+    expect(ink).not.toBeNull();
+    const reads = inkReads(ink, logoBackgrounds(layoutScenes(edl, 0).scenes, theme(site).surfaces));
+    // The capture records the whole text header, a strip that never reads in the close's box: recorded at proportions that
+    // do, the logo is shown or not by its ink alone.
+    const sized: SiteData = { ...site, brand: { ...site.brand, logo: { ...logo, width: 320, height: 120 } } };
+    const close = (await renderKeyframes({ edl, site: sized, runDir: dir, format: '9x16', hook: 0 })).find((s) => s.path === 'cta')!;
+    expect(close.text.some((t) => t.text === brandName(site))).toBe(!reads);
   });
 });
 
@@ -292,13 +344,14 @@ describe('the new pieces and the rhythm', () => {
     expect(textsOf(stills, 'hooks[0][0]')).toEqual([new URL(site.url).hostname]);
   });
 
-  it('closes on the brand name, in the heading font and the brand color, when the logo is a whole text header', () => {
+  it("closes on the brand name, in the heading font and the accent of the close's background, when the logo is a whole text header", () => {
     const close = stills.find((s) => s.path === 'cta')!;
     expect(close.text.map((t) => t.text)).toEqual(['Tiendita', 'Your shop in one link.', 'Start free', new URL(site.url).hostname]);
-    const { display, accentText } = theme(site);
+    const { display, surfaces } = theme(site);
+    const closing = surfaces[sceneSurfaces(layoutScenes(pieces, 0).scenes, surfaces).at(-1)!]!;
     const name = close.text[0]!;
     expect(name.font.startsWith(display.family)).toBe(true);
-    expect(name.colors).toEqual([cssRgb(accentText)]);
+    expect(name.colors).toEqual([cssRgb(closing.accent)]);
   });
 
   it('closes on the logo when it reads', async () => {
@@ -319,6 +372,13 @@ describe('the new pieces and the rhythm', () => {
   it('decides once whether the video shows the logo: a logo too small for the close is the name at the opening too', async () => {
     const small: SiteData = { ...site, brand: { ...site.brand, logo: { file: SMALL_MARK_FILE, kind: 'svg', width: 100, height: 60 } } };
     const stills = await renderKeyframes({ edl: pieces, site: small, runDir: dir, format: '9x16', hook: 2 });
+    expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
+    expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
+  });
+
+  it('shows the name at the opening too when the ink of the logo does not stand out on the brand color of the close', async () => {
+    const branded: SiteData = { ...site, brand: { ...site.brand, logo: { file: BRAND_MARK_FILE, kind: 'svg', width: 320, height: 120 } } };
+    const stills = await renderKeyframes({ edl: pieces, site: branded, runDir: dir, format: '9x16', hook: 2 });
     expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
     expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
   });

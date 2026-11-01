@@ -2,12 +2,13 @@ import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { safeWidth, stackLineStart, TYPE } from '@app/core';
 import { layoutLines, toWords } from '../type';
-import { measureWith, RevealLines, safeBox, useAd, type PieceProps } from './common';
+import { measureWith, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
 
 // 2-3 short claims landing one by one on the beat, spread evenly over the scene, building a stack. Earlier claims keep
 // their full strength: dimming them demoted the first claim, usually the strongest, and cost contrast.
 export const ClaimStack: FC<PieceProps> = ({ scene, timed }) => {
   const { theme, format, edl } = useAd();
+  const surface = useSurface();
   const frame = useCurrentFrame();
   const type = TYPE[format];
   const groups = useMemo(() => {
@@ -22,7 +23,7 @@ export const ClaimStack: FC<PieceProps> = ({ scene, timed }) => {
   // On the beat grid of the whole video, so that each claim lands on the pulse.
   const starts = groups.map((_, i) => stackLineStart(i, timed, edl.bpm));
   return (
-    <AbsoluteFill style={{ background: theme.bg }}>
+    <AbsoluteFill style={{ background: surface.bg }}>
       <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: (groups[0]?.size ?? 0) * 0.32 }}>
         {groups.map((group, i) => {
           const start = starts[i] ?? 0;
@@ -33,8 +34,8 @@ export const ClaimStack: FC<PieceProps> = ({ scene, timed }) => {
               lines={group.lines}
               size={group.size}
               font={theme.display}
-              color={theme.fg}
-              accent={theme.accentText}
+              color={surface.fg}
+              accent={surface.accent}
               delay={start}
               align={type.align}
             />

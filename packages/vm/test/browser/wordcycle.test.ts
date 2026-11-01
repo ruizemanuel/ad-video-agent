@@ -9,7 +9,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
-import { beatsToFrames, FORMATS, layoutScenes, settledFrame, wordEnterFrame, type Edl, type SiteData, type SiteFont, type TimedScene } from '@app/core';
+import {
+  beatsToFrames,
+  FORMATS,
+  layoutScenes,
+  sceneSurfaces,
+  settledFrame,
+  theme,
+  wordEnterFrame,
+  type Edl,
+  type SiteData,
+  type SiteFont,
+  type SurfaceColors,
+  type TimedScene,
+} from '@app/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveFont } from '../../src/capture/fonts';
 import { runFfmpeg } from '../../src/render/ffmpeg';
@@ -26,6 +39,10 @@ const HEADLINE = ['Pago playa', 'links hoy', 'gypsy jazz'];
 const BG = '#fbf7f4';
 const FG = '#1a1614';
 const ACCENT = '#c81e6b';
+// The cycle is on the contrast background (see CYCLE), the dark text color, where the primary does not read: a pink of the
+// site's that does is the accent of the word there, so that the word can be told from the light descenders of the prefix
+// that hang into its mask.
+const WORD = '#ff6aa8';
 
 const edl: Edl = {
   lang: 'en',
@@ -44,7 +61,7 @@ let headline: TimedScene;
 /** The frame at which word k is at rest: settled, and before the next one comes in. */
 const restFrame = (k: number): number => wordEnterFrame(k, timed, BPM) + 12;
 
-const siteWith = (font: SiteFont, lineHeight: number): SiteData => ({
+const siteOf = (fonts: SiteFont[]): SiteData => ({
   url: 'https://x.example/',
   lang: 'en',
   title: 'X',
@@ -55,13 +72,23 @@ const siteWith = (font: SiteFont, lineHeight: number): SiteData => ({
       { hex: BG, role: 'bg', weight: 1 },
       { hex: FG, role: 'text', weight: 1 },
       { hex: ACCENT, role: 'primary', weight: 1 },
+      { hex: WORD, role: 'accent', weight: 1 },
     ],
-    fonts: [{ ...font, weight: '700', letterSpacingEm: -0.02, lineHeight }],
+    fonts,
   },
   shots: [],
   boxes: [],
   recordings: [],
 });
+const siteWith = (font: SiteFont, lineHeight: number): SiteData => siteOf([{ ...font, weight: '700', letterSpacingEm: -0.02, lineHeight }]);
+
+// The colors of the backgrounds the scenes of the video are on (see sceneSurfaces), which the site's colors alone decide:
+// the cycle on the contrast one, light type on the dark text color, and the headline, between it and the close on the
+// brand color, on the page's own.
+const [CYCLE, HEADING] = ((): SurfaceColors[] => {
+  const { surfaces } = theme(siteOf([]));
+  return sceneSurfaces(layoutScenes(edl, 0).scenes, surfaces).map((name) => surfaces[name]!);
+})() as [SurfaceColors, SurfaceColors];
 
 const channels = (hex: string): number[] => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
 
@@ -118,10 +145,11 @@ const expectLinesSet = (boxes: Rect[], lineHeight: number): void => {
 
 type Pixel = (r: number, g: number, b: number) => boolean;
 
-const [bgR = 0, bgG = 0, bgB = 0] = channels(BG);
-// The accent is pink: red well above green, as the background and the dark text are not (at least a fifth covered).
-const isAccent: Pixel = (r, g) => r - g - (bgR - bgG) > 30;
-// Anything but the background, at least a seventh covered by dark text or by the accent.
+const [cycleR = 0, cycleG = 0] = channels(CYCLE.bg);
+// The word's accent is pink: red well above green, as the cycle's background and its type are not (at least a fifth covered).
+const isAccent: Pixel = (r, g) => r - g - (cycleR - cycleG) > 30;
+const [bgR = 0, bgG = 0, bgB = 0] = channels(HEADING.bg);
+// Anything but the headline's background, at least a seventh covered by its type.
 const isInk: Pixel = (r, g, b) => Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB) > 100;
 
 /** The first and last rows of the rectangle that have a pixel `ink` accepts in them, and how many pixels of the rectangle there are. */
@@ -229,7 +257,7 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
     });
 
     it('never draws the word rolling out over the ink of the prefix, descenders included', async () => {
-      const [fgR = 0, fgG = 0] = channels(FG);
+      const [fgR = 0, fgG = 0] = channels(CYCLE.fg);
       const before = await shoot(site(), wordEnterFrame(0, timed, BPM) - 1);
       const prefix = lineOf(before, PREFIX).box;
       // The core of the prefix's glyphs (not the antialiased edge, which the pink behind it would tint), with room below for its descenders.
@@ -257,15 +285,15 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
       // The frame before the cut: the panel is about to cover the whole frame, and the WordCycle is still on screen.
       const shot = await shoot(site(), headline.from - 1);
       const prefix = lineOf(shot, PREFIX).box;
-      const [fgR = 0, fgG = 0] = channels(FG);
-      let dark = 0;
+      const [fgR = 0, fgG = 0] = channels(CYCLE.fg);
+      let shown = 0;
       for (let y = Math.floor(prefix.y); y < Math.ceil(prefix.y + prefix.h); y++) {
         for (let x = Math.floor(prefix.x); x < Math.ceil(prefix.x + prefix.w); x++) {
           const at = (y * shot.width + x) * 3;
-          if (Math.abs(shot.rgb[at]! - fgR) + Math.abs(shot.rgb[at + 1]! - fgG) < 24) dark++;
+          if (Math.abs(shot.rgb[at]! - fgR) + Math.abs(shot.rgb[at + 1]! - fgG) < 24) shown++;
         }
       }
-      expect(dark, 'pixels of the prefix over the panel').toBe(0);
+      expect(shown, 'pixels of the prefix over the panel').toBe(0);
     });
   });
 
