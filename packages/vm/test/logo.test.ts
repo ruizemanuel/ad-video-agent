@@ -1,7 +1,5 @@
-import { layoutScenes, type Surfaces } from '@app/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { averageInk, brandName, closeLogoBox, fitLogo, inkReads, logoBackgrounds, logoReads, measuredInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo } from '../src/video/logo';
-import { fixtureEdl } from './support/edl';
+import { averageInk, brandName, closeLogoBox, closeMark, fitLogo, inkReads, logoReads, measuredInk, recordedLogoSize, videoShowsLogo } from '../src/video/logo';
 
 // The box the EndCard gives the logo in 9x16: 70% of its 760 px column, 3.2 times the format's logo size.
 const box = { width: 532, height: 269 };
@@ -45,20 +43,23 @@ describe('the logo of the whole video', () => {
     // 100x60 px reads at the opening's height (84 px, enlarged 1.4 times) but not in the close (4.5 times).
     const small = { width: 100, height: 60 };
     expect(logoReads(small, { width: 860, height: 84 })).toBe(true);
-    expect(videoShowsLogo(small, '9x16', '#111111', ['#ffffff'])).toBe(false);
-    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#111111', ['#ffffff'])).toBe(true);
-    expect(videoShowsLogo({ width: 5760, height: 264 }, '9x16', '#111111', ['#ffffff'])).toBe(false);
-    expect(videoShowsLogo(null, '9x16', '#111111', ['#ffffff'])).toBe(false);
+    expect(videoShowsLogo(small, '9x16', '#111111', '#ffffff')).toBe(false);
+    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#111111', '#ffffff')).toBe(true);
+    expect(videoShowsLogo({ width: 5760, height: 264 }, '9x16', '#111111', '#ffffff')).toBe(false);
+    expect(videoShowsLogo(null, '9x16', '#111111', '#ffffff')).toBe(false);
   });
 
   it('shows the name when the ink could not be measured', () => {
     expect(inkReads(null, ['#ffffff'])).toBe(false);
-    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', null, ['#ffffff'])).toBe(false);
+    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', null, '#ffffff')).toBe(false);
   });
 
-  it('shows the name when the ink does not stand out on a background the logo appears on', () => {
-    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#1f2a24', ['#f7f7f2', '#0b7a4b'])).toBe(false);
-    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#111111', ['#f7f7f2', '#0b7a4b'])).toBe(true);
+  it("is decided on the page's background, where the branded opening and the chip of the close are", () => {
+    // A dark mark that would be a smudge on the brand color still shows: the close sets it on a chip (see closeMark).
+    expect(inkReads('#1f2a24', ['#0b7a4b'])).toBe(false);
+    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#1f2a24', '#f7f7f2')).toBe(true);
+    // A white mark, as one taken from a dark header, would vanish into a light page: the name, everywhere.
+    expect(videoShowsLogo({ width: 480, height: 160 }, '9x16', '#ffffff', '#f7f7f2')).toBe(false);
   });
 
   it('takes the size the capture recorded, when it recorded one', () => {
@@ -66,6 +67,18 @@ describe('the logo of the whole video', () => {
     expect(recordedLogoSize({ file: 'media/logo.png', kind: 'png' })).toBeNull();
     expect(recordedLogoSize({ file: 'media/logo.png', kind: 'png', width: 0, height: 160 })).toBeNull();
     expect(recordedLogoSize(undefined)).toBeNull();
+  });
+});
+
+describe('the mark of the close', () => {
+  it('sets a logo whose ink does not stand out on the close on a chip of the page', () => {
+    expect(closeMark('#1f2a24', '#0b7a4b')).toBe('chip'); // a dark mark on a brand green, 2.76:1
+    expect(closeMark('#000000', '#000000')).toBe('chip'); // a black mark on a black close
+  });
+
+  it('sets a logo whose ink stands out on the close right on it', () => {
+    expect(closeMark('#1f2a24', '#f7f7f2')).toBe('logo');
+    expect(closeMark('#ffffff', '#0b7a4b')).toBe('logo');
   });
 });
 
@@ -111,36 +124,6 @@ describe('the ink of the logo', () => {
       expect(warn).toHaveBeenCalledOnce();
       expect(String(warn.mock.calls[0]?.[0])).toContain('media/logo.png');
     });
-  });
-});
-
-describe('the backgrounds of the logo', () => {
-  const colors = (bg: string) => ({ bg, fg: '#111111', muted: '#111111', accent: '#111111', button: { bg: '#111111', fg: '#ffffff' } });
-  const surfaces: Surfaces = { base: colors('#f7f7f2'), contrast: colors('#101820'), brand: colors('#0b7a4b'), palette: [] };
-
-  it('are the close and the branded opening, which the fixture video has', () => {
-    const { scenes } = layoutScenes(fixtureEdl(), 0);
-    expect(logoBackgrounds(scenes, surfaces)).toEqual(['#f7f7f2', '#0b7a4b']);
-  });
-
-  it('are the close alone when the video does not open with the brand', () => {
-    const edl = fixtureEdl();
-    const { scenes } = layoutScenes({ ...edl, hooks: [[{ ...edl.body[0]!, piece: 'ClaimStack' }]] }, 0);
-    expect(logoBackgrounds(scenes, surfaces)).toEqual(['#0b7a4b']);
-  });
-
-  it('have the close on contrast when the site has no brand surface', () => {
-    const { scenes } = layoutScenes(fixtureEdl(), 0);
-    expect(logoBackgrounds(scenes, { ...surfaces, brand: null })).toEqual(['#f7f7f2', '#101820']);
-  });
-
-  it('of the whole video are those of every version, each once: a later hook that opens with the brand adds the page', () => {
-    const edl = fixtureEdl();
-    const branded = edl.hooks[0]!;
-    const plain = [{ ...edl.body[0]!, piece: 'ClaimStack' as const }];
-    expect(videoLogoBackgrounds({ ...edl, hooks: [plain, branded] }, surfaces)).toEqual(['#0b7a4b', '#f7f7f2']);
-    expect(videoLogoBackgrounds({ ...edl, hooks: [plain, plain] }, surfaces)).toEqual(['#0b7a4b']);
-    expect(videoLogoBackgrounds(edl, surfaces)).toEqual(logoBackgrounds(layoutScenes(edl, 0).scenes, surfaces));
   });
 });
 

@@ -27,7 +27,7 @@ import { resolveFont } from '../../src/capture/fonts';
 import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
-import { averageInk, brandName, inkReads, videoLogoBackgrounds } from '../../src/video/logo';
+import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -189,8 +189,8 @@ const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(he
 // Logos written into the capture before the bundle copies it: one of ordinary proportions (8:3), and one so small
 // (100x60 px) that the close would enlarge it 4.5 times, while the opening, 84 px high, would not even double it. They are
 // in the site's dark text color, which stands out on the page and on the brand color the close is on. One more is in the
-// brand color itself: it reads on the page, but would vanish into the close. And a white one, as a logo taken from a dark
-// header is: it reads on the close, but would vanish into the page.
+// brand color itself: it reads on the page, but would vanish into the close, which sets it on a chip of the page's color.
+// And a white one, as a logo taken from a dark header is: it reads on the close, but would vanish into the page.
 const MARK_FILE = 'media/test-mark.svg';
 const markSvg = (width: number, height: number, ink = '#1a1614'): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 320 120"><circle cx="60" cy="60" r="48" fill="${ink}"/><rect x="130" y="38" width="170" height="44" rx="22" fill="${ink}"/></svg>`;
@@ -209,6 +209,37 @@ const jpegWidth = (base64: string): number => {
   const sof = jpeg.findIndex((byte, i) => byte === 0xff && jpeg[i + 1] === 0xc0);
   return jpeg.readUInt16BE(sof + 7);
 };
+
+/** The pixels of a still of 9x16 (RGB, at the JPEG's width), and how many px of the frame one of them is. */
+async function pixelsOf(still: Still): Promise<{ rgb: Buffer; width: number; scale: number }> {
+  const work = mkdtempSync(join(tmpdir(), 'pixels-'));
+  try {
+    const [jpg, raw] = [join(work, 'still.jpg'), join(work, 'still.rgb')];
+    writeFileSync(jpg, Buffer.from(still.jpegBase64, 'base64'));
+    await runFfmpeg(['-v', 'error', '-y', '-i', jpg, '-f', 'rawvideo', '-pix_fmt', 'rgb24', raw], 'read the pixels of a still');
+    const width = jpegWidth(still.jpegBase64);
+    return { rgb: readFileSync(raw), width, scale: FORMATS['9x16'].width / width };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/** Whether the pixel at `at` is of `color` (its channels), give or take what the JPEG's compression changes. */
+const isColor = (rgb: Buffer, at: number, color: readonly number[]): boolean => color.every((c, i) => Math.abs(rgb[at + i]! - c) < 30);
+
+/** The rectangle, in px of the frame, that the pixels of `hex` above the row `bottom` (in px of the frame) take in a still of 9x16; undefined when there are none. */
+async function areaOf(still: Still, hex: string, bottom: number): Promise<{ x: number; y: number; w: number; h: number } | undefined> {
+  const { rgb, width, scale } = await pixelsOf(still);
+  const color = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+  let [left, top, right, last] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let y = 0; y < Math.floor(bottom / scale); y++) {
+    for (let x = 0; x < width; x++) {
+      if (!isColor(rgb, (y * width + x) * 3, color)) continue;
+      [left, top, right, last] = [Math.min(left, x), Math.min(top, y), Math.max(right, x), Math.max(last, y)];
+    }
+  }
+  return left === Infinity ? undefined : { x: left * scale, y: top * scale, w: (right - left + 1) * scale, h: (last - top + 1) * scale };
+}
 
 let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
 let dir: string;
@@ -299,7 +330,8 @@ describe('the key frames of the video', () => {
     const logo = site.brand.logo!;
     const ink = averageInk(pngPixels(readFileSync(join(dir, logo.png ?? logo.file))).rgba);
     expect(ink).not.toBeNull();
-    const reads = inkReads(ink, videoLogoBackgrounds(edl, theme(site).surfaces));
+    // Decided on the page's own background (see videoShowsLogo).
+    const reads = inkReads(ink, [theme(site).surfaces.base.bg]);
     // The capture records the whole text header, a strip that never reads in the close's box: recorded at proportions that
     // do, the logo is shown or not by its ink alone.
     const sized: SiteData = { ...site, brand: { ...site.brand, logo: { ...logo, width: 320, height: 120 } } };
@@ -363,10 +395,12 @@ describe('the new pieces and the rhythm', () => {
     expect(name.colors).toEqual([cssRgb(closing.accent)]);
   });
 
-  it('closes on the logo when it reads', async () => {
+  it("closes on the logo when it reads, right on the close's background when its ink stands out there", async () => {
+    // The dark mark reads 3.30:1 on the fixture's brand color: no chip.
     const withMark: SiteData = { ...site, brand: { ...site.brand, logo: { file: MARK_FILE, kind: 'svg' } } };
     const close = (await renderKeyframes({ edl: pieces, site: withMark, runDir: dir, format: '9x16', hook: 0 })).find((s) => s.path === 'cta')!;
     expect(close.text.map((t) => t.text)).toEqual(['Your shop in one link.', 'Start free', new URL(site.url).hostname]);
+    expect(await areaOf(close, theme(site).surfaces.base.bg, close.text[0]!.y), "the page's color over the tagline").toBeUndefined();
   });
 
   it('opens on the brand name over the headline when the logo is a whole text header, and on the logo when it reads', async () => {
@@ -395,15 +429,37 @@ describe('the new pieces and the rhythm', () => {
     expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
   });
 
-  it('shows the name at the opening too when the ink of the logo does not stand out on the brand color of the close', async () => {
-    const branded: SiteData = { ...site, brand: { ...site.brand, logo: { file: BRAND_MARK_FILE, kind: 'svg', width: 320, height: 120 } } };
-    const stills = await renderKeyframes({ edl: pieces, site: branded, runDir: dir, format: '9x16', hook: 2 });
-    expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
-    expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
+  // The mark in the brand color, which reads on the page but would vanish into the close.
+  const brandMarked = (): SiteData => ({ ...site, brand: { ...site.brand, logo: { file: BRAND_MARK_FILE, kind: 'svg', width: 320, height: 120 } } });
+
+  it("sets a logo that would vanish into the brand color of the close on a chip of the page's color, and opens on it as it is", async () => {
+    const stills = await renderKeyframes({ edl: pieces, site: brandMarked(), runDir: dir, format: '9x16', hook: 2 });
+    expect(checkStills(stills, pieces, brandMarked(), '9x16', 2).filter((c) => !c.pass)).toEqual([]);
+    expect(textsOf(stills, 'hooks[2][0]')).toEqual(['Sell on WhatsApp', 'with no fees.']);
+    const close = stills.find((s) => s.path === 'cta')!;
+    expect(close.text.map((t) => t.text)).toEqual(['Your shop in one link.', 'Start free', new URL(site.url).hostname]);
+    // Above the tagline, only the chip is in the page's color: the logo fitted in the close's box (532 x 199.5 px) with
+    // 0.3 of its height around it, inside the centered column.
+    const chip = await areaOf(close, theme(site).surfaces.base.bg, close.text[0]!.y);
+    const fitted = fitLogo({ width: 320, height: 120 }, closeLogoBox('9x16'));
+    const pad = Math.round(fitted.height * CHIP_PAD);
+    expect(chip, 'the chip').toBeDefined();
+    expect(chip!.w).toBeCloseTo(fitted.width + 2 * pad, -1);
+    expect(chip!.h).toBeCloseTo(fitted.height + 2 * pad, -1);
+    const { width, safe } = FORMATS['9x16'];
+    const side = Math.max(safe.left, safe.right);
+    expect(chip!.x).toBeGreaterThanOrEqual(side - 2);
+    expect(chip!.x + chip!.w).toBeLessThanOrEqual(width - side + 2);
   });
 
-  it('shows the name in every version when the logo would vanish into the page at the opening of one hook, though not of the first', async () => {
-    // Hook 0 opens on a typed address, with no brand over it; hook 2 opens on the brand, on the page's own background.
+  it.each(['16x9', '4x5'] as Format[])('keeps the text of a close with the logo on a chip inside the safe zone in %s', async (format) => {
+    const stills = await renderKeyframes({ edl: pieces, site: brandMarked(), runDir: dir, format, hook: 2 });
+    expect(textsOf(stills, 'cta')[0]).toBe('Your shop in one link.');
+    expect(checkStills(stills, pieces, brandMarked(), format, 2).filter((c) => !c.pass)).toEqual([]);
+  });
+
+  it('shows the name at the opening and the close when the ink of the logo would vanish into the page', async () => {
+    // The page is where the branded opening and the chip of the close are: a white mark reads on neither.
     const light: SiteData = { ...site, brand: { ...site.brand, logo: { file: LIGHT_MARK_FILE, kind: 'svg', width: 320, height: 120 } } };
     const stills = await renderKeyframes({ edl: pieces, site: light, runDir: dir, format: '9x16', hook: 2 });
     expect(textsOf(stills, 'hooks[2][0]')[0]).toBe('Tiendita');
@@ -480,27 +536,16 @@ describe('the stage of the UI scenes', () => {
   const today = stageLayout('9x16');
   let flat: SiteData;
   let stills: Still[];
-  let work: string;
   beforeAll(async () => {
     flat = flatSite(site);
     stills = await renderKeyframes({ edl: stageEdl, site: flat, runDir: dir, format: '9x16', hook: 0 });
-    work = mkdtempSync(join(tmpdir(), 'stage-'));
-  });
-  afterAll(() => {
-    if (work) rmSync(work, { recursive: true, force: true });
   });
 
   /** Where the card starts in the still of a scene, in px of the frame: the first row of the flat page down its middle. */
   const cardTopOf = async (path: string): Promise<number> => {
-    const still = stills.find((s) => s.path === path)!;
-    const [jpg, raw] = [join(work, 'still.jpg'), join(work, 'still.rgb')];
-    writeFileSync(jpg, Buffer.from(still.jpegBase64, 'base64'));
-    await runFfmpeg(['-v', 'error', '-y', '-i', jpg, '-f', 'rawvideo', '-pix_fmt', 'rgb24', raw], 'read the pixels of a still');
-    const rgb = readFileSync(raw);
-    const width = jpegWidth(still.jpegBase64);
+    const { rgb, width, scale } = await pixelsOf(stills.find((s) => s.path === path)!);
     for (let y = 0; (y + 1) * width * 3 <= rgb.length; y += 1) {
-      const at = (y * width + width / 2) * 3;
-      if (FLAT.every((c, i) => Math.abs(rgb[at + i]! - c) < 30)) return (y * FORMATS['9x16'].width) / width;
+      if (isColor(rgb, (y * width + width / 2) * 3, FLAT)) return y * scale;
     }
     throw new Error(`The still of ${path} shows no card.`);
   };

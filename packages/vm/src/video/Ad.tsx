@@ -19,7 +19,7 @@ import {
   type ProbeItem,
   type SiteData,
 } from '@app/core';
-import { closeLogoBox, logoReads, measuredInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo, type Size } from './logo';
+import { closeLogoBox, logoReads, measuredInk, recordedLogoSize, videoShowsLogo, type ShownLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, SurfaceCtx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
@@ -135,19 +135,19 @@ const loadLogo = async (site: SiteData, format: Format): Promise<{ size: Size; i
 
 /**
  * Text is measured while the pieces render, and whether the video shows the logo or the brand's name depends on the
- * logo's size and ink (see videoShowsLogo) against the `backgrounds` it appears on, so nothing renders until the brand's
- * fonts are in and that is decided. The render is held until the tree with the pieces is laid out: their own holds
- * (images, the probe) start before this one ends.
+ * logo's size and ink (see videoShowsLogo) against the `page`'s background, so nothing renders until the brand's fonts
+ * are in and that is decided. The render is held until the tree with the pieces is laid out: their own holds (images,
+ * the probe) start before this one ends.
  */
-const useBrand = (site: SiteData, format: Format, backgrounds: readonly string[]): { logoShown: Size | null } | null => {
+const useBrand = (site: SiteData, format: Format, page: string): { logoShown: ShownLogo | null } | null => {
   const [handle] = useState(() => delayRender('brand fonts and logo'));
-  const [brand, setBrand] = useState<{ logoShown: Size | null } | null>(null);
+  const [brand, setBrand] = useState<{ logoShown: ShownLogo | null } | null>(null);
   useEffect(() => {
     const fonts = Promise.all(fontFaces(site).map((face) => loadFont({ family: face.family, url: staticFile(face.file), weight: face.weight, stretch: face.stretch })));
     Promise.all([fonts, loadLogo(site, format)])
-      .then(([, logo]) => setBrand({ logoShown: logo && videoShowsLogo(logo.size, format, logo.ink, backgrounds) ? logo.size : null }))
+      .then(([, logo]) => setBrand({ logoShown: logo?.ink && videoShowsLogo(logo.size, format, logo.ink, page) ? { size: logo.size, ink: logo.ink } : null }))
       .catch((error: unknown) => cancelRender(error));
-  }, [site, format, backgrounds]);
+  }, [site, format, page]);
   useLayoutEffect(() => {
     if (brand) continueRender(handle);
   }, [brand, handle]);
@@ -156,10 +156,9 @@ const useBrand = (site: SiteData, format: Format, backgrounds: readonly string[]
 
 const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> = ({ edl, site, format, hook, probe, music }) => {
   const theme = useMemo(() => makeTheme(site), [site]);
-  // The logo is decided once per video, against the backgrounds it appears on in any of its versions (see
-  // videoLogoBackgrounds), so every version shows the same mark and it reads wherever it is shown.
-  const backgrounds = useMemo(() => videoLogoBackgrounds(edl, theme.surfaces), [edl, theme]);
-  const brand = useBrand(site, format, backgrounds);
+  // The logo is decided once per video, on the page's background (see videoShowsLogo), so every version shows the same
+  // mark and it reads wherever it is shown: the close sets it on a chip of that color where it would not (see EndCard).
+  const brand = useBrand(site, format, theme.surfaces.base.bg);
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
   // The background of each scene of this version: its hook changes which ones the type scenes of the body take.
   const names = useMemo(() => sceneSurfaces(scenes, theme.surfaces), [scenes, theme]);

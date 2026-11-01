@@ -28,14 +28,14 @@ import {
   type Theme,
   type TimedScene,
 } from '@app/core';
-import { brandName, fitLogo, type Size } from '../logo';
+import { brandName, CHIP_PAD, CHIP_RADIUS, fitLogo, type ShownLogo, type Size } from '../logo';
 import { glyphOverhang, hideTravel, layoutCaptions, layoutLines, lineText, maskRoom, ROOM, toWords, type InkMeasure, type Measure, type Room, type TypeLine } from '../type';
 
 /**
- * `logoShown`: the natural size of the site's logo when the video shows it, at the opening and the close alike; null when
- * the video shows the brand's name instead (see videoShowsLogo).
+ * `logoShown`: the natural size and the ink of the site's logo when the video shows it, at the opening and the close
+ * alike; null when the video shows the brand's name instead (see videoShowsLogo).
  */
-export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl; logoShown: Size | null };
+export type AdContext = { theme: Theme; format: Format; site: SiteData; edl: Edl; logoShown: ShownLogo | null };
 export const Ctx = createContext<AdContext | null>(null);
 
 export const useAd = (): AdContext => {
@@ -199,9 +199,17 @@ export const RevealLines: FC<LinesProps & { delay?: number; stagger?: number; st
  * its name (see brandName) in the site's heading font and the accent of the background it is on (the brand color on the
  * page's own), set as large as `name.max` in `name.width`, on up to 2 lines, with room above and below for its glyphs (a
  * mark flush with the edge of the safe zone keeps them inside it). A whole text header marked as the logo would be a
- * sliver in the box, or run off the frame at the box's height.
+ * sliver in the box, or run off the frame at the box's height. `chip`: the logo sits on a rounded card in the page's
+ * color, CHIP_PAD of its height around it, which comes in with it (the close, when its ink does not read there, see
+ * closeMark); the card takes room beyond the box.
  */
-export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; align: 'left' | 'center'; delay?: number }> = ({ box, name, align, delay = 0 }) => {
+export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; align: 'left' | 'center'; delay?: number; chip?: boolean }> = ({
+  box,
+  name,
+  align,
+  delay = 0,
+  chip = false,
+}) => {
   const { site, theme, format, logoShown } = useAd();
   const surface = useSurface();
   const frame = useCurrentFrame();
@@ -229,11 +237,13 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
       </div>
     );
   const p = spring({ frame: frame - delay, fps, config: { damping: 200 }, durationInFrames: 14 });
+  const fitted = fitLogo(logoShown.size, box);
+  const pad = Math.round(fitted.height * CHIP_PAD);
+  const card = chip ? { background: theme.surfaces.base.bg, padding: pad, borderRadius: Math.round((fitted.height + 2 * pad) * CHIP_RADIUS) } : {};
   return (
-    <Img
-      src={staticFile(logo.png ?? logo.file)}
-      style={{ ...fitLogo(logoShown, box), display: 'block', opacity: p, transform: `scale(${0.96 + 0.04 * p})`, transformOrigin: align === 'center' ? 'center' : 'left center' }}
-    />
+    <div style={{ ...card, opacity: p, transform: `scale(${0.96 + 0.04 * p})`, transformOrigin: align === 'center' ? 'center' : 'left center' }}>
+      <Img src={staticFile(logo.png ?? logo.file)} style={{ ...fitted, display: 'block' }} />
+    </div>
   );
 };
 

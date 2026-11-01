@@ -2,11 +2,14 @@
 // marks as the logo; some sites mark a whole text header (a strip many times wider than tall) or a small icon. Shown in
 // the EndCard's box, the first is a sliver and the second a blur, so the video sets the brand's name instead: at the
 // close and at the opening alike, decided once per video against the close's box. A logo also has to stand out on the
-// backgrounds it appears on: a dark mark on a dark brand color is a smudge, and the name (set in a color that does
-// read) is better than that.
-import { contrast, FORMATS, layoutScenes, opensWithBrand, sceneSurfaces, TYPE, type Edl, type Format, type SiteData, type Surfaces, type TimedScene } from '@app/core';
+// page's own background, the one it was drawn for: the branded opening is on it, and a close whose background would
+// make the mark a smudge (a dark mark on a dark brand color) sets it on a chip of that color. A mark that does not
+// read even there gives way to the name, set in a color that does.
+import { contrast, FORMATS, TYPE, type Format, type SiteData } from '@app/core';
 
 export type Size = { width: number; height: number };
+/** A logo the video shows (see videoShowsLogo): its natural size, and the color of its ink. */
+export type ShownLogo = { size: Size; ink: string };
 
 // Wider than this, a logo is a strip: fitted to the box it comes out a few pixels tall.
 const MAX_ASPECT = 6;
@@ -72,34 +75,24 @@ export const inkReads = (ink: string | null, backgrounds: readonly string[]): bo
   ink !== null && backgrounds.every((bg) => contrast(ink, bg) >= LOGO_MIN_CONTRAST);
 
 /**
- * The backgrounds the logo appears on, from the scenes of one version of the video: the close's and, when the opening
- * is the branded one, the opening's. The versions do not all agree: one hook may open with the brand and another not,
- * so the video asks this of each of them (see videoLogoBackgrounds).
+ * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once, the
+ * same in every version of the video. Against the close's box, the larger one (a logo that reads there reads at the
+ * opening's height too), and against the `page`'s background with the `ink` it was measured to have (null: not measured,
+ * so the name): every background the logo is shown on is the page's, the chip of the close too (see closeMark).
  */
-export const logoBackgrounds = (scenes: readonly TimedScene[], surfaces: Surfaces): string[] => {
-  const names = sceneSurfaces(scenes, surfaces);
-  return scenes.flatMap((timed, i) => {
-    const colors = surfaces[names[i] ?? 'base'];
-    return colors && (timed.role === 'cta' || opensWithBrand(timed)) ? [colors.bg] : [];
-  });
-};
+export const videoShowsLogo = (natural: Size | null, format: Format, ink: string | null, page: string): boolean =>
+  logoReads(natural, closeLogoBox(format)) && inkReads(ink, [page]);
 
 /**
- * The backgrounds the logo appears on in any version of the video, each once: those of every hook's version (see
- * logoBackgrounds). The logo is decided once for all of them, so a logo the close of one version shows has to read on the
- * branded opening of another too.
+ * How the close shows a logo the video shows (see videoShowsLogo): right on the close's background when its ink stands out
+ * there, else on a chip in the page's color, where it does.
  */
-export const videoLogoBackgrounds = (edl: Edl, surfaces: Surfaces): string[] => [
-  ...new Set(edl.hooks.flatMap((_, hook) => logoBackgrounds(layoutScenes(edl, hook).scenes, surfaces))),
-];
+export const closeMark = (ink: string, closeBg: string): 'logo' | 'chip' => (inkReads(ink, [closeBg]) ? 'logo' : 'chip');
 
-/**
- * Whether the video shows the site's logo, at the opening and the close alike, rather than its name: decided once.
- * Against the close's box, the larger one (a logo that reads there reads at the opening's height too), and against the
- * `backgrounds` it appears on, with the `ink` it was measured to have (null: not measured, so the name).
- */
-export const videoShowsLogo = (natural: Size | null, format: Format, ink: string | null, backgrounds: readonly string[]): boolean =>
-  logoReads(natural, closeLogoBox(format)) && inkReads(ink, backgrounds);
+/** The chip leaves this share of the fitted logo's height around it, on every side. */
+export const CHIP_PAD = 0.3;
+/** The chip's corners are rounded by this share of its height: a rounded card, the pill of the button a little squared. */
+export const CHIP_RADIUS = 0.3;
 
 /** The natural size of the logo as the capture recorded it, or null when it did not. */
 export const recordedLogoSize = (logo: SiteData['brand']['logo']): Size | null =>

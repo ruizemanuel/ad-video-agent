@@ -1,7 +1,7 @@
 import { Fragment, useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { alpha, BUTTON_IN, endCardSteps, MARK_AT, TAGLINE_AT, TYPE } from '@app/core';
-import { brandName, closeLogoBox } from '../logo';
+import { brandName, closeLogoBox, closeMark } from '../logo';
 import { pressState } from '../rhythm';
 import { fitAddress, layoutLines, pillSize, toWords } from '../type';
 import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progress, RevealLines, useAd, useSurface, type PieceProps } from './common';
@@ -10,12 +10,13 @@ import { BrandMark, centeredSafeBox, EASE_IN_OUT, fontStyle, measureWith, progre
 const PILL_HEIGHT_EM = 2.24;
 
 // The close, in two steps (spec 6.5), on the brand color (the contrast background when the site has no brand surface,
-// see sceneSurfaces). First the brand: its logo, or its name in the site's heading font and the background's accent when
-// the logo does not read (see videoShowsLogo), with the optional tagline (lines[1]) under it. Then, on beat 2, the brand
-// moves up as the site's call to action (lines[0]) comes in under it as a button, over the domain; on beat 4.5 the
-// button is pressed (see endCardSteps). The button is the background's own: on the brand color it is inverted, in the
-// page's color, so that it does not vanish into what is behind it. Centered on the frame's center line, not in the safe
-// zone (which is lopsided in 9:16).
+// see sceneSurfaces). First the brand: its logo (on a chip of the page's color when its ink does not read on the close,
+// see closeMark), or its name in the site's heading font and the background's accent when the logo does not read (see
+// videoShowsLogo), with the optional tagline (lines[1]) under it. Then, on beat 2, the brand moves up as the site's call
+// to action (lines[0]) comes in under it as a button, over the domain; on beat 4.5 the button is pressed (see
+// endCardSteps). The button is the background's own: on the brand color it is inverted, in the page's color, so that it
+// does not vanish into what is behind it. Centered on the frame's center line, not in the safe zone (which is lopsided
+// in 9:16).
 export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   const ad = useAd();
   const { theme, format, site, edl } = ad;
@@ -45,6 +46,7 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
   const { type, column, logoBox, name, tagline, cta, ctaSize } = layout;
   // A name that fell back to the address, when it is the mark, is not repeated under the button.
   const domain = !ad.logoShown && layout.host === name ? null : layout.domain;
+  const chip = ad.logoShown !== null && closeMark(ad.logoShown.ink, surface.bg) === 'chip';
   const { button, press } = endCardSteps(timed, edl.bpm);
   const gaps = { tagline: Math.round(type.logo * 0.45), button: Math.round(type.logo * 0.9), domain: Math.round(type.logo * 0.5) };
   const buttonHeight = ctaSize * PILL_HEIGHT_EM;
@@ -59,7 +61,7 @@ export const EndCard: FC<PieceProps> = ({ scene, timed }) => {
     <AbsoluteFill style={{ background: surface.bg }}>
       <div style={{ ...column, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', transform: `translateY(${((1 - moved) * below) / 2}px)` }}>
-          <BrandMark box={logoBox} name={{ max: Math.round(type.headline * 0.8), width: column.width }} align="center" delay={MARK_AT} />
+          <BrandMark box={logoBox} name={{ max: Math.round(type.headline * 0.8), width: column.width }} align="center" delay={MARK_AT} chip={chip} />
           {tagline && (
             <div style={{ marginTop: gaps.tagline }}>
               <RevealLines lines={tagline.lines} size={tagline.size} font={theme.display} color={surface.fg} accent={surface.accent} delay={TAGLINE_AT} align="center" />
