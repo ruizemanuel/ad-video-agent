@@ -1,6 +1,6 @@
-import { useMemo, type FC } from 'react';
+import { useMemo, type CSSProperties, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
-import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type Line, type Scene } from '@app/core';
+import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type Line, type Scene, type SurfaceColors } from '@app/core';
 import { layoutLines, toWords } from '../type';
 import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
 
@@ -16,6 +16,18 @@ export const pointLabel = (at: number): string => String(at).padStart(2, '0');
 
 /** The number's font size in px: min(TYPE.headline × 2.4, 30 % of the safe zone's height), rounded. */
 export const numberSize = (format: Format): number => Math.round(Math.min(TYPE[format].headline * NUMBER_HEADLINES, safeBox(format).height * NUMBER_SHARE));
+
+/**
+ * How the number is painted: in outline, in the accent of its background, `max(3, 1.2 % of size)` px wide. A stroke over a
+ * transparent fill would draw every contour of the glyph, and a font's glyphs keep contours that overlap inside them (the
+ * stem of Source Serif 4's "1" runs through its foot, its "2" and "3" show spurs): so the stroke is twice as wide and the
+ * background's own color is painted over it, which covers the stroke's inner half and every contour inside the glyph.
+ */
+export const numberStyle = (size: number, surface: SurfaceColors): CSSProperties => ({
+  color: surface.bg,
+  WebkitTextStroke: `${2 * Math.max(3, Math.round(size * 0.012))}px ${surface.accent}`,
+  paintOrder: 'stroke fill',
+});
 
 /** How full each segment of the series' bar is at `frame` of card `at`: the cards before it full, its own from 0 to 1 over the scene, the rest empty. */
 export const seriesBar = (at: number, of: number, frame: number, duration: number): number[] =>
@@ -63,15 +75,14 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
   return (
     <AbsoluteFill style={{ background: surface.bg }}>
       <div style={{ ...safeBox(format), display: 'flex', flexDirection: 'column', alignItems: items }}>
-        {/* Not a text of the edit list, so not probed: its fill is transparent, which the contrast check would read as none. */}
+        {/* Not a text of the edit list, so not probed: its fill is the background's own color, which the contrast check would read as none. */}
         <div
           style={{
             ...fontStyle(theme.display),
+            ...numberStyle(size, surface),
             fontSize: size,
             lineHeight: 1,
             whiteSpace: 'nowrap',
-            color: 'transparent',
-            WebkitTextStroke: `${Math.max(3, Math.round(size * 0.012))}px ${surface.accent}`,
             opacity: numberIn,
             transform: `scale(${0.96 + 0.04 * numberIn})`,
             transformOrigin: center ? 'center' : 'left center',
