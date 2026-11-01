@@ -2,7 +2,7 @@
 // (TypeIn, WordCycle, the two-step EndCard and the caption that changes on a beat), the rhythm in beats and the limits
 // validateEdl checks, how long a text stays on screen among them. The corrector works under the same rules, so it reads
 // the same sections.
-import { BANNED_PHRASES, CAPTION_DELAY, FPS, MIN_SWAP_BEATS, READING_RULE, REVEAL_FRAMES, TYPED_BY, WIPE_FRAMES, type SiteData } from '@app/core';
+import { BANNED_PHRASES, CAPTION_DELAY, FLASH_READING, FPS, MIN_SWAP_BEATS, READING_RULE, REVEAL_FRAMES, TYPED_BY, WIPE_FRAMES, type SiteData } from '@app/core';
 import { siteForModel, type ModelSite } from '../pipeline/site-for-model';
 import type { DirectorImage } from '../ports';
 import { jsonBlock } from './json-block';
@@ -26,6 +26,7 @@ export const TABLE_LIMITS = {
   subline: { chars: 32, words: 6 },
   prefix: { chars: 14, words: 2 },
   word: { chars: 13, words: 1 },
+  flash: { chars: FLASH_READING.maxChars, words: 1 },
 } as const;
 
 // What fits in a scene, by band of tempo: the worst of the band, wherever the scene plays (first in the video or later,
@@ -38,12 +39,12 @@ export const CHARACTER_TABLE = `  | bpm | caption in 3 beats | 4 beats | 5 beats
   | 104-112 | 14 | 23 | 32 | 41 | 60 | 21 | 27 | 15 | 19 | 26 | 29 | 41 |
   | 112-120 | – | 21 | 30 | 38 | 55 | 19 | 24 | 14 | 18 | 24 | 27 | 37 |
   | 120-128 | – | 19 | 27 | 35 | 51 | 18 | 22 | – | 16 | 22 | 24 | 34 |`;
-export const BEAT_TABLE = `  | bpm | headline of 1 line | 2 lines | 3 lines | stack of 2 lines | 3 lines | WordCycle of 2 words | 3 words | card with a title | and a subline |
-  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-  | 90-104 | 4 | 4 | 6 | 7 | 8 | 6 | 8 | 4 | 6 |
-  | 104-112 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 6 |
-  | 112-120 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 7 |
-  | 120-128 | 4 | 5 | 6 | – | – | 7 | – | 5 | 7 |`;
+export const BEAT_TABLE = `  | bpm | headline of 1 line | 2 lines | 3 lines | stack of 2 lines | 3 lines | WordCycle of 2 words | 3 words | card with a title | and a subline | WordFlash of 2 words | 3 words | 4 words | 5 words |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 90-104 | 4 | 4 | 6 | 7 | 8 | 6 | 8 | 4 | 6 | 4 | 5 | 6 | 7 |
+  | 104-112 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 6 | 4 | 5 | 6 | 7 |
+  | 112-120 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 7 | 4 | 5 | 6 | 7 |
+  | 120-128 | 4 | 5 | 6 | – | – | 7 | – | 5 | 7 | 4 | 6 | 8 | – |`;
 
 export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 
@@ -68,10 +69,11 @@ export const STRUCTURE_RULES = `# Structure and timing
 
 - Three hooks, strongest first: hooks[0] is the main version. Each hook is 1 or 2 scenes and about
   3 seconds. Only the hook changes between versions: the **body** and the **cta** are shared.
-- The three hooks are different kinds, chosen from: the site's main promise; an inversion
-  ("X is not the problem. Y is."); a typed question (\`TypeIn\` with \`variant: "prompt"\`); the typed
-  address (\`TypeIn\` with \`variant: "url"\`); a question revealed word by word (a \`KineticHeadline\`
-  with a word or two per line); the product itself on screen (\`UiFocus\` or \`UiScroll\`).
+- The three hooks are different kinds, chosen from: the site's main promise; the site's main line,
+  word by word (a \`WordFlash\`); an inversion ("X is not the problem. Y is."); a typed question
+  (\`TypeIn\` with \`variant: "prompt"\`); the typed address (\`TypeIn\` with \`variant: "url"\`); a
+  question revealed word by word (a \`KineticHeadline\` with a word or two per line);
+  the product itself on screen (\`UiFocus\` or \`UiScroll\`).
 - The **body** has 3 to 6 scenes. The **cta** is one \`EndCard\` scene.
 - Pick \`bpm\` from the energy of the site (calm: 98-110, bold: 112-128).
 - Durations are in beats: seconds = beats × 60 / bpm. Every hook plus body plus cta should last
@@ -90,7 +92,7 @@ ${CHARACTER_TABLE}
 
   and the fewest beats a piece needs, its lines at the limits its rule states (headline lines of
   ${TABLE_LIMITS.headline.chars} characters, stack lines of ${TABLE_LIMITS.stack.chars}, card titles of ${TABLE_LIMITS.title.chars} characters and sublines of ${TABLE_LIMITS.subline.chars}, words of
-  ${TABLE_LIMITS.word.chars} under a prefix of ${TABLE_LIMITS.prefix.chars}); a dash: no length a scene may have reads it, so use shorter or
+  ${TABLE_LIMITS.word.chars} under a prefix of ${TABLE_LIMITS.prefix.chars}, words alone of ${TABLE_LIMITS.flash.chars} in a \`WordFlash\`); a dash: no length a scene may have reads it, so use shorter or
   fewer lines or words:
 
 ${BEAT_TABLE}
@@ -109,6 +111,16 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
 
 - **KineticHeadline**: 1 to 3 lines of very large type, revealed one line per beat. Each line is
   ideally at most 18 characters (never more than 24). One idea. At most one \`accent\` in the scene.
+- **WordFlash**: the site's main line (its tagline, or the heading of its first section), word by
+  word, for a hook only (in the body it is rejected): 2 to 5 \`lines\`, each a word or a short
+  phrase, split where a person would pause ("Vendé" / "lo tuyo." / "Cobrás" / "todo."). Each shows
+  alone, very large, on a background of its own, and replaces the one before on the beat. A line
+  that says something about the product is a claim with its quote, as always. Each line holds the
+  whole beats it needs to be read: a word alone of up to ${FLASH_READING.maxChars} characters needs ${FLASH_READING.seconds} s (a beat up
+  to 120 bpm, two above); a phrase of two or more words, a longer word, and the first word of a
+  \`WordFlash\` that opens the video (the brand is over it) are read like any text; the last holds
+  to the cut. Give it the beats the table gives: above 120 bpm, at most 4 words fit in 8 beats. At
+  most one \`accent\` in the scene.
 - **UiFocus**: a real screenshot in a large card, with a caption above it; the camera eases in to
   one element. Needs \`shotId\` and \`boxIndex\` (required): the element the caption is about, a box
   with \`product: true\`. One caption line, at most 40 characters and no more than the table gives
@@ -171,7 +183,7 @@ const COMPOSITION_RULES = `Composition rules:
 - **Brand-specific, not a template.** Ask yourself: if the logo and name were swapped for a
   competitor's, would this ad still work? Then it is generic. Lean on what only this product has:
   its UI, its numbers, its payment methods, its audience's words.
-- At most half of the scenes are type only (\`KineticHeadline\`, \`ClaimStack\`, \`PointCard\`, \`WordCycle\`, \`TypeIn\`).
+- At most half of the scenes are type only (\`KineticHeadline\`, \`WordFlash\`, \`ClaimStack\`, \`PointCard\`, \`WordCycle\`, \`TypeIn\`).
 - **One idea per scene.** Never put two different claims in one \`KineticHeadline\`. Never repeat
   an idea in another scene (e.g. "0% commission" once, not three times in a row).
 - Don't caption a screenshot with the same words it already shows big: the caption adds the

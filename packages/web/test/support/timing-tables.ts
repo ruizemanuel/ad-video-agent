@@ -58,6 +58,11 @@ export const BEAT_COLUMNS: Column[] = [
   needs('3 words', cycle(3)),
   needs('card with a title', { piece: 'PointCard', lines: lines(1, TABLE_LIMITS.title) }),
   needs('and a subline', { piece: 'PointCard', lines: [...lines(1, TABLE_LIMITS.title), ...lines(1, TABLE_LIMITS.subline)] }),
+  // The columns appended last, so that the indices the prompt tests use for the others do not move.
+  needs('WordFlash of 2 words', { piece: 'WordFlash', lines: lines(2, TABLE_LIMITS.flash) }),
+  needs('3 words', { piece: 'WordFlash', lines: lines(3, TABLE_LIMITS.flash) }),
+  needs('4 words', { piece: 'WordFlash', lines: lines(4, TABLE_LIMITS.flash) }),
+  needs('5 words', { piece: 'WordFlash', lines: lines(5, TABLE_LIMITS.flash) }),
 ];
 
 /**

@@ -37,6 +37,7 @@ describe('DIRECTOR_SYSTEM', () => {
   it('names the kinds of hook to vary between', () => {
     for (const kind of ['main promise', 'is not the problem', 'variant: "prompt"', 'variant: "url"', 'word by word', 'product itself on screen'])
       expect(DIRECTOR_SYSTEM).toContain(kind);
+    expect(DIRECTOR_SYSTEM.replace(/\s+/g, ' ')).toContain("the site's main line, word by word (a `WordFlash`)");
   });
 
   it('states the limits validateEdl checks on the new pieces', () => {
@@ -172,7 +173,7 @@ describe('DIRECTOR_SYSTEM', () => {
 
     it('keeps the limit of half of the scenes being type only, for such a site too', () => {
       expect(noUiRule()).toContain('The limit of half of the scenes being type only still applies.');
-      expect(flat(DIRECTOR_SYSTEM)).toContain('At most half of the scenes are type only (`KineticHeadline`, `ClaimStack`, `PointCard`, `WordCycle`, `TypeIn`).');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('At most half of the scenes are type only (`KineticHeadline`, `WordFlash`, `ClaimStack`, `PointCard`, `WordCycle`, `TypeIn`).');
     });
 
     it('scopes the requirements of product UI to a site that has it, and says nothing else changes for it', () => {
@@ -222,6 +223,17 @@ describe('how long a text stays on screen', () => {
   it.each(systems)('counts the card titles and sublines among the limits the table of beats is made with, for %s', (_, system) =>
     expect(flat(system)).toContain('card titles of 22 characters and sublines of 32'));
 
+  it.each(systems)('counts the words alone of a word flash among the limits the table of beats is made with, for %s', (_, system) =>
+    expect(flat(system)).toContain('words alone of 12 in a `WordFlash`'));
+
+  it.each(systems)('describes the word flash to %s', (_, system) => {
+    const rules = flat(system);
+    expect(rules).toContain('**WordFlash**: the site\'s main line');
+    expect(rules).toContain('for a hook only (in the body it is rejected)');
+    expect(rules).toContain('a word alone of up to 12 characters needs 0.5 s');
+    expect(rules).toContain('at most 4 words fit in 8 beats');
+  });
+
   it.each(systems)('recommends a series of cards for a dense site to %s', (_, system) =>
     expect(flat(system)).toContain(
       'a dense site lays two or three of its points out as a series of `PointCard`s, rather than one short line per scene, or stacks them in a `ClaimStack`',
@@ -242,8 +254,8 @@ describe('how long a text stays on screen', () => {
     const beats = beatRows();
     // The columns of the tables (see CHARACTER_COLUMNS and BEAT_COLUMNS).
     const [, caption4, , caption6, , , eachOf2In8, , typed6, , button, tagline] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-    const [headline1, headline2, headline3, stack2, stack3, cycle2, , , cardSubline] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-    const { headline, stack, title, subline, prefix, word } = TABLE_LIMITS;
+    const [headline1, headline2, headline3, stack2, stack3, cycle2, , , cardSubline, , , flash4] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const { headline, stack, title, subline, prefix, word, flash } = TABLE_LIMITS;
     /** A framing line of `count` characters, in words of about seven letters: its characters ask the most time. */
     const text = (count: number): Line => sample(count, Math.max(1, Math.floor(count / 7)));
     const ui = (piece: 'UiFocus' | 'UiScroll', beatsOf: number, lines: Line[], extra: Partial<Scene> = {}): Scene => ({
@@ -305,6 +317,14 @@ describe('how long a text stays on screen', () => {
           close(room),
         );
         expect(validateEdl(typed, { ...siteShop(), url: `https://${host}/` }), `${bpm} bpm, typed`).toEqual([]);
+        // A word flash of four words alone at the limit as the hook, for as long as the table says: the brand is over its first.
+        const flashed = edl(
+          bpm,
+          { piece: 'WordFlash', beats: at(need, flash4), lines: Array.from({ length: 4 }, () => sample(flash.chars, flash.words)) },
+          [ui('UiFocus', 6, [text(at(room, caption6))], { transitionIn: 'wipe' }), headlineOf(2, at(need, headline2)), ui('UiScroll', 8, [text(at(room, eachOf2In8)), { ...text(at(room, eachOf2In8)), atBeat: 4 }]), cycle],
+          close(room),
+        );
+        expect(validateEdl(flashed, siteShop()), `${bpm} bpm, word flash`).toEqual([]);
         // A series of two numbered cards, a title and a subline at the limits, for as long as the table says: when no length
         // reads a card with its subline (a dash), the series does not go in this band.
         if (need[cardSubline] !== undefined) {
