@@ -126,11 +126,15 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
   const farthest = colors.map((c) => c.hex).sort((a, b) => contrast(b, away) - contrast(a, away))[0];
   const oppositeBg = farthest && contrast(farthest, away) >= DARK_ENOUGH ? farthest : fallback;
   const oppositeFg = fgOn(oppositeBg, readers);
+  const oppositeMuted = mutedOn(oppositeBg, oppositeFg, readers);
   const opposite: SurfaceColors = {
     bg: oppositeBg,
     fg: oppositeFg,
-    muted: mutedOn(oppositeBg, oppositeFg, readers),
-    accent: [t.primary, ...accents].find((c) => contrast(c, oppositeBg) >= MIN_CONTRAST) ?? oppositeFg,
+    muted: oppositeMuted,
+    // The brand's own color where one reads. Where none does (a dark primary on a dark background, or no brand color at
+    // all), the secondary color, so that the accent still stands apart from the text: the text color only when the
+    // secondary is the text color too.
+    accent: [t.primary, ...accents].find((c) => contrast(c, oppositeBg) >= MIN_CONTRAST) ?? oppositeMuted,
     // When the site's darkest color is the primary (or close to it), the contrast background swallows the pill; and when
     // no text reads on the primary (brand is dropped then, so the close is on this surface), the pill's text would not.
     button:

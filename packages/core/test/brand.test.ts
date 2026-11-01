@@ -74,6 +74,14 @@ describe('surfaces', () => {
     { hex: '#1f2a24', role: 'primary', weight: 0.6 },
     { hex: '#f4b942', role: 'accent', weight: 0.2 },
   ]);
+  // celo.org as captured: a yellow page, black and gray text, and no primary or accent color, so the primary is the page's
+  // black text, which the black contrast background swallows.
+  const celoLike = recolor([
+    { hex: '#fcff52', role: 'bg', weight: 0.902 },
+    { hex: '#fcf6f1', role: 'bg', weight: 0.096 },
+    { hex: '#000000', role: 'text', weight: 0.672 },
+    { hex: '#666666', role: 'text', weight: 0.317 },
+  ]);
   const present = (s: Surfaces): SurfaceColors[] => [s.base, s.contrast, ...(s.brand ? [s.brand] : [])];
   // Sites of every kind the builder tells apart, and whether each keeps a brand surface: a test that skips a dropped one
   // says so here rather than passing over it.
@@ -84,6 +92,7 @@ describe('surfaces', () => {
     ['a mid-gray primary nothing reads on', withPrimary('#777777'), false],
     ['an orange primary nothing reads on', withPrimary('#d9480f'), false],
     ['a primary too close to the page', withPrimary('#f0efe8'), false],
+    ['a site with no brand color, whose page color reads on its contrast background', celoLike, false],
   ];
 
   it("keeps base as today's theme", () => {
@@ -97,6 +106,24 @@ describe('surfaces', () => {
     expect(dark.fg).toBe('#ffffff');
     // The primary reads 2.76:1 on it, so the accent falls to the site's accent color (8.39:1).
     expect(dark.accent).toBe('#f4b942');
+  });
+
+  it('accents the contrast surface in its secondary color when no brand color reads there', () => {
+    const { contrast: dark } = theme(celoLike).surfaces;
+    expect(dark.bg).toBe('#000000');
+    expect(dark.fg).toBe('#fcf6f1');
+    // The page's yellow, the strongest reader after the text: the accent stands apart from the text, as on the site.
+    expect(dark.muted).toBe('#fcff52');
+    expect(dark.accent).toBe(dark.muted);
+    expect(dark.accent).not.toBe(dark.fg);
+  });
+
+  it('keeps the text color as the accent when the secondary is the text color too', () => {
+    // One page color and one text color: on the black contrast background only the page's yellow reads, as the text and
+    // the secondary both.
+    const { contrast: dark } = theme(recolor([{ hex: '#fcff52', role: 'bg', weight: 0.9 }, { hex: '#000000', role: 'text', weight: 0.7 }])).surfaces;
+    expect(dark.muted).toBe(dark.fg);
+    expect(dark.accent).toBe(dark.fg);
   });
 
   it('puts the brand color behind white text, with an inverted button', () => {
