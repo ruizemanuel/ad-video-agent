@@ -44,7 +44,10 @@ export const useAd = (): AdContext => {
   return context;
 };
 
-/** The colors of the background a scene is on (see sceneSurfaces): the Ad gives each scene its own. */
+/**
+ * The colors of the background a scene is on (see videoSurfaces): the Ad gives each scene its own. In a WordFlash, whose
+ * every word has a background of its own (see PieceProps' `wordSurfaces`), they are those of its first word.
+ */
 export const SurfaceCtx = createContext<SurfaceColors | null>(null);
 
 /**
