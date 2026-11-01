@@ -431,6 +431,64 @@ describe('validateEdl: structure', () => {
     it.each([2, 3])('accepts %s lines', (n) => clean(stack(n)));
   });
 
+  describe('PointCard', () => {
+    const card = (beats: number, lines: Line[] = [claimLine('0% de comisión.', 'c3'), framing('En todas tus ventas')]): Scene => ({ piece: 'PointCard', beats, lines });
+    // These cards take the place of the shop's body scenes from `at` on, one for one, each with the beats of the scene it
+    // replaces: the video lasts what it did, within 15-30 s at every tempo of its music.
+    const withCards = (at: number, cards: Scene[]): Case =>
+      shop({ ...edlShop, body: [...edlShop.body.slice(0, at), ...cards, ...edlShop.body.slice(at + cards.length)] });
+    const series = (length: number, at = 0): Case => withCards(at, edlShop.body.slice(at, at + length).map((s) => card(s.beats)));
+    const structureAt = (where: string, detail: string) => [{ where, rule: 'structure', detail }];
+
+    it.each([0, 3])('rejects %s lines', (n) => {
+      const lines = [claimLine('0% de comisión.', 'c3'), framing('En todas tus ventas'), framing('Sin letra chica')].slice(0, n);
+      expect(notReading(withCards(0, [card(6, lines), card(5)]))).toEqual(structureAt('body[0]', `PointCard needs a title and an optional subline (1 or 2 lines), got ${n}`));
+    });
+    it.each([1, 2])('accepts %s lines', (n) => clean(withCards(0, [card(6, [claimLine('0% de comisión.', 'c3'), framing('En todas tus ventas')].slice(0, n)), card(5)])));
+
+    it('accepts a series of 2 and a series of 3 in the body', () => {
+      clean(series(2));
+      clean(series(3));
+    });
+    // Two scenes of 5 beats each side of the shop's ClaimStack: 40 beats in all.
+    it('accepts two series apart', () => clean(shop({ ...edlShop, body: [card(5), card(5), get(edlShop.body, 2), card(5), card(5)] })));
+
+    it.each([0, 3])('rejects a lone card, at that card (body[%s])', (j) =>
+      expect(problemsOf(series(1, j))).toEqual(
+        structureAt(
+          `body[${j}]`,
+          'a PointCard needs another next to it: 2 or 3 in a row make a numbered series; add a card with another point of the site, or make this one a KineticHeadline or a ClaimStack',
+        ),
+      ));
+    it('rejects a fourth card in a row, at that card', () =>
+      expect(problemsOf(series(4))).toEqual(
+        structureAt('body[3]', 'a series has 3 PointCards at most, and this is card 4 of 4 in a row: make it another piece, or drop it'),
+      ));
+    it('rejects a card in a hook, at that card, and only for the hook', () =>
+      expect(problemsOf(shop({ ...edlShop, hooks: [[card(6)], ...edlShop.hooks.slice(1)] }))).toEqual(
+        structureAt('hooks[0][0]', 'a PointCard goes in the body, in a series of 2 or 3 in a row: a hook has no room for one; use a KineticHeadline'),
+      ));
+
+    describe('when no length reads the title and the subline', () => {
+      // At 128 bpm the title (39 characters) is read in 8 beats, but the subline (58) is not, however long the scene.
+      const title = claimLine('Mercado Pago, transferencia y efectivo.', 'c5');
+      const subline = framing('Cobrás directo a tu cuenta, sin intermediarios ni vueltas.');
+      const readable = (beats: number, next: number): string[] =>
+        problemsOf(shop({ ...withCards(0, [card(beats, [title, subline]), card(next)]).edl, bpm: 128 })).map((p) => `${p.where}: ${p.detail}`);
+
+      it('tells to drop the subline', () =>
+        expect(readable(8, 5)).toEqual([
+          'body[0].lines[1]: the subline "Cobrás directo a tu cuenta, sin intermediarios ni vueltas." (58 characters) is readable 2.77 s of the 3.41 s it needs: drop the subline, or cut it to 48 characters',
+        ]));
+      // In 5 beats the title is not read either, and in 6 it is: dropping the subline leaves the scene that long.
+      it('tells to give the scene the beats the title then needs', () =>
+        expect(readable(5, 6)).toEqual([
+          'body[0].lines[0]: the title "Mercado Pago, transferencia y efectivo." (39 characters) is readable 1.83 s of the 2.29 s it needs: drop the subline and give the scene 6 beats, or cut it to 32 characters',
+          'body[0].lines[1]: the subline "Cobrás directo a tu cuenta, sin intermediarios ni vueltas." (58 characters) is readable 1.37 s of the 3.41 s it needs: drop the subline and give the scene 6 beats, or cut it to 24 characters and 4 words',
+        ]));
+    });
+  });
+
   describe('WordCycle', () => {
     it('requires WordCycle to have a framing prefix plus 2 or 3 words', () => {
       structure(wordCycle(['MP']));

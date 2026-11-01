@@ -8,6 +8,7 @@ import type { Claim, Edl, Scene } from './edl';
 import { MAIN_FORMAT } from './formats';
 import { MAX_BPM_DEVIATION, retimedVideoRange } from './music';
 import { isProductTarget } from './product';
+import { pointSeries } from './series';
 import type { SiteData } from './site';
 import {
   FPS,
@@ -50,6 +51,8 @@ const SCENE_BEATS = { min: 2, max: 8 };
 // Three words is the most that hold two beats each in the longest scene (7 of its 8 beats).
 const CYCLE_WORDS = { min: 2, max: 3 };
 const VIDEO_SECONDS = { min: 15, max: 30 };
+// The numbered card is for two or three points of a site: a series of PointCards is two or three in a row.
+const SERIES_CARDS = { min: 2, max: 3 };
 
 type Report = (where: string, rule: Problem['rule'], detail: string) => void;
 
@@ -278,9 +281,13 @@ const readingFixes = (scene: Scene, at: Placement, bpm: number): string[] => {
     const atBeat = nearestAtBeat(fit.atBeats, scene, fit.beats);
     fixes.push(fit.beats === scene.beats ? `move atBeat to ${atBeat}` : `give the scene ${fit.beats} beats with atBeat ${atBeat}`);
   } else if (fit) fixes.push(`give the scene ${fit.beats} beats`);
-  else if ((scene.piece === 'WordCycle' && scene.lines.length > CYCLE_WORDS.min + 1) || (scene.piece === 'ClaimStack' && scene.lines.length > 2)) {
+  else if (
+    (scene.piece === 'WordCycle' && scene.lines.length > CYCLE_WORDS.min + 1) ||
+    (scene.piece === 'ClaimStack' && scene.lines.length > 2) ||
+    (scene.piece === 'PointCard' && scene.lines.length === 2)
+  ) {
     const fewer: Scene = { ...scene, lines: scene.lines.slice(0, -1) };
-    const part = scene.piece === 'WordCycle' ? 'a word' : 'a line';
+    const part = scene.piece === 'WordCycle' ? 'a word' : scene.piece === 'PointCard' ? 'the subline' : 'a line';
     const longer = readingBeats(fewer, at, bpm, minSceneBeats(fewer), longest);
     if (!unreadTexts(fewer, at, bpm).length) fixes.push(`drop ${part}`);
     else if (longer) fixes.push(`drop ${part} and give the scene ${longer.beats} beats`);
@@ -318,6 +325,8 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
     report(path, 'structure', `${scene.beats} beats (expected ${SCENE_BEATS.min}-${SCENE_BEATS.max})`);
   if (scene.piece === 'UiFocus' || scene.piece === 'UiScroll') checkShot(path, scene, site, report);
   if (scene.piece === 'ClaimStack' && (scene.lines.length < 2 || scene.lines.length > 3)) report(path, 'structure', 'ClaimStack needs 2 or 3 lines');
+  if (scene.piece === 'PointCard' && (scene.lines.length < 1 || scene.lines.length > 2))
+    report(path, 'structure', `PointCard needs a title and an optional subline (1 or 2 lines), got ${scene.lines.length}`);
   if (scene.piece === 'WordCycle') {
     const [prefix, ...words] = scene.lines;
     if (prefix?.kind !== 'framing') report(path, 'structure', 'WordCycle needs a framing line first');
@@ -336,6 +345,30 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
   }
   if (scene.piece === 'TypeIn') checkTypeIn(path, scene, site, report);
   checkAtBeat(path, scene, report);
+};
+
+// The numbered cards: a series is two or three PointCards in a row in the body (see pointSeries), and the renderer numbers
+// each card by its place in it, so a lone card has nothing to count with and a fourth is one too many. A hook is 1-2 scenes
+// and cannot hold a series: a card there is refused for that alone, not also as a lone one. Neither the title nor its length
+// is checked here: that is for the director's prompt, and each new refusal can cost a correction round.
+const checkSeries = (edl: Edl, report: Report): void => {
+  edl.hooks.forEach((hook, i) =>
+    hook.forEach((scene, j) => {
+      if (scene.piece === 'PointCard')
+        report(`hooks[${i}][${j}]`, 'structure', `a PointCard goes in the body, in a series of ${SERIES_CARDS.min} or ${SERIES_CARDS.max} in a row: a hook has no room for one; use a KineticHeadline`);
+    }),
+  );
+  pointSeries(edl.body).forEach((place, j) => {
+    if (!place) return;
+    if (place.of < SERIES_CARDS.min)
+      report(
+        `body[${j}]`,
+        'structure',
+        `a PointCard needs another next to it: ${SERIES_CARDS.min} or ${SERIES_CARDS.max} in a row make a numbered series; add a card with another point of the site, or make this one a KineticHeadline or a ClaimStack`,
+      );
+    else if (place.at > SERIES_CARDS.max)
+      report(`body[${j}]`, 'structure', `a series has ${SERIES_CARDS.max} PointCards at most, and this is card ${place.at} of ${place.of} in a row: make it another piece, or drop it`);
+  });
 };
 
 // The video is rendered moved to the tempo of its music, which can lengthen it by the beats its texts need, or shorten it
@@ -390,6 +423,7 @@ export const validateEdl = (edl: Edl, site: SiteData, banned: BannedPhrases = BA
     const where = placed.get(path);
     if (where) checkReading(path, scene, where.timed, where.at, edl.bpm, report);
   }
+  checkSeries(edl, report);
   checkEdl(edl, report);
   return problems;
 };
