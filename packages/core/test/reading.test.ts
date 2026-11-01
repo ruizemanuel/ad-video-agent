@@ -3,6 +3,7 @@ import {
   BUTTON_IN,
   CAPTION_DELAY,
   CAPTION_SWAP,
+  FLASH_READING,
   FPS,
   READING_TOLERANCE_FRAMES,
   REVEAL_FRAMES,
@@ -18,6 +19,7 @@ import {
   layoutScenes,
   readableIn,
   readingSeconds,
+  secondsNeeded,
   textRoom,
   textWindows,
   validateEdl,
@@ -95,6 +97,18 @@ describe('textWindows', () => {
       ['cash', 75 + WORD_ROLL, 105],
     ]));
 
+  it('has each line of a WordFlash whole from its beat to the next one, the last to the cut, and the exception on the words alone', () => {
+    // No entrance: a line is whole on its beat. "lo tuyo." is a phrase, read by the usual rule, so it holds two beats.
+    const flash: Scene = { piece: 'WordFlash', beats: 6, lines: [f('Vendé'), f('lo tuyo.'), f('Cobrás'), f('todo.')] };
+    expect(windows(flash)).toStrictEqual([
+      { line: 0, text: 'Vendé', fullyIn: 0, leaves: 15, needs: 0.5 },
+      { line: 1, text: 'lo tuyo.', fullyIn: 15, leaves: 45 },
+      { line: 2, text: 'Cobrás', fullyIn: 45, leaves: 60, needs: 0.5 },
+      { line: 3, text: 'todo.', fullyIn: 60, leaves: 90, needs: 0.5 },
+    ]);
+    expect(windows(flash, { wipeOut: true })[3]?.leaves).toBe(90 - WIPE_FRAMES / 2);
+  });
+
   it('has the button of the close in once it has come in on beat 2, and the tagline under the brand, both to the end', () =>
     expect(windows({ piece: 'EndCard', beats: 6, lines: [f('Start free'), f('Your shop in one link.')] })).toEqual([
       { line: 0, text: 'Start free', fullyIn: 30 + BUTTON_IN, leaves: 90 },
@@ -131,6 +145,18 @@ describe('the reading rule', () => {
     expect(isReadable(window(25))).toBe(true);
     expect(isReadable(window(23))).toBe(true);
     expect(isReadable(window(22))).toBe(false);
+  });
+
+  it('gives a word the exception reads no tolerance', () => {
+    // The one exception the user approved: a word alone in a WordFlash, of up to 12 characters, needs 0.5 s whole.
+    expect(FLASH_READING).toEqual({ maxChars: 12, seconds: 0.5 });
+    const word = (frames: number, needs?: number): TextWindow => ({ line: 0, text: 'Cobrás', fullyIn: 0, leaves: frames, ...(needs === undefined ? {} : { needs }) });
+    expect(isReadable(word(15, 0.5))).toBe(true);
+    expect(isReadable(word(14, 0.5))).toBe(false);
+    expect(secondsNeeded(word(15, 0.5))).toBe(0.5);
+    // Without it, the usual rule and its tolerance: "Cobrás" needs 5/6 s (25 frames), and passes 2 frames short of it.
+    expect(isReadable(word(23))).toBe(true);
+    expect(secondsNeeded(word(23))).toBe(readingSeconds('Cobrás'));
   });
 
   it('gives the most characters and words a window holds, and nothing under 5/6 s', () => {

@@ -1,6 +1,7 @@
 // The key frames of a video: a still of each scene once it has settled, with the text of the frame measured in the real
 // DOM (the probe), for the code checks and the visual review. A scene whose text changes partway (a caption replaced at
-// its `atBeat`, the words of a WordCycle) gets one still per text it shows, so every line is seen settled once.
+// its `atBeat`, the words of a WordCycle, the lines of a WordFlash) gets one still per text it shows, so every line is seen
+// settled once.
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

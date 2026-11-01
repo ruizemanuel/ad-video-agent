@@ -82,6 +82,21 @@ describe('the key frames of a video', () => {
     ]);
   });
 
+  it('takes a WordFlash once per line: each just before the next replaces it, the last one settled', () => {
+    const flash = scene('WordFlash', 6, [framing('Vendé'), framing('lo tuyo.'), framing('Cobrás'), framing('todo.')]);
+    const plan = keyframePlan(edl([flash]), 0);
+    // The scene runs 60-150 and its lines come in on frames 0, 15, 45 and 60 of it: a still 4 frames before each change,
+    // and the frame before the first one, which comes ahead of frame 20, where a still would wait for the entrances.
+    expect(frames(plan)).toEqual([
+      [0, 52],
+      [1, 60 + 14],
+      [1, 60 + 41],
+      [1, 60 + 56],
+      [1, 142],
+      [2, 202],
+    ]);
+  });
+
   it('takes the caption before an early swap once the scene has come in, and never once the swap has started', () => {
     // atBeat 1: the swap is on frame 75, 15 frames into the scene. 4 frames before it the caption and the card are
     // still coming in, so the still waits for frame 20 of the scene, but no later than the frame before the swap.

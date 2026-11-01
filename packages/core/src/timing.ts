@@ -21,14 +21,16 @@ export const wordCycleMinBeats = (words: number): number => 2 * words + 1;
 
 /**
  * The fewest beats a scene may last under the structure rules of validateEdl: 2, 7 when a caption is replaced, two beats
- * per word plus one for a WordCycle (each word holds at least two beats) and 4 for the EndCard. How long its texts need to
- * be read depends on the tempo and on where the scene plays as well (see readingBeats).
+ * per word plus one for a WordCycle (each word holds at least two beats), a beat per line for a WordFlash (each comes in
+ * on a beat of its own) and 4 for the EndCard. How long its texts need to be read depends on the tempo and on where the
+ * scene plays as well (see readingBeats).
  */
 export const minSceneBeats = (scene: Scene): number =>
   Math.max(
     MIN_SCENE_BEATS,
     scene.lines.some((line) => line.atBeat !== undefined) ? MIN_SWAP_BEATS : 0,
     scene.piece === 'WordCycle' ? wordCycleMinBeats(scene.lines.length - 1) : 0,
+    scene.piece === 'WordFlash' ? scene.lines.length : 0,
     scene.piece === 'EndCard' ? MIN_ENDCARD_BEATS : 0,
   );
 
@@ -114,8 +116,8 @@ export const captionSwapFrame = (lines: readonly Line[], timed: TimedScene, bpm:
 /** The frame of the scene at which line i of a headline comes in: on beat i. */
 export const lineEnterFrame = (i: number, bpm: number): number => beatsToFrames(i, bpm);
 
-/** A headline that opens the video carries the brand over it (its logo, or its name). */
-export const opensWithBrand = (timed: TimedScene): boolean => timed.index === 0 && timed.scene.piece === 'KineticHeadline';
+/** A headline or a WordFlash that opens the video carries the brand over it (its logo, or its name). */
+export const opensWithBrand = (timed: TimedScene): boolean => timed.index === 0 && (timed.scene.piece === 'KineticHeadline' || timed.scene.piece === 'WordFlash');
 
 /**
  * The frame of the scene at which line i of a headline starts to rise: on beat i (see lineEnterFrame), not before the brand
@@ -159,12 +161,18 @@ export const endCardSteps = (timed: TimedScene, bpm: number): { button: number; 
 // screen, from when it is fully in to when it starts to leave, at least as long as subtitle guidelines ask: 5/6 s per
 // event and 17 characters a second (Netflix's Timed Text Style Guide: its general requirements, and its Spanish guide for
 // adult programs) and 0.3 s per word (BBC Subtitle Guidelines), whichever is longest. A text that builds up (the lines of
-// a headline or a stack, the words of a WordCycle under its prefix) asks it of each new part.
+// a headline or a stack, the words of a WordCycle under its prefix) asks it of each new part. The one exception, which the
+// user approved, is a word alone in a WordFlash (see FLASH_READING).
 
 /** The reading rule: a text stays whole on screen max(minSeconds, characters / charsPerSecond, secondsPerWord × words). */
 export const READING_RULE = { minSeconds: 5 / 6, charsPerSecond: 17, secondsPerWord: 0.3 } as const;
 /** A window this many frames short of the need still passes: a text reads a little before its entrance has quite settled. */
 export const READING_TOLERANCE_FRAMES = 2;
+/**
+ * The one exception to the reading rule: a word alone on screen in a WordFlash, of up to 12 characters, needs 0.5 s whole,
+ * with no tolerance (it has no entrance to settle). Its hold of whole beats makes it a beat at least.
+ */
+export const FLASH_READING = { maxChars: 12, seconds: 0.5 } as const;
 // Ignores the error of floating point (0.3 * 4 * 30 is 36.00000000000001).
 const EPSILON = 1e-9;
 
@@ -177,11 +185,22 @@ export const readingSeconds = (text: string): number => {
   return Math.max(READING_RULE.minSeconds, chars / READING_RULE.charsPerSecond, READING_RULE.secondsPerWord * words);
 };
 
-/** A text a scene shows (`line`: its first line in the scene's lines), and the frames of the scene it is fully in at and starts to leave at. */
-export type TextWindow = { line: number; text: string; fullyIn: number; leaves: number };
+/**
+ * A text a scene shows (`line`: its first line in the scene's lines), and the frames of the scene it is fully in at and
+ * starts to leave at. `needs`: the seconds a text the exception reads needs (see FLASH_READING), with no tolerance; absent
+ * for every other text.
+ */
+export type TextWindow = { line: number; text: string; fullyIn: number; leaves: number; needs?: number };
 
-/** Whether a text stays whole on screen long enough to be read (see readingSeconds), within READING_TOLERANCE_FRAMES. */
-export const isReadable = (w: TextWindow): boolean => w.leaves - w.fullyIn + READING_TOLERANCE_FRAMES + EPSILON >= readingSeconds(w.text) * FPS;
+/** The seconds a text needs whole on screen: its window's own (`needs`) or readingSeconds. */
+export const secondsNeeded = (w: TextWindow): number => w.needs ?? readingSeconds(w.text);
+
+/**
+ * Whether a text stays whole on screen long enough to be read (see secondsNeeded): within READING_TOLERANCE_FRAMES, but
+ * for a text the exception reads, which has no tolerance.
+ */
+export const isReadable = (w: TextWindow): boolean =>
+  w.leaves - w.fullyIn + (w.needs === undefined ? READING_TOLERANCE_FRAMES : 0) + EPSILON >= secondsNeeded(w) * FPS;
 
 /** The most characters and words a text can have and be read in a window of `frames` frames; undefined under 5/6 s. */
 export const readableIn = (frames: number): { chars: number; words: number } | undefined => {
@@ -190,18 +209,72 @@ export const readableIn = (frames: number): { chars: number; words: number } | u
   return { chars: Math.floor(seconds * READING_RULE.charsPerSecond), words: Math.floor(seconds / READING_RULE.secondsPerWord) };
 };
 
+/** The first frame of the scene a wipe does not cover: a wipe that brings it in covers it until WIPE_FRAMES / 2 after the cut. */
+const firstClear = (timed: TimedScene): number => (timed.index > 0 && timed.scene.transitionIn === 'wipe' ? WIPE_FRAMES / 2 : 0);
+
+// A WordFlash shows one line at a time, whole from its beat (it has no entrance) until the next replaces it on a beat of
+// its own: each line holds the fewest whole beats in which it is read, so its rhythm is the reading rule's.
+
+/**
+ * Whether line k of a WordFlash is read by the exception: one word of up to 12 characters, alone on screen; not the first
+ * of a WordFlash that opens the video, which shares its frame with the brand.
+ */
+export const isFlashWord = (timed: TimedScene, k: number): boolean => {
+  const line = timed.scene.lines[k];
+  if (timed.scene.piece !== 'WordFlash' || !line || (k === 0 && opensWithBrand(timed))) return false;
+  const { chars, words } = readingCounts(line.text);
+  return words === 1 && chars <= FLASH_READING.maxChars;
+};
+
+/**
+ * The window of line k of a WordFlash that comes in on frame `enter` and is replaced on frame `next`: from that frame, or
+ * from the end of a wipe that brings the scene in, to the next line or `end`, and the exception's need on a word alone.
+ */
+const flashWindow = (timed: TimedScene, k: number, enter: number, next: number, end: number): TextWindow => ({
+  line: k,
+  text: timed.scene.lines[k]?.text ?? '',
+  fullyIn: Math.max(enter, firstClear(timed)),
+  leaves: Math.min(next, end),
+  ...(isFlashWord(timed, k) ? { needs: FLASH_READING.seconds } : {}),
+});
+
+/**
+ * The beat of the scene on which each line of a WordFlash comes in: the first on beat 0, each next one once the line before
+ * it has held the fewest whole beats in which it is read (from its beat, or from the end of a wipe that brings the scene
+ * in), never past the scene's last beat. The last line holds the rest of the scene.
+ */
+export const flashBeats = (timed: TimedScene, bpm: number): number[] => {
+  const last = timed.scene.beats - 1;
+  const at = (beat: number): number => beatFrame(timed, beat, bpm);
+  const beats: number[] = [];
+  timed.scene.lines.forEach((_, k) => {
+    const before = beats[k - 1];
+    if (before === undefined) {
+      beats.push(0);
+      return;
+    }
+    // A line before the last is replaced on a beat of the scene, before any wipe out of it: the cut is the end that counts.
+    let hold = 1;
+    while (before + hold < last && !isReadable(flashWindow(timed, k - 1, at(before), at(before + hold), timed.duration))) hold++;
+    beats.push(Math.min(before + hold, last));
+  });
+  return beats;
+};
+
+/** The frame of the scene at which line k of a WordFlash comes in, whole: on its beat (see flashBeats). */
+export const flashEnterFrame = (k: number, timed: TimedScene, bpm: number): number => beatFrame(timed, flashBeats(timed, bpm)[k] ?? 0, bpm);
+
 /**
  * Every text the scene shows, with the frames of the scene it is whole on screen between: from when every word of it is in
- * and its entrance has settled (a TypeIn's line once it is typed whole), to when it starts to leave (the caption that
- * replaces it, the next word, the wipe into the next scene, or the cut). `wipeOut`: a wipe brings the next scene in, and
- * covers this one from WIPE_FRAMES / 2 before the cut.
+ * and its entrance has settled (a TypeIn's line once it is typed whole, a WordFlash's line on its beat), to when it starts
+ * to leave (the caption that replaces it, the next word or line, the wipe into the next scene, or the cut). `wipeOut`: a
+ * wipe brings the next scene in, and covers this one from WIPE_FRAMES / 2 before the cut.
  */
 export const textWindows = (timed: TimedScene, bpm: number, wipeOut: boolean): TextWindow[] => {
   const { scene } = timed;
   const lines = scene.lines;
   const end = timed.duration - (wipeOut ? WIPE_FRAMES / 2 : 0);
-  // A wipe that brings this scene in covers it until WIPE_FRAMES / 2 after the cut.
-  const clear = timed.index > 0 && scene.transitionIn === 'wipe' ? WIPE_FRAMES / 2 : 0;
+  const clear = firstClear(timed);
   const window = (line: number, text: string, fullyIn: number, leaves: number): TextWindow => ({ line, text, fullyIn: Math.max(fullyIn, clear), leaves: Math.min(leaves, end) });
   const joined = (from: number): string => lines.slice(from).map((l) => l.text).join(' ');
   switch (scene.piece) {
@@ -214,6 +287,10 @@ export const textWindows = (timed: TimedScene, bpm: number, wipeOut: boolean): T
     }
     case 'KineticHeadline':
       return lines.map((line, i) => window(i, line.text, headlineLineStart(i, timed, bpm, opensWithBrand(timed)) + REVEAL_FRAMES, end));
+    case 'WordFlash': {
+      const enters = flashBeats(timed, bpm).map((beat) => beatFrame(timed, beat, bpm));
+      return lines.map((_, k) => flashWindow(timed, k, enters[k] ?? 0, enters[k + 1] ?? end, end));
+    }
     case 'ClaimStack':
       return lines.map((line, i) => window(i, line.text, stackLineStart(i, timed, bpm) + REVEAL_FRAMES, end));
     case 'PointCard':

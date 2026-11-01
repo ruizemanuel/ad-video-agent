@@ -2,7 +2,7 @@
 // The schema is structural; claims, numbers, banned phrases and the rest of the rules are checked in validate.ts.
 import { z } from 'zod';
 
-export const PIECES = ['KineticHeadline', 'UiFocus', 'UiScroll', 'ClaimStack', 'PointCard', 'WordCycle', 'TypeIn', 'EndCard'] as const;
+export const PIECES = ['KineticHeadline', 'WordFlash', 'UiFocus', 'UiScroll', 'ClaimStack', 'PointCard', 'WordCycle', 'TypeIn', 'EndCard'] as const;
 
 export const LineSchema = z.object({
   text: z.string().min(1).describe('On-screen text in the video language. Few words.'),

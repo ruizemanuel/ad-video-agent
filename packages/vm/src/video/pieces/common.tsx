@@ -61,8 +61,11 @@ export const useSurface = (): SurfaceColors => {
 /** A PointCard's series: its place (`at` of `of`) and every card of it, so the cards share one size of title and of subline. */
 export type CardSeries = { at: number; of: number; cards: readonly Scene[] };
 
-/** `series`: the Ad sets it on the PointCards only (see pointSeries). */
-export type PieceProps = { scene: Scene; timed: TimedScene; showLogo: boolean; series?: CardSeries };
+/**
+ * `series`: the Ad sets it on the PointCards only (see pointSeries). `wordSurfaces`: the colors of each word's background,
+ * for a WordFlash; without them, every word is on the scene's.
+ */
+export type PieceProps = { scene: Scene; timed: TimedScene; showLogo: boolean; series?: CardSeries; wordSurfaces?: readonly SurfaceColors[] };
 
 export const EASE_OUT = Easing.bezier(0.16, 1, 0.3, 1);
 export const EASE_IN_OUT = Easing.bezier(0.65, 0, 0.35, 1);
@@ -250,6 +253,27 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
   return (
     <div style={{ ...card, opacity: p, transform: `scale(${0.96 + 0.04 * p})`, transformOrigin: align === 'center' ? 'center' : 'left center' }}>
       <Img src={staticFile(logo.png ?? logo.file)} style={{ ...fitted, display: 'block' }} />
+    </div>
+  );
+};
+
+/** The brand over the scene that opens the video, as KineticHeadline has it: at the top of the safe zone, aligned as its type. */
+export const OpeningBrand: FC = () => {
+  const { format } = useAd();
+  const type = TYPE[format];
+  const { safe } = FORMATS[format];
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: safe.left,
+        right: safe.right,
+        top: safe.top,
+        display: 'flex',
+        justifyContent: type.align === 'center' ? 'center' : 'flex-start',
+      }}
+    >
+      <BrandMark box={{ width: safeWidth(format), height: type.logo }} name={{ max: Math.round(type.logo * 0.75), width: safeWidth(format) }} align={type.align} />
     </div>
   );
 };

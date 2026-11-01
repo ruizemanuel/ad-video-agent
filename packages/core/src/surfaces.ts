@@ -6,9 +6,9 @@ import { opensWithBrand, type TimedScene } from './timing';
 
 type Loud = Exclude<SurfaceName, 'base'>;
 
-// The scenes whose background is not a choice: the product shots, the typing and the opening headline are designed on
-// the page's own colors (the logo reads on them), and the close is the brand's own moment. The type scenes
-// (undefined here) are the ones that alternate.
+// The scenes whose background is not a choice: the product shots, the typing and the scene that opens under the brand (a
+// headline or a WordFlash) are designed on the page's own colors (the logo reads on them), and the close is the brand's
+// own moment. The type scenes (undefined here) are the ones that alternate.
 const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
   if (opensWithBrand(t)) return 'base';
   switch (t.scene.piece) {
@@ -19,6 +19,7 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
     case 'EndCard':
       return surfaces.brand ? 'brand' : 'contrast';
     case 'KineticHeadline':
+    case 'WordFlash':
     case 'ClaimStack':
     case 'PointCard':
     case 'WordCycle':

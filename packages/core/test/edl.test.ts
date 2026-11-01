@@ -6,7 +6,7 @@ describe('EDL contract', () => {
   it('accepts the shop EDL', () => expect(EdlSchema.parse(edlShop).hooks).toHaveLength(3));
 
   it('knows the pieces', () =>
-    expect(PIECES).toEqual(['KineticHeadline', 'UiFocus', 'UiScroll', 'ClaimStack', 'PointCard', 'WordCycle', 'TypeIn', 'EndCard']));
+    expect(PIECES).toEqual(['KineticHeadline', 'WordFlash', 'UiFocus', 'UiScroll', 'ClaimStack', 'PointCard', 'WordCycle', 'TypeIn', 'EndCard']));
 
   it('rejects an unknown piece', () => expect(() => SceneSchema.parse({ ...edlShop.body[0], piece: 'Orbit' })).toThrow());
 

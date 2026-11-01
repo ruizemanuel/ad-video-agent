@@ -232,6 +232,8 @@ const textName = (scene: Scene, w: TextWindow, captions: number): string => {
       return captions > 1 ? `caption ${w.line + 1}` : 'the caption';
     case 'KineticHeadline':
       return `headline line ${w.line + 1}`;
+    case 'WordFlash':
+      return `word ${w.line + 1}`;
     case 'ClaimStack':
       return `stack line ${w.line + 1}`;
     case 'PointCard':

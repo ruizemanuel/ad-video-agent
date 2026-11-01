@@ -31,6 +31,7 @@ import { UiFocus } from './pieces/UiFocus';
 import { UiScroll } from './pieces/UiScroll';
 import { Wipe } from './pieces/Wipe';
 import { WordCycle } from './pieces/WordCycle';
+import { WordFlash } from './pieces/WordFlash';
 import { probeMessage } from './probe';
 
 /**
@@ -41,7 +42,7 @@ import { probeMessage } from './probe';
  */
 export type AdProps = { edl: Edl | null; site: SiteData | null; format: Format; hook: number; probe?: boolean; music?: string };
 
-const PIECES: Record<PieceName, FC<PieceProps>> = { KineticHeadline, UiFocus, UiScroll, ClaimStack, PointCard, WordCycle, TypeIn, EndCard };
+const PIECES: Record<PieceName, FC<PieceProps>> = { KineticHeadline, WordFlash, UiFocus, UiScroll, ClaimStack, PointCard, WordCycle, TypeIn, EndCard };
 
 /** Measures every `[data-qa-line]` of the frame once it is laid out: its box, size, font, colors, opacity and background. */
 const Probe: FC = () => {

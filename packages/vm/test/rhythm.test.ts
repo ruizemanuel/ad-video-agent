@@ -157,6 +157,12 @@ describe('the changes of text in a scene', () => {
     expect(textChanges(placed(pair, 120), 120)).toEqual([60]);
     expect(textChanges(placed(scene('KineticHeadline', 4, [framing('One'), framing('Two', 2)]), 120), 120)).toEqual([]);
   });
+
+  it('lists every line of a WordFlash after the first, on its beat', () => {
+    // A word alone holds one beat (15 frames at 120 bpm), the phrase "lo tuyo." two.
+    const flash = scene('WordFlash', 6, [framing('Vendé'), framing('lo tuyo.'), framing('Cobrás'), framing('todo.')]);
+    expect(textChanges(placed(flash, 120), 120)).toEqual([15, 45, 60]);
+  });
 });
 
 describe('the lines of a headline', () => {

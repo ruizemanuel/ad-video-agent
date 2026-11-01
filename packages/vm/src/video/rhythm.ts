@@ -2,7 +2,7 @@
 // frame a piece reads with useCurrentFrame). Every change of text lands on a beat of the whole video's grid, so a
 // scene keeps the pulse wherever it falls; the key frames read the same changes (render/keyframes.ts). When each text
 // comes in and goes is core's (timing.ts), which the edit list's checks read too.
-import { beatFrame, captionSwapFrame, settledFrame, TYPED_BY, wordEnterFrame, type Line, type TimedScene } from '@app/core';
+import { beatFrame, captionSwapFrame, flashEnterFrame, settledFrame, TYPED_BY, wordEnterFrame, type Line, type TimedScene } from '@app/core';
 
 // ---------- TypeIn ----------
 
@@ -62,12 +62,14 @@ export const captionIndex = (lines: readonly Line[], frame: number, timed: Timed
 };
 
 /**
- * The frames of the scene at which its text is replaced, within the scene: the caption of a UI scene at its atBeat, and
- * each word of a WordCycle after the first. The key frames take a still of the text before each of them.
+ * The frames of the scene at which its text is replaced, within the scene: the caption of a UI scene at its atBeat, each
+ * word of a WordCycle after the first, and each line of a WordFlash after the first, which never comes in past the scene's
+ * last beat. The key frames take a still of the text before each of them.
  */
 export const textChanges = (timed: TimedScene, bpm: number): number[] => {
   const { scene } = timed;
   if (scene.piece === 'WordCycle') return scene.lines.slice(2).map((_, k) => wordEnterFrame(k + 1, timed, bpm)).filter((frame) => frame < timed.duration);
+  if (scene.piece === 'WordFlash') return scene.lines.slice(1).map((_, k) => flashEnterFrame(k + 1, timed, bpm));
   const swap = swapsCaption(timed) ? captionSwapFrame(scene.lines, timed, bpm) : undefined;
   return swap === undefined ? [] : [swap];
 };

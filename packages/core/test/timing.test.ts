@@ -6,7 +6,9 @@ import {
   LINE_IN,
   WIPE_FRAMES,
   beatsToFrames,
+  flashBeats,
   headlineLineStart,
+  isFlashWord,
   isReadable,
   layoutScenes,
   minSceneBeats,
@@ -16,6 +18,7 @@ import {
   stackLineStart,
   textWindows,
   timedScenePath,
+  unreadTexts,
   validateEdl,
   type Edl,
   type Line,
@@ -90,6 +93,9 @@ describe('minSceneBeats', () => {
     expect(minSceneBeats(scene('UiFocus', [framing('One'), framing('Two', 2)]))).toBe(7);
     expect(minSceneBeats(scene('EndCard', [framing('Start free')]))).toBe(4);
   });
+
+  it('asks a WordFlash for a beat per line', () =>
+    expect(minSceneBeats(scene('WordFlash', [framing('Vendé'), framing('lo tuyo.'), framing('Cobrás'), framing('todo.')]))).toBe(4));
 });
 
 describe('retimeForBpm', () => {
@@ -249,6 +255,16 @@ describe('retimeForBpm', () => {
       expect(retimed.hooks[2]?.[1]?.beats).toBe(3);
       expect(retimed.hooks[2]?.[0]?.beats).toBe(4);
     });
+
+    it('gives a WordFlash the beats its words need at the tempo of its music, and no more', () => {
+      const flash: Scene = { piece: 'WordFlash', beats: 6, lines: ['Vendé', 'Cobrás', 'todo.', 'ya.'].map((text) => ({ text, kind: 'framing' as const })) };
+      const planned: Edl = { ...edlShop, bpm: 120, hooks: [[flash]], body: edlShop.body.map((s, i) => (i === 0 ? { ...s, transitionIn: 'wipe' as const } : s)) };
+      // At 124 bpm a beat is 14.5 frames and falls on 14 or 15, short of the 0.5 s of a word alone now and then: "todo." holds
+      // two beats, and "ya." then needs a seventh to be read before the wipe.
+      const retimed = retimeForBpm(planned, 124).hooks[0]?.[0];
+      expect(retimed?.beats).toBe(7);
+      expect(unreadTexts(retimed!, { role: 'hook', index: 0, startBeat: 0, wipeOut: true }, 124)).toEqual([]);
+    });
   });
 
   it('returns the same edit list at the same bpm', () => expect(retimeForBpm(edlShop, edlShop.bpm)).toEqual(edlShop));
@@ -326,11 +342,40 @@ describe('the rhythm of the pieces', () => {
     });
   });
 
+  describe('the words of a WordFlash', () => {
+    // At 120 bpm a beat is 15 frames: a word alone is read in one (0.5 s), a phrase in two (5/6 s).
+    const words = ['Vendé', 'lo tuyo.', 'Cobrás', 'todo.'].map(framing);
+    const flash = (beats: number, extra: Partial<Scene> = {}): Scene => ({ piece: 'WordFlash', beats, lines: words, ...extra });
+
+    it('holds each line of a WordFlash the whole beats it needs to be read, and the last to the cut', () => {
+      // "lo tuyo." is a phrase, read by the usual rule: two beats.
+      expect(flashBeats(placed(flash(6), 120, 4), 120)).toEqual([0, 1, 3, 4]);
+      // Opening the video, the first word shares the frame with the brand: the usual rule, two beats.
+      expect(flashBeats(placed(flash(6), 120, 0, 0), 120)).toEqual([0, 2, 4, 5]);
+      // A wipe brings the scene in: the first word is under it until frame 6, and a beat leaves it 9 frames.
+      expect(flashBeats(placed(flash(7, { transitionIn: 'wipe' }), 120, 4), 120)).toEqual([0, 2, 4, 5]);
+    });
+
+    it('reads a word alone in a WordFlash by the exception, and not a phrase, a long word or the word under the brand', () => {
+      const timed = placed(flash(6), 120, 4);
+      expect(isFlashWord(timed, 2)).toBe(true);
+      expect(isFlashWord(timed, 1)).toBe(false);
+      // 14 characters, past the 12 of the exception.
+      expect(isFlashWord(placed({ ...flash(6), lines: [framing('Transferencias')] }, 120, 4), 0)).toBe(false);
+      expect(isFlashWord(placed(flash(6), 120, 0, 0), 0)).toBe(false);
+    });
+  });
+
   describe('opensWithBrand', () => {
     it('is true of a headline that opens the video, which carries the brand over it', () => {
       expect(opensWithBrand(placed({ piece: 'KineticHeadline', beats: 4, lines }, 120, 0, 0))).toBe(true);
       expect(opensWithBrand(placed({ piece: 'KineticHeadline', beats: 4, lines }, 120, 4, 1))).toBe(false);
       expect(opensWithBrand(placed({ piece: 'ClaimStack', beats: 4, lines }, 120, 0, 0))).toBe(false);
+    });
+
+    it('takes a WordFlash that opens the video as one that carries the brand', () => {
+      expect(opensWithBrand(placed({ piece: 'WordFlash', beats: 4, lines }, 120, 0, 0))).toBe(true);
+      expect(opensWithBrand(placed({ piece: 'WordFlash', beats: 4, lines }, 120, 4, 1))).toBe(false);
     });
   });
 });

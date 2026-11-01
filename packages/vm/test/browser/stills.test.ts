@@ -17,6 +17,8 @@ import {
   validateEdl,
   type Edl,
   type Format,
+  type ProbeItem,
+  type Scene,
   type SiteData,
   type SiteFont,
   type Still,
@@ -254,11 +256,40 @@ function makeLongCardsEdl(site: SiteData): Edl {
   };
 }
 
+/**
+ * makeFixtureEdl opened by a flash of the hero's line, word by word: the flash alone as hook 0, under the brand, and as hook
+ * 1 after the price its hook films, brought in by a wipe.
+ */
+function makeFlashEdl(site: SiteData): Edl {
+  const fixture = makeFixtureEdl(site);
+  const flash: Scene = {
+    piece: 'WordFlash',
+    // The fewest beats in which its lines are read at 112 bpm wherever it plays (see fewestBeats).
+    beats: 5,
+    lines: [
+      { text: 'Your', kind: 'claim', claimId: 'c6' },
+      { text: 'shop', kind: 'claim', claimId: 'c6' },
+      { text: 'in one link.', kind: 'claim', claimId: 'c6', accent: 'one link' },
+    ],
+  };
+  return {
+    ...fixture,
+    hooks: [[flash], [fixture.hooks[0]![0]!, { ...flash, transitionIn: 'wipe' }]],
+    claims: [...fixture.claims, { id: 'c6', text: 'The shop is one link.', sectionId: sectionIdOf(site, 'Sell on WhatsApp with no fees'), quote: 'Your shop in one link.' }],
+  };
+}
+
 /** The paths of the three numbered cards of makeCardsEdl. */
 const CARDS = ['body[0]', 'body[1]', 'body[2]'];
 
 /** The texts the probe measured in the stills of a scene. */
 const textsOf = (stills: Still[], path: string): string[] => stills.filter((s) => s.path === path).flatMap((s) => s.text.map((t) => t.text));
+
+/** The lines a still of a flash shows: every one the probe measured but the brand's name. */
+const flashLines = (still: Still): ProbeItem[] => still.text.filter((t) => t.text !== brandName(site));
+
+/** How far, in px, the center of a line's box is from the center line of the frame. */
+const offCenter = (line: ProbeItem, format: Format): number => Math.abs(line.x + line.w / 2 - FORMATS[format].width / 2);
 
 /** `#rrggbb` as Chrome writes a computed color. */
 const cssRgb = (hex: string): string => `rgb(${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`;
@@ -449,6 +480,16 @@ describe('the other formats', () => {
       const last = stills.find((s) => s.path === path)!.text.at(-1)!;
       expect(last.y + last.h, path).toBeLessThanOrEqual(height - safe.bottom - barHeight(format) - BAR_GAP);
     }
+  });
+
+  it.each(['16x9', '4x5'] as Format[])('renders the flash that opens the video in %s, the stills pass the code checks, each word centered and the first under the brand', async (format) => {
+    const flash = makeFlashEdl(site);
+    const stills = await renderKeyframes({ edl: flash, site, runDir: dir, format, hook: 0 });
+    expect(checkStills(stills, flash, site, format).filter((c) => !c.pass)).toEqual([]);
+    const opening = stills.filter((s) => s.path === 'hooks[0][0]');
+    for (const line of opening.flatMap(flashLines)) expect(offCenter(line, format), line.text).toBeLessThanOrEqual(2);
+    const name = opening[0]!.text.find((t) => t.text === brandName(site))!;
+    expect(flashLines(opening[0]!)[0]!.y).toBeGreaterThanOrEqual(name.y + name.h);
   });
 
   it('registers one composition per format, at its size and the length of the edit list', async () => {
@@ -682,6 +723,57 @@ describe('the numbered cards', () => {
       expect(number, `${still.path}: the number`).toBeDefined();
       expect(number!.y).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
     }
+  });
+});
+
+describe('the word flash', () => {
+  let flash: Edl;
+  let stills: Still[];
+  beforeAll(async () => {
+    flash = makeFlashEdl(site);
+    stills = await renderKeyframes({ edl: flash, site, runDir: dir, format: '9x16', hook: 0 });
+  });
+  const opening = (): Still[] => stills.filter((s) => s.path === 'hooks[0][0]');
+
+  it('starts from an edit list the site backs', () => {
+    expect(validateEdl(flash, site)).toEqual([]);
+  });
+
+  it('renders the flash that opens the video in 9x16, one still per word, and the stills pass the code checks', () => {
+    expect(checkStills(stills, flash, site, '9x16').filter((c) => !c.pass)).toEqual([]);
+    expect(opening()).toHaveLength(3);
+    expect(textsOf(stills, 'hooks[0][0]').join(' ')).toBe('Tiendita Your shop in one link.');
+  });
+
+  it('shows the brand over the first word only', () => {
+    const [first, ...rest] = opening().map((s) => s.text.map((t) => t.text));
+    expect(first).toContain('Tiendita');
+    for (const texts of rest) expect(texts).not.toContain('Tiendita');
+  });
+
+  it('sets every word of the flash at one size, centered on the frame', () => {
+    const lines = opening().flatMap(flashLines);
+    expect(new Set(lines.map((t) => t.fontSize)).size, 'the sizes of the words').toBe(1);
+    for (const line of lines) expect(offCenter(line, '9x16'), line.text).toBeLessThanOrEqual(2);
+  });
+
+  it('keeps the brand name and the first word apart and inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {
+    // Set as the capture sets celo.org's heading font, whose content box starts above the line's own.
+    const tall: SiteData = { ...site, brand: { ...site.brand, fonts: [{ ...serif, weight: '400', letterSpacingEm: -0.01, lineHeight: 1.13 }] } };
+    const shown = await renderKeyframes({ edl: flash, site: tall, runDir: dir, format: '9x16', hook: 0 });
+    expect(checkStills(shown, flash, tall, '9x16').filter((c) => !c.pass)).toEqual([]);
+    const first = shown.find((s) => s.path === 'hooks[0][0]')!;
+    const name = first.text.find((t) => t.text === brandName(site))!;
+    expect(name.h / name.fontSize, 'the content box of the name, in em').toBeGreaterThan(1.3);
+    expect(name.y).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
+    expect(flashLines(first)[0]!.y).toBeGreaterThanOrEqual(name.y + name.h);
+  });
+
+  it('renders a flash second in its hook, without the brand', async () => {
+    const hook1 = await renderKeyframes({ edl: flash, site, runDir: dir, format: '9x16', hook: 1 });
+    expect(checkStills(hook1, flash, site, '9x16', 1).filter((c) => !c.pass)).toEqual([]);
+    expect(textsOf(hook1, 'hooks[1][1]')).not.toContain('Tiendita');
+    expect(textsOf(hook1, 'hooks[1][1]').join(' ')).toBe('Your shop in one link.');
   });
 });
 
