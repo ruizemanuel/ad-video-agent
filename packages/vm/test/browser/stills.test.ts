@@ -31,7 +31,9 @@ import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
+import { centeredSafeBox } from '../../src/video/pieces/common';
 import { BAR_GAP, barHeight, numberGap, numberSize } from '../../src/video/pieces/PointCard';
+import { FLASH_SCALE, flashMax } from '../../src/video/pieces/WordFlash';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -752,10 +754,18 @@ describe('the word flash', () => {
     for (const texts of rest) expect(texts).not.toContain('Tiendita');
   });
 
-  it('sets every word of the flash at one size, centered on the frame', () => {
-    const lines = opening().flatMap(flashLines);
-    expect(new Set(lines.map((t) => t.fontSize)).size, 'the sizes of the words').toBe(1);
-    for (const line of lines) expect(offCenter(line, '9x16'), line.text).toBeLessThanOrEqual(2);
+  it('sets each word as large as it fits the column, centered on the frame', () => {
+    // The width a line of the flash may take: the centered column, room left for the punch of scale, less the share of it a
+    // line may not fill (2 %, see type.ts).
+    const room = (centeredSafeBox('9x16').width / FLASH_SCALE) * 0.98;
+    for (const still of opening()) {
+      const lines = flashLines(still);
+      const [size, widest] = [lines[0]!.fontSize, Math.max(...lines.map((t) => t.w))];
+      const text = lines.map((t) => t.text).join(' ');
+      // At the largest size, or as wide as the column lets it be (within 2 %: the size is rounded down to the pixel).
+      expect(size === flashMax('9x16') || widest >= room * 0.98, `"${text}" at ${size} px is ${widest.toFixed(0)} px wide, of ${room.toFixed(0)}`).toBe(true);
+      for (const line of lines) expect(offCenter(line, '9x16'), line.text).toBeLessThanOrEqual(2);
+    }
   });
 
   it('keeps the brand name and the first word apart and inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {

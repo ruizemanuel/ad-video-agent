@@ -1,5 +1,5 @@
 // How a WordFlash sets its words, as plain math: their largest size, the punch of scale on each beat, which line is on
-// screen, and one size for every line of the scene.
+// screen, and the size of each line.
 import { describe, expect, it } from 'vitest';
 import { flashIndex, flashMax, flashScale, flashWords } from '../src/video/pieces/WordFlash';
 import { lineText, toWords, type Measure, type TypeLine } from '../src/video/type';
@@ -32,20 +32,31 @@ describe('a WordFlash', () => {
     expect([0, 14, 15, 59, 60, 200].map((frame) => flashIndex(frame, enters))).toEqual([0, 0, 1, 2, 3, 3]);
   });
 
-  it('sets every line at the size of the one that fits least, a phrase on two lines where one would be smaller', () => {
-    // "Cobrás" sets the size; on one line, "lo tuyo." would be set at 147.
-    const set = flashWords(texts(['Vendé', 'lo tuyo.', 'Cobrás', 'todo.']), '9x16', false, 1.1, perChar);
-    expect(linesOf(set)).toEqual([['Vendé'], ['lo', 'tuyo.'], ['Cobrás'], ['todo.']]);
-    expect(set.size).toBe(197);
+  // In 9x16 a line may be 760 / 1.05 × 0.98 ≈ 709 px wide: 3 em (5 characters) at 236, 4.2 em at 168, 3.6 em at 197.
+  it('sets each line as large as it fits the column, a phrase on one line while it stays over the headline', () => {
+    // "lo tuyo" on one line is set at 168, over the headline (150): it is not split.
+    const set = flashWords(texts(['Vendé', 'lo tuyo', 'Cobrás', 'todo.']), '9x16', false, 1.1, perChar);
+    expect(linesOf(set)).toEqual([['Vendé'], ['lo tuyo'], ['Cobrás'], ['todo.']]);
+    expect(set.sizes).toEqual([236, 168, 197, 236]);
   });
 
-  it("leaves the brand's band above and as much below when the flash opens the video", () => {
-    const wide = flashWords(texts(['en un link.']), '16x9', false, 1.1, perChar);
-    expect(linesOf(wide)).toEqual([['en un', 'link.']]);
-    expect(wide.size).toBe(352);
-    // The height of the column less two bands of 152 (twice the logo of 16x9) holds two lines at 273.
-    const opening = flashWords(texts(['en un link.']), '16x9', true, 1.1, perChar);
-    expect(linesOf(opening)).toEqual([['en un', 'link.']]);
-    expect(opening.size).toBe(273);
+  it('splits a phrase in two where on one line it would be smaller than the headline', () => {
+    // On one line, "en un link." would be set at 107.
+    const set = flashWords(texts(['en un link.']), '9x16', false, 1.1, perChar);
+    expect(linesOf(set)).toEqual([['en un', 'link.']]);
+    expect(set.sizes).toEqual([236]);
+  });
+
+  it("leaves the brand's band above and as much below the first line of a flash that opens the video, and the whole column to the others", () => {
+    // In 16x9 "en un solo link." is split ("en un" / "solo link.") and set at 280 by its width, but for the first line of an
+    // opening, whose two lines have the height of the column less two bands of 152 (twice the logo of 16x9): 273.
+    const lines = texts(['en un solo link.', 'en un solo link.']);
+    const opening = flashWords(lines, '16x9', true, 1.1, perChar);
+    expect(linesOf(opening)).toEqual([
+      ['en un', 'solo link.'],
+      ['en un', 'solo link.'],
+    ]);
+    expect(flashWords(lines, '16x9', false, 1.1, perChar).sizes).toEqual([280, 280]);
+    expect(opening.sizes).toEqual([273, 280]);
   });
 });
