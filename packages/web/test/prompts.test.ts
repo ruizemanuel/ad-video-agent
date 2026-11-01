@@ -167,7 +167,7 @@ describe('DIRECTOR_SYSTEM', () => {
 
     it('keeps the limit of half of the scenes being type only, for such a site too', () => {
       expect(noUiRule()).toContain('The limit of half of the scenes being type only still applies.');
-      expect(flat(DIRECTOR_SYSTEM)).toContain('At most half of the scenes are type only (`KineticHeadline`, `ClaimStack`, `WordCycle`, `TypeIn`).');
+      expect(flat(DIRECTOR_SYSTEM)).toContain('At most half of the scenes are type only (`KineticHeadline`, `ClaimStack`, `PointCard`, `WordCycle`, `TypeIn`).');
     });
 
     it('scopes the requirements of product UI to a site that has it, and says nothing else changes for it', () => {
@@ -204,6 +204,24 @@ describe('how long a text stays on screen', () => {
   it.each(systems)('tells %s a second caption needs a scene of 7 beats or more', (_, system) =>
     expect(flat(system)).toContain('A second caption needs a scene of 7 beats or more'));
 
+  it.each(systems)('describes the numbered card and its series to %s', (_, system) => {
+    const rules = flat(system);
+    expect(rules).toContain('**PointCard**: one point of the site on a card that fills the frame');
+    expect(rules).toContain('Two or three `PointCard`s in a row in the body make a series');
+    expect(rules).toContain('a lone `PointCard`, more than 3 in a row, or one in a hook are rejected');
+    // The subline is drawn in one color: an accent there is lost.
+    expect(rules).toContain("The card's `accent`, if any, goes on the title");
+    expect(rules).toContain('Give each card the beats the table gives.');
+  });
+
+  it.each(systems)('counts the card titles and sublines among the limits the table of beats is made with, for %s', (_, system) =>
+    expect(flat(system)).toContain('card titles of 22 characters and sublines of 32'));
+
+  it.each(systems)('recommends a series of cards for a dense site to %s', (_, system) =>
+    expect(flat(system)).toContain(
+      'a dense site lays two or three of its points out as a series of `PointCard`s, rather than one short line per scene, or stacks them in a `ClaimStack`',
+    ));
+
   it.each(systems)('gives %s the tables of what fits, as the reading rule computes them, and points to them for the beats', (_, system) => {
     expect(CHARACTER_TABLE).toBe(characterTable());
     expect(BEAT_TABLE).toBe(beatTable());
@@ -219,8 +237,8 @@ describe('how long a text stays on screen', () => {
     const beats = beatRows();
     // The columns of the tables (see CHARACTER_COLUMNS and BEAT_COLUMNS).
     const [, caption4, , caption6, , , eachOf2In8, , typed6, , button, tagline] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-    const [headline1, headline2, headline3, stack2, stack3, cycle2] = [0, 1, 2, 3, 4, 5];
-    const { headline, stack, prefix, word } = TABLE_LIMITS;
+    const [headline1, headline2, headline3, stack2, stack3, cycle2, , , cardSubline] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    const { headline, stack, title, subline, prefix, word } = TABLE_LIMITS;
     /** A framing line of `count` characters, in words of about seven letters: its characters ask the most time. */
     const text = (count: number): Line => sample(count, Math.max(1, Math.floor(count / 7)));
     const ui = (piece: 'UiFocus' | 'UiScroll', beatsOf: number, lines: Line[], extra: Partial<Scene> = {}): Scene => ({
@@ -282,6 +300,23 @@ describe('how long a text stays on screen', () => {
           close(room),
         );
         expect(validateEdl(typed, { ...siteShop(), url: `https://${host}/` }), `${bpm} bpm, typed`).toEqual([]);
+        // A series of two numbered cards, a title and a subline at the limits, for as long as the table says: when no length
+        // reads a card with its subline (a dash), the series does not go in this band.
+        if (need[cardSubline] !== undefined) {
+          const card: Scene = { piece: 'PointCard', beats: at(need, cardSubline), lines: [sample(title.chars, title.words), sample(subline.chars, subline.words)] };
+          const series = edl(
+            bpm,
+            headlineOf(1, at(need, headline1)),
+            [
+              ui('UiFocus', 6, [text(at(room, caption6))], { transitionIn: 'wipe' }),
+              card,
+              card,
+              ui('UiScroll', 8, [text(at(room, eachOf2In8)), { ...text(at(room, eachOf2In8)), atBeat: 4 }]),
+            ],
+            close(room),
+          );
+          expect(validateEdl(series, siteShop()), `${bpm} bpm, series`).toEqual([]);
+        }
       }
     });
   });

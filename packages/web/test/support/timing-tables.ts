@@ -56,6 +56,8 @@ export const BEAT_COLUMNS: Column[] = [
   needs('3 lines', { piece: 'ClaimStack', lines: lines(3, TABLE_LIMITS.stack) }),
   needs('WordCycle of 2 words', cycle(2)),
   needs('3 words', cycle(3)),
+  needs('card with a title', { piece: 'PointCard', lines: lines(1, TABLE_LIMITS.title) }),
+  needs('and a subline', { piece: 'PointCard', lines: [...lines(1, TABLE_LIMITS.title), ...lines(1, TABLE_LIMITS.subline)] }),
 ];
 
 /**

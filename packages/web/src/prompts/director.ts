@@ -22,6 +22,8 @@ export const TEMPO_BANDS: readonly (readonly [number, number])[] = [
 export const TABLE_LIMITS = {
   headline: { chars: 18, words: 3 },
   stack: { chars: 22, words: 4 },
+  title: { chars: 22, words: 4 },
+  subline: { chars: 32, words: 6 },
   prefix: { chars: 14, words: 2 },
   word: { chars: 13, words: 1 },
 } as const;
@@ -36,12 +38,12 @@ export const CHARACTER_TABLE = `  | bpm | caption in 3 beats | 4 beats | 5 beats
   | 104-112 | 14 | 23 | 32 | 41 | 60 | 21 | 27 | 15 | 19 | 26 | 29 | 41 |
   | 112-120 | – | 21 | 30 | 38 | 55 | 19 | 24 | 14 | 18 | 24 | 27 | 37 |
   | 120-128 | – | 19 | 27 | 35 | 51 | 18 | 22 | – | 16 | 22 | 24 | 34 |`;
-export const BEAT_TABLE = `  | bpm | headline of 1 line | 2 lines | 3 lines | stack of 2 lines | 3 lines | WordCycle of 2 words | 3 words |
-  | --- | --- | --- | --- | --- | --- | --- | --- |
-  | 90-104 | 4 | 4 | 6 | 7 | 8 | 6 | 8 |
-  | 104-112 | 4 | 5 | 6 | 7 | 8 | 6 | 8 |
-  | 112-120 | 4 | 5 | 6 | 7 | 8 | 6 | 8 |
-  | 120-128 | 4 | 5 | 6 | – | – | 7 | – |`;
+export const BEAT_TABLE = `  | bpm | headline of 1 line | 2 lines | 3 lines | stack of 2 lines | 3 lines | WordCycle of 2 words | 3 words | card with a title | and a subline |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 90-104 | 4 | 4 | 6 | 7 | 8 | 6 | 8 | 4 | 6 |
+  | 104-112 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 6 |
+  | 112-120 | 4 | 5 | 6 | 7 | 8 | 6 | 8 | 4 | 7 |
+  | 120-128 | 4 | 5 | 6 | – | – | 7 | – | 5 | 7 |`;
 
 export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 
@@ -87,8 +89,9 @@ export const STRUCTURE_RULES = `# Structure and timing
 ${CHARACTER_TABLE}
 
   and the fewest beats a piece needs, its lines at the limits its rule states (headline lines of
-  ${TABLE_LIMITS.headline.chars} characters, stack lines of ${TABLE_LIMITS.stack.chars}, words of ${TABLE_LIMITS.word.chars} under a prefix of ${TABLE_LIMITS.prefix.chars}); a dash: no length a
-  scene may have reads it, so use shorter or fewer lines or words:
+  ${TABLE_LIMITS.headline.chars} characters, stack lines of ${TABLE_LIMITS.stack.chars}, card titles of ${TABLE_LIMITS.title.chars} characters and sublines of ${TABLE_LIMITS.subline.chars}, words of
+  ${TABLE_LIMITS.word.chars} under a prefix of ${TABLE_LIMITS.prefix.chars}); a dash: no length a scene may have reads it, so use shorter or
+  fewer lines or words:
 
 ${BEAT_TABLE}
 - \`transitionIn\`: "cut" by default. Use "wipe" at most twice, e.g. into the first body scene and
@@ -98,8 +101,9 @@ ${BEAT_TABLE}
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
   get the same ad: a bold site keeps its hook scenes to the beats their texts need and leans on \`TypeIn\` there and on
   \`WordCycle\` in its body; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
-  \`UiScroll\`; a dense site can stack its points in a \`ClaimStack\`; an airy one keeps one short
-  line per scene.`;
+  \`UiScroll\`; a dense site lays two or three of its points out as a series of \`PointCard\`s, rather
+  than one short line per scene, or stacks them in a \`ClaimStack\`; an airy one keeps one short line
+  per scene.`;
 
 export const PIECE_RULES = `# Pieces (the renderer only has these)
 
@@ -121,6 +125,14 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   whose time the two captions share (see the table: \`atBeat\` at half the scene, rounded up).
 - **ClaimStack**: 2 or 3 short lines (at most 22 characters each) that land one per beat and stack
   up. Give it at least 2 beats per line, and the beats the table gives.
+- **PointCard**: one point of the site on a card that fills the frame: a big outlined number (the
+  renderer numbers the cards 01, 02, 03), \`lines[0]\` as the title and an optional \`lines[1]\` under a
+  rule as its subline, with a bar that marks the card's place in the series. Two or three
+  \`PointCard\`s in a row in the body make a series; a lone \`PointCard\`, more than 3 in a row, or one
+  in a hook are rejected. The title is a claim with its quote, at most 22 characters (never more
+  than 44, which the card sets on two lines); the subline, a claim or a framing line, at most 32
+  characters, comes in a beat after the title. The card's \`accent\`, if any, goes on the title: the
+  subline is set in one color. Give each card the beats the table gives.
 - **WordCycle**: a fixed prefix over a word that changes on the beat, for a short list the site
   states (payment methods, channels, who it is for). \`lines[0]\` is the prefix, a framing line; then
   2 or 3 lines of one word (or two) each, and every word that says something about the product is a
@@ -159,7 +171,7 @@ const COMPOSITION_RULES = `Composition rules:
 - **Brand-specific, not a template.** Ask yourself: if the logo and name were swapped for a
   competitor's, would this ad still work? Then it is generic. Lean on what only this product has:
   its UI, its numbers, its payment methods, its audience's words.
-- At most half of the scenes are type only (\`KineticHeadline\`, \`ClaimStack\`, \`WordCycle\`, \`TypeIn\`).
+- At most half of the scenes are type only (\`KineticHeadline\`, \`ClaimStack\`, \`PointCard\`, \`WordCycle\`, \`TypeIn\`).
 - **One idea per scene.** Never put two different claims in one \`KineticHeadline\`. Never repeat
   an idea in another scene (e.g. "0% commission" once, not three times in a row).
 - Don't caption a screenshot with the same words it already shows big: the caption adds the
