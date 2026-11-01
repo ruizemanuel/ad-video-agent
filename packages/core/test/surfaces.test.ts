@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { contrast, EdlSchema, layoutScenes, sceneSurfaces, SURFACE_SEPARATION, theme, wipeColor, type PieceName, type SiteData, type Surfaces } from '../src/index';
+import {
+  contrast,
+  EdlSchema,
+  layoutScenes,
+  sceneSurfaces,
+  SURFACE_SEPARATION,
+  theme,
+  videoSurfaces,
+  wipeColor,
+  type PieceName,
+  type Scene,
+  type SiteData,
+  type Surfaces,
+} from '../src/index';
 import edlShopJson from './fixtures/edl-shop.json';
 import siteShopJson from './fixtures/site-shop.json';
 
@@ -14,6 +27,20 @@ const videoOf = (...pieces: PieceName[]) => {
   const cta = rest.pop();
   if (!hook || !cta) throw new Error('a video needs a hook and a close');
   return layoutScenes({ ...edlShop, hooks: [[hook]], body: rest, cta }, 0).scenes;
+};
+
+// The scenes of a video whose hook is these scenes (so it can hold a WordFlash of n words), followed by these pieces: the last
+// is its close.
+const flash = (n: number): Scene => ({
+  piece: 'WordFlash',
+  beats: 2 * n,
+  lines: Array.from({ length: n }, (_, k) => ({ text: `word${k}`, kind: 'framing' as const })),
+});
+const plainHook = (piece: PieceName): Scene => ({ piece, beats: 4, lines: [] });
+const hooked = (hook: readonly Scene[], ...rest: PieceName[]) => {
+  const [cta] = rest.splice(-1);
+  if (!cta) throw new Error('a video needs a close');
+  return layoutScenes({ ...edlShop, hooks: [[...hook]], body: rest.map(plainHook), cta: plainHook(cta) }, 0).scenes;
 };
 
 describe('sceneSurfaces', () => {
@@ -80,6 +107,10 @@ describe('sceneSurfaces', () => {
     });
   });
 
+  it('ends each scene where the next one starts from', () => {
+    expect(sceneSurfaces(hooked([flash(3)], 'UiFocus', 'EndCard'), surfaces)).toEqual(['brand', 'base', 'brand']);
+  });
+
   it('gives every scene a surface the site has', () => {
     const { scenes } = layoutScenes(edlShop, 0);
     const names = sceneSurfaces(scenes, surfaces);
@@ -88,6 +119,89 @@ describe('sceneSurfaces', () => {
     const without = sceneSurfaces(scenes, { ...surfaces, brand: null });
     expect(without).toHaveLength(scenes.length);
     expect(without).not.toContain('brand');
+  });
+});
+
+describe('videoSurfaces', () => {
+  const noBrand = { ...surfaces, brand: null };
+
+  it('gives a scene that is not a flash one background', () => {
+    const scenes = videoOf('UiFocus', 'ClaimStack', 'UiScroll', 'EndCard');
+    expect(videoSurfaces(scenes, surfaces)).toEqual([['base'], ['contrast'], ['base'], ['brand']]);
+  });
+
+  it('puts the first word of a flash that opens the video on the page, under the brand, and the last on brand', () => {
+    expect(videoSurfaces(hooked([flash(3)], 'UiFocus', 'EndCard'), surfaces)).toEqual([['base', 'contrast', 'brand'], ['base'], ['brand']]);
+    expect(videoSurfaces(hooked([flash(2)], 'UiFocus', 'EndCard'), surfaces)[0]).toEqual(['base', 'brand']);
+    expect(videoSurfaces(hooked([flash(4)], 'UiFocus', 'EndCard'), surfaces)[0]).toEqual(['base', 'brand', 'contrast', 'brand']);
+    expect(videoSurfaces(hooked([flash(5)], 'UiFocus', 'EndCard'), surfaces)[0]).toEqual(['base', 'contrast', 'brand', 'contrast', 'brand']);
+  });
+
+  it('goes on alternating after a flash', () => {
+    const scenes = hooked([flash(3)], 'ClaimStack', 'UiFocus', 'ClaimStack', 'UiFocus', 'EndCard');
+    expect(videoSurfaces(scenes, surfaces)).toEqual([['base', 'contrast', 'brand'], ['contrast'], ['base'], ['brand'], ['base'], ['brand']]);
+  });
+
+  it('keeps the first word of a flash second in its hook off the scene before it', () => {
+    expect(videoSurfaces(hooked([plainHook('UiFocus'), flash(2)], 'ClaimStack', 'UiFocus', 'EndCard'), surfaces)).toEqual([
+      ['base'],
+      ['contrast', 'brand'],
+      ['contrast'],
+      ['base'],
+      ['brand'],
+    ]);
+    expect(videoSurfaces(hooked([plainHook('ClaimStack'), flash(2)], 'UiFocus', 'EndCard'), surfaces)).toEqual([
+      ['contrast'],
+      ['base', 'brand'],
+      ['base'],
+      ['brand'],
+    ]);
+  });
+
+  it('keeps the last word off the brand close right after it', () => {
+    expect(videoSurfaces(hooked([flash(3)], 'EndCard'), surfaces)).toEqual([['base', 'brand', 'contrast'], ['brand']]);
+  });
+
+  it('alternates the words between the page and contrast when the brand surface is unusable', () => {
+    expect(videoSurfaces(hooked([flash(3)], 'UiFocus', 'EndCard'), noBrand)).toEqual([['base', 'contrast', 'base'], ['base'], ['contrast']]);
+    expect(videoSurfaces(hooked([flash(4)], 'UiFocus', 'EndCard'), noBrand)).toEqual([['base', 'contrast', 'base', 'contrast'], ['base'], ['contrast']]);
+    expect(videoSurfaces(hooked([flash(3)], 'ClaimStack', 'UiFocus', 'EndCard'), noBrand)).toEqual([
+      ['base', 'contrast', 'base'],
+      ['contrast'],
+      ['base'],
+      ['contrast'],
+    ]);
+    expect(videoSurfaces(hooked([plainHook('ClaimStack'), flash(3)], 'UiFocus', 'EndCard'), noBrand)).toEqual([
+      ['contrast'],
+      ['base', 'contrast', 'base'],
+      ['base'],
+      ['contrast'],
+    ]);
+  });
+
+  it('never puts two words of a flash in a row on one background', () => {
+    const befores: PieceName[][] = [[], ['UiFocus'], ['ClaimStack']];
+    const afters: PieceName[][] = [
+      ['UiFocus', 'EndCard'],
+      ['ClaimStack', 'UiFocus', 'EndCard'],
+    ];
+    for (const set of [surfaces, noBrand]) {
+      for (const n of [2, 3, 4, 5]) {
+        for (const before of befores) {
+          for (const after of afters) {
+            const runs = videoSurfaces(hooked([...before.map(plainHook), flash(n)], ...after), set);
+            const at = before.length;
+            const words = runs[at] ?? [];
+            const previous = runs[at - 1]?.at(-1);
+            const label = `${set.brand ? 'brand' : 'no brand'}, ${n} words, after ${before.join() || 'nothing'}, before ${after.join()}: ${words.join()}`;
+            expect(words, label).toHaveLength(n);
+            words.slice(1).forEach((name, k) => expect(name, label).not.toBe(words[k]));
+            if (at === 0) expect(words[0], label).toBe('base');
+            if (previous && previous !== 'base') expect(words[0], label).not.toBe(previous);
+          }
+        }
+      }
+    }
   });
 });
 

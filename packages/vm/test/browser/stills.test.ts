@@ -15,6 +15,7 @@ import {
   theme,
   timedScenePath,
   validateEdl,
+  videoSurfaces,
   type Edl,
   type Format,
   type ProbeItem,
@@ -774,6 +775,33 @@ describe('the word flash', () => {
     expect(checkStills(hook1, flash, site, '9x16', 1).filter((c) => !c.pass)).toEqual([]);
     expect(textsOf(hook1, 'hooks[1][1]')).not.toContain('Tiendita');
     expect(textsOf(hook1, 'hooks[1][1]').join(' ')).toBe('Your shop in one link.');
+  });
+
+  it('sets each word on the background videoSurfaces gives it, and the scene after the flash on another', async () => {
+    const { surfaces } = theme(site);
+    const hook1 = await renderKeyframes({ edl: flash, site, runDir: dir, format: '9x16', hook: 1 });
+    for (const { hook, shown, path } of [
+      { hook: 0, shown: stills, path: 'hooks[0][0]' },
+      { hook: 1, shown: hook1, path: 'hooks[1][1]' },
+    ]) {
+      const runs = videoSurfaces(layoutScenes(flash, hook).scenes, surfaces);
+      const words = shown.filter((s) => s.path === path);
+      expect(words, path).toHaveLength(3);
+      words.forEach((still, k) => {
+        const name = runs[still.index]![k]!;
+        expect(flashLines(still).map((t) => t.bg), `${path}, word ${k} on ${name}`).toEqual(flashLines(still).map(() => cssRgb(surfaces[name]!.bg)));
+      });
+      const after = shown.find((s) => s.path === 'body[0]')!;
+      expect(runs[after.index]![0], `the scene after ${path}`).not.toBe(runs[words[0]!.index]!.at(-1));
+      if (hook === 0) {
+        // The flash opens the video: the brand goes over its first word, on the page, and its last is on brand.
+        expect(runs[0]!.at(0)).toBe('base');
+        expect(runs[0]!.at(-1)).toBe('brand');
+        expect(after.text.map((t) => t.bg), 'body[0]').toEqual(after.text.map(() => cssRgb(surfaces.contrast.bg)));
+      } else {
+        expect(runs[1]![0], 'the first word of a flash second in its hook').not.toBe('base');
+      }
+    }
   });
 });
 

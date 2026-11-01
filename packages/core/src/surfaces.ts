@@ -7,9 +7,11 @@ import { opensWithBrand, type TimedScene } from './timing';
 type Loud = Exclude<SurfaceName, 'base'>;
 
 // The scenes whose background is not a choice: the product shots, the typing and the scene that opens under the brand (a
-// headline or a WordFlash) are designed on the page's own colors (the logo reads on them), and the close is the brand's
-// own moment. The type scenes (undefined here) are the ones that alternate.
+// headline) are designed on the page's own colors (the logo reads on them), and the close is the brand's own moment. The
+// type scenes (undefined here) are the ones that alternate. A WordFlash is none of them: it has a background per word (see
+// flashSurfaces), and one that opens the video starts on the page's.
 const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
+  if (t.scene.piece === 'WordFlash') return undefined;
   if (opensWithBrand(t)) return 'base';
   switch (t.scene.piece) {
     case 'UiFocus':
@@ -19,7 +21,6 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
     case 'EndCard':
       return surfaces.brand ? 'brand' : 'contrast';
     case 'KineticHeadline':
-    case 'WordFlash':
     case 'ClaimStack':
     case 'PointCard':
     case 'WordCycle':
@@ -28,10 +29,37 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
 };
 
 /**
- * The background of each scene of one version of the video (a hook with the shared body and cta), in order. The type
- * scenes take contrast and brand in turn, so the video keeps changing color. One never takes the surface of its
- * neighbor (a cut between two backgrounds that look the same shows nothing), and the close is brand, so the scene before
- * it is never. The turn is spent only when a scene takes it: a scene that gives way for a neighbor leaves it to the next.
+ * The background of each of the `count` words of a WordFlash, in order. The words alternate over a pair of surfaces,
+ * contrast and brand (base and contrast without a brand surface), counted back from the last: it takes the second of the
+ * pair, unless the scene after has that surface fixed, and then the first. The first word then has two conditions. A flash
+ * that opens the video puts it on the page (`base`, under the brand's mark); any other must not repeat the surface of the
+ * scene before it, unless that one is the page's. When it fails, it moves to the page's when there is a brand surface, and
+ * without one the whole sequence turns over (each word takes the other of the pair, so the last of an opening flash with an
+ * odd number of words is on the page: the first word rules over the last).
+ */
+const flashSurfaces = (
+  count: number,
+  surfaces: Surfaces,
+  opening: boolean,
+  before: SurfaceName | undefined,
+  after: SurfaceName | undefined,
+): SurfaceName[] => {
+  const [first, second]: [SurfaceName, SurfaceName] = surfaces.brand ? ['contrast', 'brand'] : ['base', 'contrast'];
+  const [last, other] = after === second ? [first, second] : [second, first];
+  const words = Array.from({ length: count }, (_, k) => ((count - 1 - k) % 2 === 0 ? last : other));
+  const start = words[0];
+  const fits = opening ? start === 'base' : start === 'base' || start !== before;
+  if (fits) return words;
+  return surfaces.brand ? ['base', ...words.slice(1)] : words.map((name) => (name === first ? second : first));
+};
+
+/**
+ * The backgrounds of each scene of one version of the video (a hook with the shared body and cta), in order: one for most
+ * pieces, one per line for a WordFlash (see flashSurfaces). The next scene must differ from the last of them, and a wipe
+ * into a scene meets the first. The type scenes take contrast and brand in turn, so the video keeps changing color. One
+ * never takes the surface of its neighbor (a cut between two backgrounds that look the same shows nothing), and the close
+ * is brand, so the scene before it is never. The turn is spent only when a scene takes it, or a flash ends on it: a scene
+ * that gives way for a neighbor leaves it to the next.
  *
  * The cards of a series (see pointSeries) are one piece of the video, so they take one background and the cut between
  * two of them is a wipe on it, not a change of color: the first card chooses for all, and the rest copy it. A series takes
@@ -40,51 +68,66 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
  * and gives way to the series). The alternation goes on from the surface the series took; a series that had to fall back
  * to the page leaves the turn where it was, as any scene that gives way does.
  */
-export const sceneSurfaces = (scenes: readonly TimedScene[], surfaces: Surfaces): SurfaceName[] => {
+export const videoSurfaces = (scenes: readonly TimedScene[], surfaces: Surfaces): SurfaceName[][] => {
   const fixed = scenes.map((t) => pinned(t, surfaces));
   const series = pointSeries(scenes.map((t) => t.scene));
-  const names: SurfaceName[] = [];
+  const runs: SurfaceName[][] = [];
+  // The background scene `i` ends on.
+  const endOf = (i: number): SurfaceName | undefined => runs[i]?.at(-1);
   // Without a usable brand surface, contrast is all the type scenes have.
   const turns: Loud[] = surfaces.brand ? ['contrast', 'brand'] : ['contrast'];
   let turn = 0;
   // The background the series being walked took.
   let seriesName: SurfaceName = 'base';
-  scenes.forEach((_, i) => {
+  scenes.forEach((t, i) => {
     const pin = fixed[i];
     if (pin) {
-      names.push(pin);
+      runs.push([pin]);
+      return;
+    }
+    if (t.scene.piece === 'WordFlash') {
+      // A flash always has a background to end on, even with no lines to set on it.
+      const words = flashSurfaces(Math.max(1, t.scene.lines.length), surfaces, opensWithBrand(t), endOf(i - 1), fixed[i + 1]);
+      // The alternation goes on from the surface the last word took; a last word on the page leaves the turn where it was.
+      const spent = turns.findIndex((name) => name === words.at(-1));
+      if (spent >= 0) turn = spent + 1;
+      runs.push(words);
       return;
     }
     const place = series[i];
     if (place && place.at > 1) {
-      names.push(seriesName);
+      runs.push([seriesName]);
       return;
     }
     if (place) {
       // The scene before the series, and the one after its last card when that one's surface is already set.
-      const around = new Set<SurfaceName | undefined>([names[i - 1], fixed[i + place.of]]);
+      const around = new Set<SurfaceName | undefined>([endOf(i - 1), fixed[i + place.of]]);
       const chosen = turns.find((name) => !around.has(name));
       seriesName = chosen ?? 'base';
       if (chosen) turn = turns.indexOf(chosen) + 1;
-      names.push(seriesName);
+      runs.push([seriesName]);
       return;
     }
     // The neighbors this scene must differ from: the scene before it, and the one after it when its surface is already set.
     // A neighbor on `base` never matches a candidate, which is never `base`: a cut to or from the plain page always shows.
-    const taken = new Set<SurfaceName | undefined>([names[i - 1], fixed[i + 1]]);
+    const taken = new Set<SurfaceName | undefined>([endOf(i - 1), fixed[i + 1]]);
     const wanted = turns[turn % turns.length];
     const other = turns.find((name) => name !== wanted);
     if (wanted && !taken.has(wanted)) {
-      names.push(wanted);
+      runs.push([wanted]);
       turn++;
     } else if (other && !taken.has(other)) {
-      names.push(other);
+      runs.push([other]);
     } else {
-      names.push('base');
+      runs.push(['base']);
     }
   });
-  return names;
+  return runs;
 };
+
+/** The background each scene ends on: the last of its videoSurfaces, which the scene after it differs from. */
+export const sceneSurfaces = (scenes: readonly TimedScene[], surfaces: Surfaces): SurfaceName[] =>
+  videoSurfaces(scenes, surfaces).map((run) => run.at(-1) ?? 'base');
 
 const surfaceOf = (surfaces: Surfaces, name: SurfaceName) => {
   const colors = surfaces[name];
