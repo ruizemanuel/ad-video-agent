@@ -13,9 +13,9 @@ import { getServeUrl } from './bundle';
 import { buildStillJpegArgs, runFfmpeg } from './ffmpeg';
 import { parseKeyframesInput, readSite } from './input';
 
-// A still of a text that is about to be replaced is taken this many frames before the change...
-const BEFORE_CHANGE = 4;
-// ...but not before the scene has come in (its caption, its card), unless the change comes first: then the frame before it.
+/** A still of a text that is about to be replaced is taken this many frames before the change (see stillBefore). */
+export const BEFORE_CHANGE = 4;
+// But not before the scene has come in (its caption, its card), unless the change comes first: then the frame before it.
 const ENTRANCES = 20;
 
 /** The frame of the scene to take the text replaced at `change` in: whole, and never once the change has started. */

@@ -129,6 +129,7 @@ describe('@app/core public surface', () => {
         'endCardSteps',
         'fewestBeats',
         'findDemoLinks',
+        'firstClear',
         'flashBeats',
         'flashEnterFrame',
         'focusLanding',
