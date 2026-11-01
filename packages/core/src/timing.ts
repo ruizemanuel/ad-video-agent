@@ -210,7 +210,7 @@ export const readableIn = (frames: number): { chars: number; words: number } | u
 };
 
 /** The first frame of the scene a wipe does not cover: a wipe that brings it in covers it until WIPE_FRAMES / 2 after the cut. */
-export const firstClear =(timed: TimedScene): number => (timed.index > 0 && timed.scene.transitionIn === 'wipe' ? WIPE_FRAMES / 2 : 0);
+export const firstClear = (timed: TimedScene): number => (timed.index > 0 && timed.scene.transitionIn === 'wipe' ? WIPE_FRAMES / 2 : 0);
 
 // A WordFlash shows one line at a time, whole from its beat (it has no entrance) until the next replaces it on a beat of
 // its own: each line holds the fewest whole beats in which it is read, so its rhythm is the reading rule's.
