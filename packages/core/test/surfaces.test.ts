@@ -47,6 +47,33 @@ describe('sceneSurfaces', () => {
     expect(sceneSurfaces(scenes, surfaces)).toEqual(['contrast', 'brand', 'contrast', 'base', 'brand']);
   });
 
+  describe('the cards of a series', () => {
+    it('gives the cards of a series one background', () => {
+      const scenes = videoOf('UiFocus', 'PointCard', 'PointCard', 'PointCard', 'UiScroll', 'EndCard');
+      expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'contrast', 'contrast', 'base', 'brand']);
+    });
+
+    it('takes brand for a series after a contrast scene, and goes on alternating after it', () => {
+      const scenes = videoOf('UiFocus', 'ClaimStack', 'PointCard', 'PointCard', 'UiFocus', 'ClaimStack', 'UiFocus', 'EndCard');
+      expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'brand', 'brand', 'base', 'contrast', 'base', 'brand']);
+    });
+
+    it('goes on alternating from the surface the series took', () => {
+      const scenes = videoOf('UiFocus', 'PointCard', 'PointCard', 'UiScroll', 'ClaimStack', 'UiFocus', 'EndCard');
+      expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'contrast', 'base', 'brand', 'base', 'brand']);
+    });
+
+    it('falls back to base for a series between a contrast scene and the brand close', () => {
+      const scenes = videoOf('UiFocus', 'ClaimStack', 'PointCard', 'PointCard', 'EndCard');
+      expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'base', 'base', 'brand']);
+    });
+
+    it('keeps a series off the contrast of its neighbor when the brand surface is unusable', () => {
+      const scenes = videoOf('UiFocus', 'ClaimStack', 'PointCard', 'PointCard', 'UiFocus', 'EndCard');
+      expect(sceneSurfaces(scenes, { ...surfaces, brand: null })).toEqual(['base', 'contrast', 'base', 'base', 'base', 'contrast']);
+    });
+  });
+
   it('gives every scene a surface the site has', () => {
     const { scenes } = layoutScenes(edlShop, 0);
     const names = sceneSurfaces(scenes, surfaces);
@@ -64,6 +91,11 @@ describe('wipeColor', () => {
   it('wipes in a color that shows against a brand scene', () => {
     expect(wipeColor(surfaces, 'base', 'brand')).toBe('#1f2a24');
     expect(wipeColor(surfaces, 'contrast', 'brand')).toBe('#f7f7f2');
+  });
+
+  it('wipes between two cards of a series in a color that shows on their shared background', () => {
+    expect(wipeColor(surfaces, 'contrast', 'contrast')).toBe('#0b7a4b');
+    expect(wipeColor(surfaces, 'brand', 'brand')).toBe('#1f2a24');
   });
 
   it('does not depend on the side a scene is on', () => {

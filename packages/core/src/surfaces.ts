@@ -1,6 +1,7 @@
 // Which background each scene of a video takes, and the color the wipe brings in between two of them. Pure and
 // deterministic, so the render and its checks agree on what a video looks like.
 import { SURFACE_SEPARATION, contrast, type SurfaceName, type Surfaces } from './brand';
+import { pointSeries } from './series';
 import { opensWithBrand, type TimedScene } from './timing';
 
 type Loud = Exclude<SurfaceName, 'base'>;
@@ -30,17 +31,39 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
  * scenes take contrast and brand in turn, so the video keeps changing color. One never takes the surface of its
  * neighbor (a cut between two backgrounds that look the same shows nothing), and the close is brand, so the scene before
  * it is never. The turn is spent only when a scene takes it: a scene that gives way for a neighbor leaves it to the next.
+ *
+ * The cards of a series (see pointSeries) are one piece of the video, so they take one background and the cut between
+ * two of them is a wipe on it, not a change of color: the first card chooses for all, against the scene before the series
+ * and the one after it, and the rest copy it. The alternation goes on from the surface the series took; a series that
+ * had to fall back to the page leaves the turn where it was, as any scene that gives way does.
  */
 export const sceneSurfaces = (scenes: readonly TimedScene[], surfaces: Surfaces): SurfaceName[] => {
   const fixed = scenes.map((t) => pinned(t, surfaces));
+  const series = pointSeries(scenes.map((t) => t.scene));
   const names: SurfaceName[] = [];
   // Without a usable brand surface, contrast is all the type scenes have.
   const turns: Loud[] = surfaces.brand ? ['contrast', 'brand'] : ['contrast'];
   let turn = 0;
+  // The background the series being walked took.
+  let seriesName: SurfaceName = 'base';
   scenes.forEach((_, i) => {
     const pin = fixed[i];
     if (pin) {
       names.push(pin);
+      return;
+    }
+    const place = series[i];
+    if (place && place.at > 1) {
+      names.push(seriesName);
+      return;
+    }
+    if (place) {
+      // The scene before the series, and the one after its last card when that one's surface is already set.
+      const around = new Set<SurfaceName | undefined>([names[i - 1], fixed[i + place.of]]);
+      const chosen = turns.find((name) => !around.has(name));
+      seriesName = chosen ?? 'base';
+      if (chosen) turn = turns.indexOf(chosen) + 1;
+      names.push(seriesName);
       return;
     }
     // The neighbors this scene must differ from: the scene before it, and the one after it when its surface is already set.
