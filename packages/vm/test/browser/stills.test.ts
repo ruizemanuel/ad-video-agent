@@ -415,6 +415,13 @@ describe('the new pieces and the rhythm', () => {
     await expect(renderKeyframes({ edl: pieces, site: broken, runDir: dir, format: '9x16', hook: 0 })).rejects.toThrow(/logo/);
   });
 
+  it('closes on the name without loading the logo when its recorded size already rules it out: a file that cannot be had does not fail the render', async () => {
+    // A whole text header, as the capture records one: the close never shows a strip like this, whatever its ink.
+    const strip: SiteData = { ...site, brand: { ...site.brand, logo: { file: 'media/missing-logo.png', kind: 'png', width: 5760, height: 264 } } };
+    const stills = await renderKeyframes({ edl: pieces, site: strip, runDir: dir, format: '9x16', hook: 0 });
+    expect(textsOf(stills, 'cta')[0]).toBe('Tiendita');
+  });
+
   it.each(['distribuidoradelnorte.com.ar', 'distribuidoradelnorte-mayorista.com.ar'])('keeps the long address %s whole and inside the safe zone, typed and under the button of the close', async (host) => {
     const long: SiteData = { ...site, url: `https://www.${host}/` };
     const edl = makeNewPiecesEdl(long);

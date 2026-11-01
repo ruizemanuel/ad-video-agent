@@ -1,6 +1,6 @@
 import { layoutScenes, type Surfaces } from '@app/core';
-import { describe, expect, it } from 'vitest';
-import { averageInk, brandName, closeLogoBox, fitLogo, inkReads, logoBackgrounds, logoReads, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo } from '../src/video/logo';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { averageInk, brandName, closeLogoBox, fitLogo, inkReads, logoBackgrounds, logoReads, measuredInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo } from '../src/video/logo';
 import { fixtureEdl } from './support/edl';
 
 // The box the EndCard gives the logo in 9x16: 70% of its 760 px column, 3.2 times the format's logo size.
@@ -91,6 +91,26 @@ describe('the ink of the logo', () => {
   it('does not read a dark logo on a dark brand color', () => {
     expect(inkReads('#1f2a24', ['#0b7a4b'])).toBe(false);
     expect(inkReads('#111111', ['#f7f7f2', '#111111'])).toBe(false);
+  });
+
+  describe('as the canvas gives it back', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('averages the pixels the canvas gives back, and says nothing', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(measuredInk('media/logo.png', () => new Uint8ClampedArray([0, 0, 0, 255]))).toBe('#000000');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('has no ink when the canvas refuses, and says so naming the file, so a canvas that always refuses shows in the log', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const refused = () => {
+        throw new DOMException('The canvas has been tainted by cross-origin data.', 'SecurityError');
+      };
+      expect(measuredInk('media/logo.png', refused)).toBeNull();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(String(warn.mock.calls[0]?.[0])).toContain('media/logo.png');
+    });
   });
 });
 

@@ -53,6 +53,20 @@ export const averageInk = (rgba: Uint8ClampedArray): string | null => {
   return '#' + [red, green, blue].map((total) => Math.round(total / weight).toString(16).padStart(2, '0')).join('');
 };
 
+/**
+ * The ink of the logo in `file` (see averageInk), from the pixels `pixels` reads back from a canvas; null when the canvas
+ * refuses (a picture that is not readable back, one without a size), and then the video shows the name, never a failed
+ * render. The refusal is logged with the file: a canvas that always refused would hide every logo without a word.
+ */
+export const measuredInk = (file: string, pixels: () => Uint8ClampedArray): string | null => {
+  try {
+    return averageInk(pixels());
+  } catch (error) {
+    console.warn(`The ink of the logo ${file} could not be measured, so the video shows the brand's name: ${String(error)}`);
+    return null;
+  }
+};
+
 /** Whether ink of this color stands out on every one of `backgrounds`; null ink (not measured) never does. */
 export const inkReads = (ink: string | null, backgrounds: readonly string[]): boolean =>
   ink !== null && backgrounds.every((bg) => contrast(ink, bg) >= LOGO_MIN_CONTRAST);

@@ -19,7 +19,7 @@ import {
   type ProbeItem,
   type SiteData,
 } from '@app/core';
-import { averageInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo, type Size } from './logo';
+import { closeLogoBox, logoReads, measuredInk, recordedLogoSize, videoLogoBackgrounds, videoShowsLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
 import { Ctx, SurfaceCtx, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
@@ -94,38 +94,38 @@ const loadImage = (file: string): Promise<HTMLImageElement> =>
   });
 
 /**
- * The mean color of the logo's ink, null when it cannot be measured: the canvas refuses (a picture that is not
- * readable back, one without a size) or no pixel is opaque enough. Null means the name is shown, never a failed render.
+ * The mean color of the logo's ink, drawn from `file` into a canvas: null when the canvas refuses (see measuredInk) or no
+ * pixel is opaque enough. Null means the name is shown, never a failed render.
  */
-const measureInk = (image: HTMLImageElement): string | null => {
-  try {
+const measureInk = (image: HTMLImageElement, file: string): string | null =>
+  measuredInk(file, () => {
     const scale = Math.min(1, INK_SAMPLE_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     const context = canvas.getContext('2d');
-    if (!context) return null;
+    if (!context) throw new Error('The canvas gave no 2d context.');
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return averageInk(context.getImageData(0, 0, canvas.width, canvas.height).data);
-  } catch {
-    return null;
-  }
-};
+    return context.getImageData(0, 0, canvas.width, canvas.height).data;
+  });
 
 /**
  * The site's logo, null when it has none: its natural size (the one the capture recorded or, without one, the
  * picture's own) and the color of its ink. The picture is loaded in a few tries even when its size is recorded, to
- * measure the ink. A logo that never loads fails the render, as a font does: a video whose frames or key frames came
- * out of different tabs could otherwise close on the logo in some and on the name in others.
+ * measure the ink, unless that size already rules the logo out of the close's box (see logoReads): it is never shown
+ * then, so it has no ink to measure. A logo that never loads fails the render, as a font does: a video whose frames or
+ * key frames came out of different tabs could otherwise close on the logo in some and on the name in others.
  */
-const loadLogo = async (site: SiteData): Promise<{ size: Size; ink: string | null } | null> => {
+const loadLogo = async (site: SiteData, format: Format): Promise<{ size: Size; ink: string | null } | null> => {
   const logo = site.brand.logo;
   if (!logo) return null;
+  const recorded = recordedLogoSize(logo);
+  if (recorded && !logoReads(recorded, closeLogoBox(format))) return { size: recorded, ink: null };
   const file = logo.png ?? logo.file;
   for (let attempt = 1; ; attempt++) {
     try {
       const image = await loadImage(file);
-      return { size: recordedLogoSize(logo) ?? { width: image.naturalWidth, height: image.naturalHeight }, ink: measureInk(image) };
+      return { size: recorded ?? { width: image.naturalWidth, height: image.naturalHeight }, ink: measureInk(image, file) };
     } catch {
       if (attempt >= LOGO_TRIES) throw new Error(`The logo ${file} could not be loaded in ${LOGO_TRIES} tries.`);
       await new Promise((done) => setTimeout(done, LOGO_RETRY_MS * attempt));
@@ -144,7 +144,7 @@ const useBrand = (site: SiteData, format: Format, backgrounds: readonly string[]
   const [brand, setBrand] = useState<{ logoShown: Size | null } | null>(null);
   useEffect(() => {
     const fonts = Promise.all(fontFaces(site).map((face) => loadFont({ family: face.family, url: staticFile(face.file), weight: face.weight, stretch: face.stretch })));
-    Promise.all([fonts, loadLogo(site)])
+    Promise.all([fonts, loadLogo(site, format)])
       .then(([, logo]) => setBrand({ logoShown: logo && videoShowsLogo(logo.size, format, logo.ink, backgrounds) ? logo.size : null }))
       .catch((error: unknown) => cancelRender(error));
   }, [site, format, backgrounds]);
