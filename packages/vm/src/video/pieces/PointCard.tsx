@@ -2,7 +2,7 @@ import { useMemo, type CSSProperties, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type SurfaceColors } from '@app/core';
 import { layoutSeries, toWords, type Measure, type TypeLine } from '../type';
-import { fontStyle, linesHeight, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
+import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
 
 // The number stands this many headline sizes tall, but never more than this share of the safe zone's height: in a wide
 // frame it would leave the title no room.
@@ -50,26 +50,6 @@ export const barHeight = (format: Format): number => Math.max(6, Math.round(TYPE
 export const seriesTitles = (texts: readonly (readonly TypeLine[])[], format: Format, measure: Measure): { lines: TypeLine[][]; size: number } =>
   layoutSeries(texts, { width: safeWidth(format), max: TYPE[format].headline, min: TYPE[format].min, maxLines: 2, splitBelow: 1, measure });
 
-/** A text of every card of a series as layoutSeries sets it (no lines on a card without it), and its font's line height. */
-export type SeriesText = { lines: TypeLine[][]; size: number; lineHeight: number };
-
-/**
- * The height in px of the text block of every card of a series: the tallest card's, of its title's lines, the gap and the
- * rule and, on a card with a subline, the gap and the subline's lines. Each card sets its text at the top of a block this
- * tall, which starts numberGap under the number: the title stands at one height on every card, whatever each one holds.
- */
-export const seriesBlock = (title: SeriesText, subline: SeriesText): number => {
-  const gap = textGap(title.size);
-  return Math.max(
-    0,
-    ...title.lines.map((lines, i) => {
-      const under = subline.lines[i] ?? [];
-      const rest = under.length ? gap + linesHeight(under.length, subline.size, subline.lineHeight) : 0;
-      return linesHeight(lines.length, title.size, title.lineHeight) + gap + ruleHeight(title.size) + rest;
-    }),
-  );
-};
-
 /** How full each segment of the series' bar is at `frame` of card `at`: the cards before it full, its own from 0 to 1 over the scene, the rest empty. */
 export const seriesBar = (at: number, of: number, frame: number, duration: number): number[] =>
   Array.from({ length: of }, (_, i) => (i + 1 < at ? 1 : i + 1 > at ? 0 : Math.min(1, Math.max(0, frame / duration))));
@@ -91,7 +71,7 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
   const type = TYPE[format];
   // A card without a series (a lone one, which validateEdl refuses) is drawn as a series of one.
   const { at, of } = series ?? { at: 1, of: 1 };
-  const { title, subline, block } = useMemo(() => {
+  const { title, subline } = useMemo(() => {
     const cards = series?.cards ?? [scene];
     const width = safeWidth(format);
     // One size for the titles of the series, and one for its sublines, each broken into lines at the size it is drawn at.
@@ -108,7 +88,6 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
     return {
       title: { lines: ownTitle, size: titles.size },
       subline: ownSubline.length ? { lines: ownSubline, size: sublines.size } : null,
-      block: seriesBlock({ ...titles, lineHeight: theme.display.lineHeight }, { ...sublines, lineHeight: theme.body.lineHeight }),
     };
   }, [scene, series, at, format, type, theme]);
   // On the beat grid of the whole video. Every line of type of the title rises at once, and every one of the subline,
@@ -140,8 +119,8 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
           {pointLabel(at)}
         </div>
         <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', paddingTop: numberGap(format) }}>
-          {/* The series' block, the same on every card, under the number; the card's own text at its top. */}
-          <div style={{ height: block, display: 'flex', flexDirection: 'column', alignItems: items, gap: textGap(title.size) }}>
+          {/* The card's text, anchored at the top numberGap under the number: the title stands at one height on every card, whatever each one holds. */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: items, gap: textGap(title.size) }}>
             <RevealLines lines={title.lines} size={title.size} font={theme.display} color={surface.fg} accent={surface.accent} starts={title.lines.map(() => starts.title)} align={type.align} />
             <div
               style={{
