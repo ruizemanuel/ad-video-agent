@@ -231,6 +231,8 @@ const textName = (scene: Scene, w: TextWindow, captions: number): string => {
       return `headline line ${w.line + 1}`;
     case 'ClaimStack':
       return `stack line ${w.line + 1}`;
+    case 'PointCard':
+      return w.line === 0 ? 'the title' : 'the subline';
     case 'WordCycle':
       return w.line === 0 ? 'the prefix' : `word ${w.line}`;
     case 'EndCard':

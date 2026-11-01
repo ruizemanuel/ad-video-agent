@@ -58,7 +58,11 @@ export const useSurface = (): SurfaceColors => {
   return surface;
 };
 
-export type PieceProps = { scene: Scene; timed: TimedScene; showLogo: boolean };
+/** A PointCard's series: its place (`at` of `of`) and every card of it, so the cards share one size of title and of subline. */
+export type CardSeries = { at: number; of: number; cards: readonly Scene[] };
+
+/** `series`: the Ad sets it on the PointCards only (see pointSeries). */
+export type PieceProps = { scene: Scene; timed: TimedScene; showLogo: boolean; series?: CardSeries };
 
 export const EASE_OUT = Easing.bezier(0.16, 1, 0.3, 1);
 export const EASE_IN_OUT = Easing.bezier(0.65, 0, 0.35, 1);

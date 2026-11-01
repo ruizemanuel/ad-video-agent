@@ -131,6 +131,9 @@ export const headlineLineStart = (i: number, timed: TimedScene, bpm: number, ope
 export const stackLineStart = (i: number, timed: TimedScene, bpm: number): number =>
   beatFrame(timed, i * Math.max(1, Math.floor(timed.scene.beats / Math.max(1, timed.scene.lines.length))), bpm);
 
+/** The frame of the scene at which line i of a PointCard starts to rise: the title on the scene's first beat, the subline a beat later, on the video's grid. */
+export const pointLineStart = (i: number, timed: TimedScene, bpm: number): number => beatFrame(timed, i, bpm);
+
 // What a close of 6 beats or more does on its beats: the button comes in on beat 2 and is pressed on beat 4.5. On beat 2
 // the button of a 6-beat close stays on screen long enough to be read (see readingSeconds) with a site's call to action at
 // every tempo the music comes at (20 characters at 147 bpm, 24 at 128); on beat 3 it did not, at 111 bpm already.
@@ -213,6 +216,8 @@ export const textWindows = (timed: TimedScene, bpm: number, wipeOut: boolean): T
       return lines.map((line, i) => window(i, line.text, headlineLineStart(i, timed, bpm, opensWithBrand(timed)) + REVEAL_FRAMES, end));
     case 'ClaimStack':
       return lines.map((line, i) => window(i, line.text, stackLineStart(i, timed, bpm) + REVEAL_FRAMES, end));
+    case 'PointCard':
+      return lines.map((line, i) => window(i, line.text, pointLineStart(i, timed, bpm) + REVEAL_FRAMES, end));
     case 'WordCycle': {
       const [prefix, ...words] = lines;
       if (!prefix) return [];

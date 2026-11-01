@@ -28,6 +28,7 @@ import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
+import { numberSize } from '../../src/video/pieces/PointCard';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -180,6 +181,53 @@ function makeNewPiecesEdl(site: SiteData): Edl {
   };
 }
 
+/**
+ * An edit list of the fixture site with a series of three numbered cards in its body, the second without a subline,
+ * between the price the hook films (as in makeFixtureEdl) and a scroll to it, there so that the video lasts 15 s or more.
+ */
+function makeCardsEdl(site: SiteData): Edl {
+  const { hooks, claims, musicPrompt } = makeFixtureEdl(site);
+  return {
+    lang: 'en',
+    bpm: 112,
+    style: { energy: 'bold', density: 'dense' },
+    hooks,
+    // Each card has the fewest beats in which its texts are read at 112 bpm wherever it plays (see fewestBeats): 4, 4 and 6.
+    body: [
+      {
+        piece: 'PointCard',
+        beats: 4,
+        lines: [
+          { text: '0% commission', kind: 'claim', claimId: 'c2', accent: '0%' },
+          { text: 'On every sale', kind: 'claim', claimId: 'c2' },
+        ],
+        transitionIn: 'wipe',
+      },
+      { piece: 'PointCard', beats: 4, lines: [{ text: 'Cards, transfers, cash', kind: 'claim', claimId: 'c4' }] },
+      {
+        piece: 'PointCard',
+        beats: 6,
+        lines: [
+          { text: 'One plan', kind: 'claim', claimId: 'c3' },
+          { text: 'Priced at $4.990 / mes', kind: 'claim', claimId: 'c3' },
+        ],
+      },
+      {
+        piece: 'UiScroll',
+        beats: 7,
+        lines: [{ text: 'Pro plan: $4.990 / mes', kind: 'claim', claimId: 'c3', accent: '$4.990 / mes' }],
+        ...pickBox(site, 'price', '$4.990 / mes'),
+      },
+    ],
+    cta: { piece: 'EndCard', beats: 6, lines: [{ text: 'Start free', kind: 'framing' }], transitionIn: 'wipe' },
+    claims,
+    musicPrompt,
+  };
+}
+
+/** The paths of the three numbered cards of makeCardsEdl. */
+const CARDS = ['body[0]', 'body[1]', 'body[2]'];
+
 /** The texts the probe measured in the stills of a scene. */
 const textsOf = (stills: Still[], path: string): string[] => stills.filter((s) => s.path === path).flatMap((s) => s.text.map((t) => t.text));
 
@@ -227,18 +275,21 @@ async function pixelsOf(still: Still): Promise<{ rgb: Buffer; width: number; sca
 /** Whether the pixel at `at` is of `color` (its channels), give or take what the JPEG's compression changes. */
 const isColor = (rgb: Buffer, at: number, color: readonly number[]): boolean => color.every((c, i) => Math.abs(rgb[at + i]! - c) < 30);
 
-/** The rectangle, in px of the frame, that the pixels of `hex` above the row `bottom` (in px of the frame) take in a still of 9x16; undefined when there are none. */
-async function areaOf(still: Still, hex: string, bottom: number): Promise<{ x: number; y: number; w: number; h: number } | undefined> {
+/**
+ * The rectangle, in px of the frame, that the pixels of `hex` between the rows `top` and `bottom` (in px of the frame;
+ * from the top of the frame unless `top` is given) take in a still of 9x16; undefined when there are none.
+ */
+async function areaOf(still: Still, hex: string, bottom: number, top = 0): Promise<{ x: number; y: number; w: number; h: number } | undefined> {
   const { rgb, width, scale } = await pixelsOf(still);
   const color = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
-  let [left, top, right, last] = [Infinity, Infinity, -Infinity, -Infinity];
-  for (let y = 0; y < Math.floor(bottom / scale); y++) {
+  let [left, first, right, last] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let y = Math.ceil(top / scale); y < Math.floor(bottom / scale); y++) {
     for (let x = 0; x < width; x++) {
       if (!isColor(rgb, (y * width + x) * 3, color)) continue;
-      [left, top, right, last] = [Math.min(left, x), Math.min(top, y), Math.max(right, x), Math.max(last, y)];
+      [left, first, right, last] = [Math.min(left, x), Math.min(first, y), Math.max(right, x), Math.max(last, y)];
     }
   }
-  return left === Infinity ? undefined : { x: left * scale, y: top * scale, w: (right - left + 1) * scale, h: (last - top + 1) * scale };
+  return left === Infinity ? undefined : { x: left * scale, y: first * scale, w: (right - left + 1) * scale, h: (last - first + 1) * scale };
 }
 
 let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
@@ -345,6 +396,13 @@ describe('the other formats', () => {
     const stills = await renderKeyframes({ edl, site, runDir: dir, format, hook: 0 });
     expect(stills.length).toBeGreaterThanOrEqual(layoutScenes(edl, 0).scenes.length);
     expect(checkStills(stills, edl, site, format).filter((c) => !c.pass)).toEqual([]);
+  });
+
+  it.each(['16x9', '4x5'] as Format[])('renders the cards in %s, the stills pass the code checks, and each title is under its number', async (format) => {
+    const cards = makeCardsEdl(site);
+    const stills = await renderKeyframes({ edl: cards, site, runDir: dir, format, hook: 0 });
+    expect(checkStills(stills, cards, site, format).filter((c) => !c.pass)).toEqual([]);
+    for (const path of CARDS) expect(stills.find((s) => s.path === path)!.text[0]!.y, path).toBeGreaterThanOrEqual(FORMATS[format].safe.top + numberSize(format));
   });
 
   it('registers one composition per format, at its size and the length of the edit list', async () => {
@@ -494,6 +552,75 @@ describe('the new pieces and the rhythm', () => {
     const hook1 = await renderKeyframes({ edl: pieces, site, runDir: dir, format: '9x16', hook: 1 });
     expect(checkStills(hook1, pieces, site, '9x16', 1).filter((c) => !c.pass)).toEqual([]);
     expect(textsOf(hook1, 'hooks[1][0]').join(' ')).toBe('Where do my customers pay me?');
+  });
+});
+
+describe('the numbered cards', () => {
+  let cards: Edl;
+  let stills: Still[];
+  beforeAll(async () => {
+    cards = makeCardsEdl(site);
+    stills = await renderKeyframes({ edl: cards, site, runDir: dir, format: '9x16', hook: 0 });
+  });
+
+  /** The still of each card of `shown`, with the colors of the background sceneSurfaces gives it. */
+  const cardsOf = (shown: Still[], on: SiteData) => {
+    const { surfaces } = theme(on);
+    const names = sceneSurfaces(layoutScenes(cards, 0).scenes, surfaces);
+    return CARDS.map((path) => {
+      const still = shown.find((s) => s.path === path)!;
+      return { still, surface: surfaces[names[still.index]!]! };
+    });
+  };
+
+  it('starts from an edit list the site backs', () => {
+    expect(validateEdl(cards, site)).toEqual([]);
+  });
+
+  it('renders a series of three cards in 9x16 and the stills pass the code checks', () => {
+    expect(checkStills(stills, cards, site, '9x16').filter((c) => !c.pass)).toEqual([]);
+    // A title may be set on two lines of type.
+    expect(textsOf(stills, 'body[0]').join(' ')).toBe('0% commission On every sale');
+    expect(textsOf(stills, 'body[1]').join(' ')).toBe('Cards, transfers, cash');
+  });
+
+  it('sets each card on the background sceneSurfaces gives it, and every title of the series at one size', () => {
+    const shown = cardsOf(stills, site);
+    for (const { still, surface } of shown) expect(still.text.map((t) => t.bg), still.path).toEqual(still.text.map(() => cssRgb(surface.bg)));
+    expect(new Set(shown.map(({ still }) => still.text[0]!.fontSize)).size, 'the sizes of the titles').toBe(1);
+  });
+
+  it("draws the card's number at the top of the safe zone and its bar at the bottom, inside it", async () => {
+    const { width, height, safe } = FORMATS['9x16'];
+    for (const { still, surface } of cardsOf(stills, site)) {
+      const title = still.text[0]!;
+      // Over the title, only the number is in the accent.
+      const number = await areaOf(still, surface.accent, title.y);
+      expect(number, `${still.path}: the number`).toBeDefined();
+      expect(number!.x).toBeGreaterThanOrEqual(safe.left - 1);
+      expect(number!.y).toBeGreaterThanOrEqual(safe.top - 1);
+      expect(number!.x + number!.w).toBeLessThanOrEqual(width - safe.right + 1);
+      expect(number!.y + number!.h).toBeLessThanOrEqual(title.y);
+      // Under the last line of text (the subline, or the title and then its rule on a card without one), down to the foot of
+      // the frame: the bar, which ends on the foot of the safe zone.
+      const text = still.text.at(-1)!;
+      const bar = await areaOf(still, surface.accent, height, text.y + text.h);
+      expect(bar, `${still.path}: the bar`).toBeDefined();
+      expect(bar!.y + bar!.h).toBeLessThanOrEqual(height - safe.bottom + 1);
+      expect(bar!.y + bar!.h).toBeGreaterThan(height - safe.bottom - 12);
+    }
+  });
+
+  it('keeps the number and the title inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {
+    // Set as the capture sets celo.org's heading font, whose content box starts above the line's own.
+    const tall: SiteData = { ...site, brand: { ...site.brand, fonts: [{ ...serif, weight: '400', letterSpacingEm: -0.01, lineHeight: 1.13 }] } };
+    const shown = await renderKeyframes({ edl: cards, site: tall, runDir: dir, format: '9x16', hook: 0 });
+    expect(checkStills(shown, cards, tall, '9x16').filter((c) => !c.pass)).toEqual([]);
+    for (const { still, surface } of cardsOf(shown, tall)) {
+      const number = await areaOf(still, surface.accent, still.text[0]!.y);
+      expect(number, `${still.path}: the number`).toBeDefined();
+      expect(number!.y).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
+    }
   });
 });
 

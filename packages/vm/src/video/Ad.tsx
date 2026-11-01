@@ -10,6 +10,7 @@ import {
   layoutScenes,
   theme as makeTheme,
   opensWithBrand,
+  pointSeries,
   sceneSurfaces,
   WIPE_FRAMES,
   wipeColor,
@@ -21,9 +22,10 @@ import {
 } from '@app/core';
 import { closeLogoBox, logoReads, measuredInk, recordedLogoSize, videoShowsLogo, type ShownLogo, type Size } from './logo';
 import { ClaimStack } from './pieces/ClaimStack';
-import { Ctx, SurfaceCtx, type PieceProps } from './pieces/common';
+import { Ctx, SurfaceCtx, type CardSeries, type PieceProps } from './pieces/common';
 import { EndCard } from './pieces/EndCard';
 import { KineticHeadline } from './pieces/KineticHeadline';
+import { PointCard } from './pieces/PointCard';
 import { TypeIn } from './pieces/TypeIn';
 import { UiFocus } from './pieces/UiFocus';
 import { UiScroll } from './pieces/UiScroll';
@@ -39,7 +41,7 @@ import { probeMessage } from './probe';
  */
 export type AdProps = { edl: Edl | null; site: SiteData | null; format: Format; hook: number; probe?: boolean; music?: string };
 
-const PIECES: Record<PieceName, FC<PieceProps>> = { KineticHeadline, UiFocus, UiScroll, ClaimStack, WordCycle, TypeIn, EndCard };
+const PIECES: Record<PieceName, FC<PieceProps>> = { KineticHeadline, UiFocus, UiScroll, ClaimStack, PointCard, WordCycle, TypeIn, EndCard };
 
 /** Measures every `[data-qa-line]` of the frame once it is laid out: its box, size, font, colors, opacity and background. */
 const Probe: FC = () => {
@@ -162,6 +164,11 @@ const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> 
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
   // The background of each scene of this version: its hook changes which ones the type scenes of the body take.
   const names = useMemo(() => sceneSurfaces(scenes, theme.surfaces), [scenes, theme]);
+  // The series of numbered cards each PointCard belongs to (see pointSeries), with every card of it.
+  const series = useMemo(() => {
+    const list = scenes.map((t) => t.scene);
+    return pointSeries(list).map((place): CardSeries | undefined => place && { at: place.at, of: place.of, cards: list.slice(place.first, place.first + place.of) });
+  }, [scenes]);
   if (!brand) return <AbsoluteFill style={{ background: theme.bg }} />;
   return (
     <Ctx.Provider value={{ theme, format, site, edl, logoShown: brand.logoShown }}>
@@ -173,7 +180,7 @@ const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> 
           return (
             <SurfaceCtx.Provider key={timed.index} value={surface}>
               <Sequence from={timed.from} durationInFrames={timed.duration} name={`${timed.role}-${timed.index}-${timed.scene.piece}`}>
-                <Piece scene={timed.scene} timed={timed} showLogo={opensWithBrand(timed)} />
+                <Piece scene={timed.scene} timed={timed} showLogo={opensWithBrand(timed)} series={series[timed.index]} />
               </Sequence>
             </SurfaceCtx.Provider>
           );

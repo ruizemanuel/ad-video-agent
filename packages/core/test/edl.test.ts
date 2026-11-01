@@ -5,8 +5,8 @@ import edlShop from './fixtures/edl-shop.json';
 describe('EDL contract', () => {
   it('accepts the shop EDL', () => expect(EdlSchema.parse(edlShop).hooks).toHaveLength(3));
 
-  it('knows the 2a pieces', () =>
-    expect(PIECES).toEqual(['KineticHeadline', 'UiFocus', 'UiScroll', 'ClaimStack', 'WordCycle', 'TypeIn', 'EndCard']));
+  it('knows the pieces', () =>
+    expect(PIECES).toEqual(['KineticHeadline', 'UiFocus', 'UiScroll', 'ClaimStack', 'PointCard', 'WordCycle', 'TypeIn', 'EndCard']));
 
   it('rejects an unknown piece', () => expect(() => SceneSchema.parse({ ...edlShop.body[0], piece: 'Orbit' })).toThrow());
 

@@ -314,6 +314,18 @@ describe('the rhythm of the pieces', () => {
     });
   });
 
+  describe('pointLineStart', () => {
+    it("brings a card's subline in a beat after its title", () => {
+      // At 120 bpm a beat is 15 frames: the title rises from frame 0, the subline from 15, each in REVEAL_FRAMES later.
+      const [title, subline] = [framing('0% commission'), framing('On every sale')];
+      const card = placed({ piece: 'PointCard', beats: 6, lines: [title, subline] }, 120);
+      expect(textWindows(card, 120, false)).toEqual([
+        { line: 0, text: title.text, fullyIn: 16, leaves: 90 },
+        { line: 1, text: subline.text, fullyIn: 31, leaves: 90 },
+      ]);
+    });
+  });
+
   describe('opensWithBrand', () => {
     it('is true of a headline that opens the video, which carries the brand over it', () => {
       expect(opensWithBrand(placed({ piece: 'KineticHeadline', beats: 4, lines }, 120, 0, 0))).toBe(true);

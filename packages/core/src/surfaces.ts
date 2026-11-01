@@ -19,6 +19,7 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
       return surfaces.brand ? 'brand' : 'contrast';
     case 'KineticHeadline':
     case 'ClaimStack':
+    case 'PointCard':
     case 'WordCycle':
       return undefined;
   }

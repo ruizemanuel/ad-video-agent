@@ -10,6 +10,7 @@ export * from './music';
 export * from './order';
 export * from './product';
 export * from './qa';
+export * from './series';
 export * from './site';
 export * from './surfaces';
 export * from './timing';

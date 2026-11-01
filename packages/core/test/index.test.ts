@@ -145,6 +145,8 @@ describe('@app/core public surface', () => {
         'opensWithBrand',
         'parseWav',
         'placeShot',
+        'pointLineStart',
+        'pointSeries',
         'raisedMove',
         'readableAtBeats',
         'readableIn',
