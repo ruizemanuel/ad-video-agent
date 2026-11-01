@@ -122,6 +122,21 @@ describe('surfaces', () => {
     expect(light.bg).toBe('#e8ece9'); // 15.83:1 on near-black, past the 10 a site color needs
   });
 
+  it('inverts the button of the contrast surface when the primary is the darkest color of the site', () => {
+    // Nothing on this site is darker than the primary, so the contrast background IS the primary and a pill
+    // painted with it would vanish. Brand is dropped for the same reason, so the contrast surface carries the inversion.
+    const navy = recolor([
+      { hex: '#f7f7f2', role: 'bg', weight: 0.9 },
+      { hex: '#5b655f', role: 'text', weight: 0.2 },
+      { hex: '#1f2a24', role: 'primary', weight: 0.6 },
+      { hex: '#f4b942', role: 'accent', weight: 0.2 },
+    ]);
+    const { contrast: dark, brand } = theme(navy).surfaces;
+    expect(dark.bg).toBe('#1f2a24');
+    expect(brand).toBeNull();
+    expect(dark.button).toEqual({ bg: '#f7f7f2', fg: '#1f2a24' }); // the primary reads 13.8:1 on the page
+  });
+
   it('keeps the page text on the brand button when the primary is too dim to read on the page', () => {
     // The primary reads 3.43:1 on this dark page, so it cannot be the pill's text.
     expect(theme(darkSite).surfaces.brand?.button).toEqual({ bg: '#101418', fg: '#e8ece9' });

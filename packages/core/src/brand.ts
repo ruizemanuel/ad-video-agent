@@ -112,6 +112,9 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
   const mutedOn = (bg: string, fg: string, candidates: string[]) => strongestOn(bg, candidates.filter((c) => c !== fg)) ?? fg;
 
   const base: SurfaceColors = { bg: t.bg, fg: t.fg, muted: t.muted, accent: t.accentText, button: { bg: t.primary, fg: t.onPrimary } };
+  // The pill for a background the primary would vanish into: it takes the page's color, so it stands out from the
+  // background behind it. The primary is its text when that reads on the page, else the page's own text.
+  const invertedButton = { bg: base.bg, fg: contrast(t.primary, base.bg) >= MIN_CONTRAST ? t.primary : base.fg };
 
   const lightBase = contrast(t.bg, NEAR_BLACK) >= contrast(t.bg, WHITE);
   const [away, fallback] = lightBase ? [WHITE, NEAR_BLACK] : [NEAR_BLACK, WHITE];
@@ -123,7 +126,8 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
     fg: oppositeFg,
     muted: mutedOn(oppositeBg, oppositeFg, readers),
     accent: [t.primary, ...accents].find((c) => contrast(c, oppositeBg) >= MIN_CONTRAST) ?? oppositeFg,
-    button: { bg: t.primary, fg: t.onPrimary },
+    // When the site's darkest color is the primary (or close to it), the contrast background swallows the pill.
+    button: contrast(t.primary, oppositeBg) < SURFACE_SEPARATION ? invertedButton : { bg: t.primary, fg: t.onPrimary },
   };
 
   // White and near-black join the candidates because a primary is often mid-tone, and then no site color reads on it.
@@ -137,8 +141,7 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
           fg: brandFg,
           muted: mutedOn(t.primary, brandFg, onPrimary),
           accent: accents.find((c) => contrast(c, t.primary) >= MIN_CONTRAST) ?? brandFg,
-          // The pill takes the page's color, so it stands out from the primary behind it.
-          button: { bg: base.bg, fg: contrast(t.primary, base.bg) >= MIN_CONTRAST ? t.primary : base.fg },
+          button: invertedButton,
         }
       : null;
 
