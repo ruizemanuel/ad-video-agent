@@ -126,20 +126,24 @@ const surfacesOf = (colors: Color[], t: Omit<Theme, 'surfaces'>): Surfaces => {
     fg: oppositeFg,
     muted: mutedOn(oppositeBg, oppositeFg, readers),
     accent: [t.primary, ...accents].find((c) => contrast(c, oppositeBg) >= MIN_CONTRAST) ?? oppositeFg,
-    // When the site's darkest color is the primary (or close to it), the contrast background swallows the pill.
-    button: contrast(t.primary, oppositeBg) < SURFACE_SEPARATION ? invertedButton : { bg: t.primary, fg: t.onPrimary },
+    // When the site's darkest color is the primary (or close to it), the contrast background swallows the pill; and when
+    // no text reads on the primary (brand is dropped then, so the close is on this surface), the pill's text would not.
+    button:
+      contrast(t.primary, oppositeBg) < SURFACE_SEPARATION || contrast(t.onPrimary, t.primary) < MIN_CONTRAST
+        ? invertedButton
+        : { bg: t.primary, fg: t.onPrimary },
   };
 
   // White and near-black join the candidates because a primary is often mid-tone, and then no site color reads on it.
-  const onPrimary = [...readers, WHITE, NEAR_BLACK];
-  const brandFg = strongestOn(t.primary, onPrimary);
+  const onBrand = [...readers, WHITE, NEAR_BLACK];
+  const brandFg = strongestOn(t.primary, onBrand);
   const apart = contrast(t.primary, base.bg) >= SURFACE_SEPARATION && contrast(t.primary, opposite.bg) >= SURFACE_SEPARATION;
   const brand: SurfaceColors | null =
     apart && brandFg
       ? {
           bg: t.primary,
           fg: brandFg,
-          muted: mutedOn(t.primary, brandFg, onPrimary),
+          muted: mutedOn(t.primary, brandFg, onBrand),
           accent: accents.find((c) => contrast(c, t.primary) >= MIN_CONTRAST) ?? brandFg,
           button: invertedButton,
         }

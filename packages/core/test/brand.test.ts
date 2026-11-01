@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_CONTRAST, alpha, contrast, fontFaces, mix, theme, type SiteData, type SurfaceColors } from '../src/index';
+import { MIN_CONTRAST, alpha, contrast, fontFaces, mix, theme, type SiteData, type SurfaceColors, type Surfaces } from '../src/index';
 import siteShop from './fixtures/site-shop.json';
 
 const site = siteShop as SiteData;
@@ -67,7 +67,24 @@ describe('surfaces', () => {
     { hex: '#e8ece9', role: 'text', weight: 0.7 },
     { hex: '#0b7a4b', role: 'primary', weight: 0.6 },
   ]);
-  const present = (s: ReturnType<typeof theme>['surfaces']) => Object.values(s).filter((surface): surface is SurfaceColors => surface !== null);
+  // Nothing on this site is darker than the primary, so the contrast background IS the primary.
+  const navy = recolor([
+    { hex: '#f7f7f2', role: 'bg', weight: 0.9 },
+    { hex: '#5b655f', role: 'text', weight: 0.2 },
+    { hex: '#1f2a24', role: 'primary', weight: 0.6 },
+    { hex: '#f4b942', role: 'accent', weight: 0.2 },
+  ]);
+  const present = (s: Surfaces): SurfaceColors[] => [s.base, s.contrast, ...(s.brand ? [s.brand] : [])];
+  // Sites of every kind the builder tells apart, and whether each keeps a brand surface: a test that skips a dropped one
+  // says so here rather than passing over it.
+  const sites: [name: string, site: SiteData, brand: boolean][] = [
+    ['the light fixture', site, true],
+    ['a dark site', darkSite, true],
+    ['a primary that is the darkest color of the site', navy, false],
+    ['a mid-gray primary nothing reads on', withPrimary('#777777'), false],
+    ['an orange primary nothing reads on', withPrimary('#d9480f'), false],
+    ['a primary too close to the page', withPrimary('#f0efe8'), false],
+  ];
 
   it("keeps base as today's theme", () => {
     const t = theme(site);
@@ -89,18 +106,24 @@ describe('surfaces', () => {
     expect(brand?.button).toEqual({ bg: '#f7f7f2', fg: '#0b7a4b' }); // 5.01:1
   });
 
-  it('keeps every text pair of every surface at 4.5:1 or better', () => {
-    for (const s of present(theme(site).surfaces)) {
+  it.each(sites)('keeps every text pair of every surface, and the pill of every close, at 4.5:1 or better: %s', (_, from, hasBrand) => {
+    const surfaces = theme(from).surfaces;
+    expect(surfaces.brand !== null, 'a brand surface').toBe(hasBrand);
+    for (const s of present(surfaces)) {
       expect(contrast(s.fg, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
       expect(contrast(s.muted, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
       expect(contrast(s.accent, s.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
-      expect(contrast(s.button.fg, s.button.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
     }
+    // The close is on brand, or on contrast when there is none (see sceneSurfaces): their pills are the ones drawn. The
+    // page's own, the primary with its best text, never is (no close is on the page; wipeColor reads only its color), and
+    // it falls short exactly where nothing reads on the primary.
+    for (const s of [surfaces.contrast, ...(surfaces.brand ? [surfaces.brand] : [])])
+      expect(contrast(s.button.fg, s.button.bg)).toBeGreaterThanOrEqual(MIN_CONTRAST);
   });
 
-  it('draws every surface from site colors plus white and near-black', () => {
-    for (const s of present(theme(site).surfaces))
-      for (const color of [s.bg, s.fg, s.muted, s.accent, s.button.bg, s.button.fg]) expect(palette(site)).toContain(color);
+  it.each(sites)('draws every surface from site colors plus white and near-black: %s', (_, from) => {
+    for (const s of present(theme(from).surfaces))
+      for (const color of [s.bg, s.fg, s.muted, s.accent, s.button.bg, s.button.fg]) expect(palette(from)).toContain(color);
   });
 
   it('drops the brand surface when no text reads on the primary', () => {
@@ -123,18 +146,20 @@ describe('surfaces', () => {
   });
 
   it('inverts the button of the contrast surface when the primary is the darkest color of the site', () => {
-    // Nothing on this site is darker than the primary, so the contrast background IS the primary and a pill
-    // painted with it would vanish. Brand is dropped for the same reason, so the contrast surface carries the inversion.
-    const navy = recolor([
-      { hex: '#f7f7f2', role: 'bg', weight: 0.9 },
-      { hex: '#5b655f', role: 'text', weight: 0.2 },
-      { hex: '#1f2a24', role: 'primary', weight: 0.6 },
-      { hex: '#f4b942', role: 'accent', weight: 0.2 },
-    ]);
+    // A pill painted with the primary would vanish into the contrast background, which is the primary. Brand is dropped for
+    // the same reason, so the contrast surface carries the inversion.
     const { contrast: dark, brand } = theme(navy).surfaces;
     expect(dark.bg).toBe('#1f2a24');
     expect(brand).toBeNull();
     expect(dark.button).toEqual({ bg: '#f7f7f2', fg: '#1f2a24' }); // the primary reads 13.8:1 on the page
+  });
+
+  it('inverts the button of the contrast surface when no text reads on the primary', () => {
+    // White reads 4.48:1 on this gray, near-black less: a pill in the primary would fail the close. The brand surface is
+    // dropped for the same reason, so the close is on contrast, with the page's pill and text (the gray reads only 4.17:1 on it).
+    const { contrast: dark, brand } = theme(withPrimary('#777777')).surfaces;
+    expect(brand).toBeNull();
+    expect(dark.button).toEqual({ bg: '#f7f7f2', fg: '#1f2a24' });
   });
 
   it('keeps the page text on the brand button when the primary is too dim to read on the page', () => {
