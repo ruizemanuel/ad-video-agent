@@ -10,8 +10,8 @@ type Band = readonly [number, number];
 type Column = { head: string; value: (bpm: number) => number | undefined };
 export type Row = { band: Band; values: (number | undefined)[] };
 
-// Every half bpm of a band, its ends included.
-const temposOf = ([low, high]: Band): number[] => Array.from({ length: (high - low) * 2 + 1 }, (_, i) => low + i / 2);
+/** Every half bpm of a band, its ends included. */
+export const temposOf =([low, high]: Band): number[] => Array.from({ length: (high - low) * 2 + 1 }, (_, i) => low + i / 2);
 
 /** A text of `chars` characters and `words` words: what it says does not count, only how long it is. */
 export const sample = (chars: number, words: number): Line => {

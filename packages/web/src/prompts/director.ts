@@ -18,7 +18,10 @@ export const TEMPO_BANDS: readonly (readonly [number, number])[] = [
   [112, 120],
   [120, 128],
 ];
-/** The lengths of the lines of the type pieces the table of beats counts with: the limits their rules state. */
+/**
+ * The lengths of the lines of the type pieces the table of beats counts with: the limits their rules state. `phrase`: the
+ * longest phrase of a WordFlash the rule for its beats counts with (the table counts words alone).
+ */
 export const TABLE_LIMITS = {
   headline: { chars: 18, words: 3 },
   stack: { chars: 22, words: 4 },
@@ -27,6 +30,7 @@ export const TABLE_LIMITS = {
   prefix: { chars: 14, words: 2 },
   word: { chars: 13, words: 1 },
   flash: { chars: FLASH_READING.maxChars, words: 1 },
+  phrase: { chars: 17, words: 3 },
 } as const;
 
 // What fits in a scene, by band of tempo: the worst of the band, wherever the scene plays (first in the video or later,
@@ -68,7 +72,8 @@ export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 export const STRUCTURE_RULES = `# Structure and timing
 
 - Three hooks, strongest first: hooks[0] is the main version. Each hook is 1 or 2 scenes and about
-  3 seconds. Only the hook changes between versions: the **body** and the **cta** are shared.
+  3 seconds (a \`WordFlash\` hook, 3 to 4 seconds). Only the hook changes between versions: the
+  **body** and the **cta** are shared.
 - The three hooks are different kinds, chosen from: the site's main promise; the site's main line,
   word by word (a \`WordFlash\`); an inversion ("X is not the problem. Y is."); a typed question
   (\`TypeIn\` with \`variant: "prompt"\`); the typed address (\`TypeIn\` with \`variant: "url"\`); a
@@ -84,9 +89,10 @@ export const STRUCTURE_RULES = `# Structure and timing
 - Every text stays whole on screen long enough to be read: from when it is fully in to when it
   starts to leave, it needs 1 s per ${READING_RULE.charsPerSecond} characters, or ${READING_RULE.secondsPerWord} s per word if that is more, and ${READING_RULE.minSeconds.toFixed(2)} s
   at least. This is checked. Its time starts once it is in (a line of type rises in ${seconds(REVEAL_FRAMES)} s, a
-  caption in ${seconds(CAPTION_DELAY + REVEAL_FRAMES)} s, a \`TypeIn\` line once it is typed whole, at ${TYPED_BY * 100} % of the scene) and ends
-  where the wipe into the next scene starts (${seconds(WIPE_FRAMES / 2)} s before the cut). What fits at every tempo of
-  a row, wherever the scene plays: the most characters a text can have by its scene's beats,
+  caption in ${seconds(CAPTION_DELAY + REVEAL_FRAMES)} s, a \`TypeIn\` line once it is typed whole, at ${TYPED_BY * 100} % of the scene, a
+  \`WordFlash\` line on its beat, whole) and ends where the wipe into the next scene starts
+  (${seconds(WIPE_FRAMES / 2)} s before the cut). What fits at every tempo of a row, wherever the scene plays: the most
+  characters a text can have by its scene's beats,
 
 ${CHARACTER_TABLE}
 
@@ -117,10 +123,12 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   alone, very large, on a background of its own, and replaces the one before on the beat. A line
   that says something about the product is a claim with its quote, as always. Each line holds the
   whole beats it needs to be read: a word alone of up to ${FLASH_READING.maxChars} characters needs ${FLASH_READING.seconds} s (a beat up
-  to 120 bpm, two above); a phrase of two or more words, a longer word, and the first word of a
-  \`WordFlash\` that opens the video (the brand is over it) are read like any text; the last holds
-  to the cut. Give it the beats the table gives: above 120 bpm, at most 4 words fit in 8 beats. At
-  most one \`accent\` in the scene.
+  to 120 bpm, two above); a phrase (two or three words, up to ${TABLE_LIMITS.phrase.chars} characters: keep phrases that
+  short), a longer word, and the first word of a \`WordFlash\` that opens the video (the brand is
+  over it) are read like any text; the last holds to the cut. The table gives its beats by the
+  number of lines, counting words alone: up to 120 bpm, add a beat for each phrase or longer word
+  that is not the first line; above 120 bpm, end on a word alone: at most 4 words fit in 8 beats.
+  At most one \`accent\` in the scene.
 - **UiFocus**: a real screenshot in a large card, with a caption above it; the camera eases in to
   one element. Needs \`shotId\` and \`boxIndex\` (required): the element the caption is about, a box
   with \`product: true\`. One caption line, at most 40 characters and no more than the table gives

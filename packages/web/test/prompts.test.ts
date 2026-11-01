@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BANNED_PHRASES, judgeItems, validateEdl, type Edl, type Line, type Problem, type Scene, type SiteData } from '@app/core';
+import { BANNED_PHRASES, fewestBeats, judgeItems, validateEdl, type Edl, type Line, type Problem, type Scene, type SiteData } from '@app/core';
 import { CLASSIFY_SYSTEM, classifyPrompt } from '../src/prompts/classify';
 import { BEAT_TABLE, CHARACTER_TABLE, DIRECTOR_SYSTEM, directorRequest, TABLE_LIMITS, TEMPO_BANDS } from '../src/prompts/director';
 import { JUDGE_SYSTEM, judgePrompt } from '../src/prompts/judge';
@@ -7,7 +7,7 @@ import { PATCH_SYSTEM, patchPrompt } from '../src/prompts/patch';
 import { REVIEW_OUTPUT, REVIEW_SYSTEM, reviewIntro } from '../src/prompts/review';
 import { siteForModel } from '../src/pipeline/site-for-model';
 import { captureShop, edlShop, siteShop } from './support/shop';
-import { beatRows, beatTable, characterRows, characterTable, sample } from './support/timing-tables';
+import { beatRows, beatTable, characterRows, characterTable, sample, temposOf } from './support/timing-tables';
 
 // How many fence markers a prompt has, and what the JSON blocks between them hold.
 const fences = (text: string): number => text.split('```').length - 1;
@@ -231,7 +231,83 @@ describe('how long a text stays on screen', () => {
     expect(rules).toContain('**WordFlash**: the site\'s main line');
     expect(rules).toContain('for a hook only (in the body it is rejected)');
     expect(rules).toContain('a word alone of up to 12 characters needs 0.5 s');
-    expect(rules).toContain('at most 4 words fit in 8 beats');
+    expect(rules).toContain('a phrase (two or three words, up to 17 characters: keep phrases that short), a longer word,');
+    expect(rules).toContain('the last holds to the cut');
+    expect(rules).toContain(
+      'The table gives its beats by the number of lines, counting words alone: up to 120 bpm, add a beat for each phrase or longer word that is not the first line; above 120 bpm, end on a word alone: at most 4 words fit in 8 beats.',
+    );
+  });
+
+  it.each(systems)('tells %s a word flash hook may last 3 to 4 seconds, and that its lines are read from their beat', (_, system) => {
+    const rules = flat(system);
+    expect(rules).toContain('Each hook is 1 or 2 scenes and about 3 seconds (a `WordFlash` hook, 3 to 4 seconds).');
+    expect(rules).toContain('a `TypeIn` line once it is typed whole, at 60 % of the scene, a `WordFlash` line on its beat, whole)');
+  });
+
+  describe('the beats of a word flash, as the prompt counts them', () => {
+    const rows = beatRows();
+    // The columns 'WordFlash of 2 words' to '5 words' of the table of beats (see BEAT_COLUMNS): words alone at the limit.
+    const ofWords = (count: number, values: readonly (number | undefined)[]): number | undefined => values[9 + count - 2];
+    // A line of a flash: a word alone at the limit the table counts with, or a phrase as short as the prompt asks, of two or
+    // three words. A longer word, up to as many characters, reads as such a phrase does: it is no word alone either.
+    const LINES = {
+      word: sample(TABLE_LIMITS.flash.chars, 1),
+      two: sample(TABLE_LIMITS.phrase.chars, 2),
+      three: sample(TABLE_LIMITS.phrase.chars, 3),
+    };
+    type Kind = keyof typeof LINES;
+    const patterns = (count: number): Kind[][] =>
+      count === 0 ? [[]] : patterns(count - 1).flatMap((pattern) => (Object.keys(LINES) as Kind[]).map((kind) => [...pattern, kind]));
+    /**
+     * The beats the prompt gives a flash of these lines in a band: the table's for as many words alone and, up to 120 bpm, a
+     * beat more for each phrase that is not the first line. Above 120 bpm it gives the table's, and asks to end on a word.
+     */
+    const promptBeats = (kinds: readonly Kind[], band: number): number | undefined => {
+      const table = ofWords(kinds.length, rows[band]?.values ?? []);
+      const [, high] = TEMPO_BANDS[band] ?? [0, 0];
+      return table === undefined ? undefined : table + (high <= 120 ? kinds.slice(1).filter((kind) => kind !== 'word').length : 0);
+    };
+    const flash = (lines: Line[], beats: number): Scene => ({ piece: 'WordFlash', beats, lines });
+
+    // Above 120 bpm the table has no 5 words (see the next test): those flashes are not written there.
+    const cases = TEMPO_BANDS.flatMap((band, i) => [2, 3, 4, 5].map((count) => [band, count, i] as const)).filter(([[, high], count]) => high <= 120 || count < 5);
+    it.each(cases)('gives every flash of words and phrases the beats it is read in, wherever it plays, at %j bpm in %s lines', ([low, high], count, band) => {
+      for (const kinds of patterns(count)) {
+        if (high > 120 && kinds.at(-1) !== 'word') continue;
+        const beats = promptBeats(kinds, band);
+        expect(beats, kinds.join(' / ')).toBeDefined();
+        const scene = flash(kinds.map((kind) => LINES[kind]), 2);
+        for (const bpm of temposOf([low, high])) expect(fewestBeats(scene, bpm, beats), `${kinds.join(' / ')} at ${bpm} bpm`).toBeDefined();
+      }
+    }, 30_000);
+
+    it.each(systems)('counts for %s, up to 120 bpm, a beat for each word alone and two above, where at most 4 words fit in 8 beats', (_, system) => {
+      expect(flat(system)).toContain('a word alone of up to 12 characters needs 0.5 s (a beat up to 120 bpm, two above)');
+      expect(flat(system)).toContain('at most 4 words fit in 8 beats');
+      TEMPO_BANDS.forEach(([, high], band) => {
+        const values = rows[band]?.values ?? [];
+        const steps = [2, 3, 4].map((count) => (ofWords(count + 1, values) ?? 0) - (ofWords(count, values) ?? 0));
+        if (high <= 120) expect(steps, `${TEMPO_BANDS[band]}`).toEqual([1, 1, 1]);
+        else {
+          expect(steps.slice(0, 2)).toEqual([2, 2]);
+          expect([ofWords(4, values), ofWords(5, values)]).toEqual([8, undefined]);
+        }
+      });
+    });
+
+    // The prompt's own example, with the wipe into the first body scene it advises: the phrase second costs a beat.
+    it.each([104, 112, 118])('reads the example of the prompt at %s bpm, at the beats it gives, before a wipe into the body', (bpm) => {
+      expect(flat(DIRECTOR_SYSTEM)).toContain('("Vendé" / "lo tuyo." / "Cobrás" / "todo.")');
+      const lines: Line[] = ['Vendé', 'lo tuyo.', 'Cobrás', 'todo.'].map((text) => ({ text, kind: 'framing' }));
+      const kinds: Kind[] = lines.map(({ text }) => (text.includes(' ') ? 'two' : 'word'));
+      const band = TEMPO_BANDS.findIndex(([low, high]) => bpm >= low && bpm <= high);
+      const beats = promptBeats(kinds, band);
+      expect(beats).toBe(7);
+      const shop = edlShop();
+      const [first, ...body] = shop.body;
+      const example: Edl = { ...shop, bpm, hooks: [[flash(lines, beats ?? 0)]], body: [{ ...first!, transitionIn: 'wipe' }, ...body] };
+      expect(validateEdl(example, siteShop())).toEqual([]);
+    });
   });
 
   it.each(systems)('recommends a series of cards for a dense site to %s', (_, system) =>
