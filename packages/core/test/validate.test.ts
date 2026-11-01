@@ -457,12 +457,12 @@ describe('validateEdl: structure', () => {
       expect(problemsOf(series(1, j))).toEqual(
         structureAt(
           `body[${j}]`,
-          'a PointCard needs another next to it: 2 or 3 in a row make a numbered series; add a card with another point of the site, or make this one a KineticHeadline or a ClaimStack',
+          'a PointCard needs another next to it: 2 or 3 in a row make a numbered series; make this one a KineticHeadline or a ClaimStack',
         ),
       ));
     it('rejects a fourth card in a row, at that card', () =>
       expect(problemsOf(series(4))).toEqual(
-        structureAt('body[3]', 'a series has 3 PointCards at most, and this is card 4 of 4 in a row: make it another piece, or drop it'),
+        structureAt('body[3]', 'a series has 3 PointCards at most, and this is card 4 of 4 in a row: make it another piece'),
       ));
     it('rejects a card in a hook, at that card, and only for the hook', () =>
       expect(problemsOf(shop({ ...edlShop, hooks: [[card(6)], ...edlShop.hooks.slice(1)] }))).toEqual(
