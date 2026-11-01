@@ -135,6 +135,18 @@ describe('the texts of a series of cards', () => {
     for (const line of set.lines.flat()) expect(set.size * cobrame(lineText(line))).toBeLessThanOrEqual(fit.width * 0.98);
   });
 
+  it('splits a series title that fits one line below the full size into two larger lines', () => {
+    const split = { ...title, splitBelow: 1 };
+    // On one line "Cobrás todo." is set at 117 px, under the 150 of the full size: on two, at the full size.
+    const one = layoutLines(words('Cobrás todo.'), { ...title, maxLines: 1 });
+    expect(one.size).toBe(117);
+    const set = layoutSeries([words('Cobrás todo.')], split);
+    expect(set.lines.map((lines) => lines.map(lineText))).toEqual([['Cobrás', 'todo.']]);
+    expect(set.size).toBe(TYPE['9x16'].headline);
+    // A single word is never broken: it stays on one line, as large as it fits.
+    expect(layoutSeries([words('Transferencias.')], split).lines.map((lines) => lines.map(lineText))).toEqual([['Transferencias.']]);
+  });
+
   it('gives no lines for a card without that text', () => {
     const subline = { width: safeWidth('9x16'), max: Math.round(TYPE['9x16'].caption * 0.62), min: TYPE['9x16'].min, maxLines: 2, measure: perChar };
     const set = layoutSeries([words('Directo a tu cuenta.'), [], words('Sin saber nada de tecnología.')], subline);

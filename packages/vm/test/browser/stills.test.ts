@@ -28,7 +28,7 @@ import { getServeUrl } from '../../src/render/bundle';
 import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
-import { BAR_GAP, barHeight, numberSize } from '../../src/video/pieces/PointCard';
+import { BAR_GAP, barHeight, numberGap, numberSize } from '../../src/video/pieces/PointCard';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
 
@@ -640,6 +640,15 @@ describe('the numbered cards', () => {
     // The cards differ in what they hold: a title of one line or two, a subline or none.
     const tops = CARDS.map((path) => stills.find((s) => s.path === path)!.text[0]!.y);
     expect(Math.max(...tops) - Math.min(...tops), `the tops of the titles: ${tops.join(', ')}`).toBeLessThanOrEqual(1);
+  });
+
+  it('sets the title of every card right under its number, not in the middle of the room', () => {
+    const under = FORMATS['9x16'].safe.top + numberSize('9x16');
+    for (const path of CARDS) {
+      const top = stills.find((s) => s.path === path)!.text[0]!.y;
+      expect(top, path).toBeGreaterThanOrEqual(under);
+      expect(top, path).toBeLessThanOrEqual(under + 2 * numberGap('9x16'));
+    }
   });
 
   it("draws the card's number at the top of the safe zone and its bar at the bottom, inside it", async () => {

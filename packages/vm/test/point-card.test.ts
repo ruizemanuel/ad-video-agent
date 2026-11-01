@@ -1,8 +1,8 @@
 // What a numbered card draws besides its text, as plain math: the number, its size, and how far the series' bar is filled.
 import type { SurfaceColors } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { numberSize, numberStyle, pointLabel, seriesBar, seriesBlock } from '../src/video/pieces/PointCard';
-import type { TypeLine } from '../src/video/type';
+import { numberGap, numberSize, numberStyle, pointLabel, seriesBar, seriesBlock, seriesTitles } from '../src/video/pieces/PointCard';
+import { lineText, toWords, type Measure, type TypeLine } from '../src/video/type';
 
 // A dark background with an accent of its own.
 const surface: SurfaceColors = { bg: '#16201b', fg: '#ffffff', muted: '#f4f6f2', accent: '#c8743f', button: { bg: '#2e6a50', fg: '#ffffff' } };
@@ -17,6 +17,25 @@ describe('a numbered card', () => {
     expect(numberSize('9x16')).toBe(360);
     expect(numberSize('16x9')).toBe(288);
     expect(numberSize('4x5')).toBe(307);
+  });
+
+  it("leaves 20 % of the number's size between the number and the text under it", () => {
+    expect(numberGap('9x16')).toBe(72);
+    expect(numberGap('16x9')).toBe(58);
+    expect(numberGap('4x5')).toBe(61);
+  });
+
+  it('sets the titles of a series on two lines as large as the headline where one line would be set smaller', () => {
+    // A stand-in for the browser's measure: every character is 0.6 em wide.
+    const perChar: Measure = (text) => text.length * 0.6;
+    const title = (text: string) => [toWords({ text, kind: 'claim' })];
+    // On one line "Cobrás todo." would be set at 117 px, under the 150 of the 9x16 headline: it takes two lines at 150.
+    const set = seriesTitles([title('Cobrás todo.'), title('Vendé lo tuyo.')], '9x16', perChar);
+    expect(set.lines.map((lines) => lines.map(lineText))).toEqual([
+      ['Cobrás', 'todo.'],
+      ['Vendé', 'lo tuyo.'],
+    ]);
+    expect(set.size).toBe(150);
   });
 
   it("outlines the number in the accent, filled with the background over the stroke so the font's inner contours do not show", () => {

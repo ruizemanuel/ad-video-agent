@@ -1,13 +1,15 @@
 import { useMemo, type CSSProperties, type FC } from 'react';
 import { AbsoluteFill, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { alpha, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format, type SurfaceColors } from '@app/core';
-import { layoutSeries, toWords, type TypeLine } from '../type';
+import { layoutSeries, toWords, type Measure, type TypeLine } from '../type';
 import { fontStyle, linesHeight, measureWith, progress, RevealLines, safeBox, useAd, useSurface, type PieceProps } from './common';
 
 // The number stands this many headline sizes tall, but never more than this share of the safe zone's height: in a wide
 // frame it would leave the title no room.
 const NUMBER_HEADLINES = 2.4;
 const NUMBER_SHARE = 0.3;
+// The card's text starts this share of the number's size under the number.
+const NUMBER_GAP = 0.2;
 // The segments of the series' bar are this many px apart.
 export const BAR_GAP = 12;
 // The title, the rule and the subline are this share of the title's size apart; the rule is this share of it thick, and
@@ -22,6 +24,9 @@ export const pointLabel = (at: number): string => String(at).padStart(2, '0');
 
 /** The number's font size in px: min(TYPE.headline × 2.4, 30 % of the safe zone's height), rounded. */
 export const numberSize = (format: Format): number => Math.round(Math.min(TYPE[format].headline * NUMBER_HEADLINES, safeBox(format).height * NUMBER_SHARE));
+
+/** The room in px between the number's box and the card's text under it: 20 % of the number's size, rounded. */
+export const numberGap = (format: Format): number => Math.round(numberSize(format) * NUMBER_GAP);
 
 /**
  * How the number is painted: in outline, in the accent of its background, `max(3, 1.2 % of size)` px wide. A stroke over a
@@ -38,13 +43,20 @@ export const numberStyle = (size: number, surface: SurfaceColors): CSSProperties
 /** The height of the series' bar in px: 18 % of the format's smallest type, never under 6. */
 export const barHeight = (format: Format): number => Math.max(6, Math.round(TYPE[format].min * 0.18));
 
+/**
+ * The titles of a series as its cards set them (see layoutSeries): as large as the format's headline, and each on two lines
+ * wherever one line would be set smaller (splitBelow: 1), except a single word; then all at the smallest size any takes.
+ */
+export const seriesTitles = (texts: readonly (readonly TypeLine[])[], format: Format, measure: Measure): { lines: TypeLine[][]; size: number } =>
+  layoutSeries(texts, { width: safeWidth(format), max: TYPE[format].headline, min: TYPE[format].min, maxLines: 2, splitBelow: 1, measure });
+
 /** A text of every card of a series as layoutSeries sets it (no lines on a card without it), and its font's line height. */
 export type SeriesText = { lines: TypeLine[][]; size: number; lineHeight: number };
 
 /**
  * The height in px of the text block of every card of a series: the tallest card's, of its title's lines, the gap and the
  * rule and, on a card with a subline, the gap and the subline's lines. Each card sets its text at the top of a block this
- * tall, centered between the number and the bar: the title stands at one height on every card, whatever each one holds.
+ * tall, which starts numberGap under the number: the title stands at one height on every card, whatever each one holds.
  */
 export const seriesBlock = (title: SeriesText, subline: SeriesText): number => {
   const gap = textGap(title.size);
@@ -63,11 +75,12 @@ export const seriesBar = (at: number, of: number, frame: number, duration: numbe
   Array.from({ length: of }, (_, i) => (i + 1 < at ? 1 : i + 1 > at ? 0 : Math.min(1, Math.max(0, frame / duration))));
 
 // One card of a numbered series (two or three PointCards in a row, see pointSeries), filling the safe column from top to
-// bottom: at the top, its number, large and in outline in the accent of its background; in the middle, its title
+// bottom: at the top, its number, large and in outline in the accent of its background; right under it, its title
 // (lines[0]) in the display font, a rule, and the optional subline (lines[1]) in the body font and the secondary color, a
-// beat after the title; at the bottom, the series' bar, filled up to this card and through it as the scene plays. Every
-// title of the series is set at one size, up to the format's headline, and every subline at another, so the cards read as
-// one set; and every card's text sits at the top of one block, so its title does not move at the cut to the next card. The
+// beat after the title; at the bottom, the series' bar, filled up to this card and through it as the scene plays, the air
+// of the card left above it. Every title of the series is set at one size, up to the format's headline and on two lines
+// where one would be set smaller (see seriesTitles), and every subline at another, so the cards read as one set; and
+// every card's text starts the same gap under its number, so its title does not move at the cut to the next card. The
 // subline stands apart by its font, its size and the rule over it, not by a dimmer color: on the loud backgrounds the
 // secondary color can be nearly the text's own.
 export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
@@ -82,9 +95,10 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
     const cards = series?.cards ?? [scene];
     const width = safeWidth(format);
     // One size for the titles of the series, and one for its sublines, each broken into lines at the size it is drawn at.
-    const titles = layoutSeries(
+    const titles = seriesTitles(
       cards.map((card) => card.lines.slice(0, 1).map(toWords)),
-      { width, max: type.headline, min: type.min, maxLines: 2, measure: measureWith(theme.display) },
+      format,
+      measureWith(theme.display),
     );
     const sublines = layoutSeries(
       cards.map((card) => card.lines.slice(1, 2).map(toWords)),
@@ -125,8 +139,8 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
         >
           {pointLabel(at)}
         </div>
-        <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          {/* The series' block, the same on every card, centered; the card's own text at its top. */}
+        <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', paddingTop: numberGap(format) }}>
+          {/* The series' block, the same on every card, under the number; the card's own text at its top. */}
           <div style={{ height: block, display: 'flex', flexDirection: 'column', alignItems: items, gap: textGap(title.size) }}>
             <RevealLines lines={title.lines} size={title.size} font={theme.display} color={surface.fg} accent={surface.accent} starts={title.lines.map(() => starts.title)} align={type.align} />
             <div
