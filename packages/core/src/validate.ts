@@ -21,7 +21,7 @@ import {
   readableIn,
   readingBeats,
   readingCounts,
-  readingSeconds,
+  secondsNeeded,
   swapsCaption,
   textWindows,
   unreadTexts,
@@ -50,6 +50,8 @@ const BPM = { min: 90, max: 128 };
 const SCENE_BEATS = { min: 2, max: 8 };
 // Three words is the most that hold two beats each in the longest scene (7 of its 8 beats).
 const CYCLE_WORDS = { min: 2, max: 3 };
+// A WordFlash shows the site's main line a word or a short phrase at a time, each on a beat of its own.
+const FLASH_LINES = { min: 2, max: 5 };
 const VIDEO_SECONDS = { min: 15, max: 30 };
 // The numbered card is for two or three points of a site: a series of PointCards is two or three in a row.
 const SERIES_CARDS = { min: 2, max: 3 };
@@ -286,10 +288,11 @@ const readingFixes = (scene: Scene, at: Placement, bpm: number): string[] => {
   else if (
     (scene.piece === 'WordCycle' && scene.lines.length > CYCLE_WORDS.min + 1) ||
     (scene.piece === 'ClaimStack' && scene.lines.length > 2) ||
-    (scene.piece === 'PointCard' && scene.lines.length === 2)
+    (scene.piece === 'PointCard' && scene.lines.length === 2) ||
+    (scene.piece === 'WordFlash' && scene.lines.length > FLASH_LINES.min)
   ) {
     const fewer: Scene = { ...scene, lines: scene.lines.slice(0, -1) };
-    const part = scene.piece === 'WordCycle' ? 'a word' : scene.piece === 'PointCard' ? 'the subline' : 'a line';
+    const part = scene.piece === 'WordCycle' || scene.piece === 'WordFlash' ? 'a word' : scene.piece === 'PointCard' ? 'the subline' : 'a line';
     const longer = readingBeats(fewer, at, bpm, minSceneBeats(fewer), longest);
     if (!unreadTexts(fewer, at, bpm).length) fixes.push(`drop ${part}`);
     else if (longer) fixes.push(`drop ${part} and give the scene ${longer.beats} beats`);
@@ -297,8 +300,8 @@ const readingFixes = (scene: Scene, at: Placement, bpm: number): string[] => {
   return fixes;
 };
 
-// Every text stays whole on screen long enough to be read (see readingSeconds): one problem per text that does not, at
-// its line, saying what would fix it.
+// Every text stays whole on screen long enough to be read (see readingSeconds, and secondsNeeded for the word alone of a
+// WordFlash): one problem per text that does not, at its line, saying what would fix it.
 const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placement, bpm: number, report: Report): void => {
   const windows = textWindows(timed, bpm, at.wipeOut);
   const unread = windows.filter((w) => !isReadable(w));
@@ -307,8 +310,9 @@ const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placeme
   const address = scene.piece === 'TypeIn' && scene.variant === 'url';
   const fixes = readingFixes(scene, at, bpm);
   if (address && !fixes.length) fixes.push(`use another piece: an address this long cannot be read once typed in a scene of ${SCENE_BEATS.max} beats or fewer`);
-  // Cutting the text helps nothing when two captions share a scene too short for them (see checkAtBeat).
-  const cuts = !address && (!swapsCaption(scene) || scene.beats >= MIN_SWAP_BEATS);
+  // Cutting the text helps nothing when two captions share a scene too short for them (see checkAtBeat), and a word of a
+  // WordFlash is kept or dropped, never cut: what reads it is its beats.
+  const cuts = !address && scene.piece !== 'WordFlash' && (!swapsCaption(scene) || scene.beats >= MIN_SWAP_BEATS);
   for (const w of unread) {
     const cut = cuts ? cutToRead(w, 'it') : undefined;
     const options = cut ? [...fixes, cut] : fixes;
@@ -316,7 +320,7 @@ const checkReading = (path: string, scene: Scene, timed: TimedScene, at: Placeme
     report(
       `${path}.lines[${w.line}]`,
       'structure',
-      `${textName(scene, w, windows.length)} "${w.text}" (${readingCounts(w.text).chars} characters) is readable ${readable} s of the ${readingSeconds(w.text).toFixed(2)} s it needs: ${options.length ? options.join(', or ') : `split the scene: its texts cannot all be read in ${SCENE_BEATS.max} beats or fewer`}`,
+      `${textName(scene, w, windows.length)} "${w.text}" (${readingCounts(w.text).chars} characters) is readable ${readable} s of the ${secondsNeeded(w).toFixed(2)} s it needs: ${options.length ? options.join(', or ') : `split the scene: its texts cannot all be read in ${SCENE_BEATS.max} beats or fewer`}`,
     );
   }
 };
@@ -329,6 +333,13 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
   if (scene.piece === 'ClaimStack' && (scene.lines.length < 2 || scene.lines.length > 3)) report(path, 'structure', 'ClaimStack needs 2 or 3 lines');
   if (scene.piece === 'PointCard' && (scene.lines.length < 1 || scene.lines.length > 2))
     report(path, 'structure', `PointCard needs a title and an optional subline (1 or 2 lines), got ${scene.lines.length}`);
+  if (scene.piece === 'WordFlash') {
+    if (scene.lines.length < FLASH_LINES.min || scene.lines.length > FLASH_LINES.max)
+      report(path, 'structure', `WordFlash needs ${FLASH_LINES.min} to ${FLASH_LINES.max} words or short phrases (lines), got ${scene.lines.length}`);
+    // The cta has its rule of its own (checkEdl): it is an EndCard, whatever else it is.
+    if (path.startsWith('body['))
+      report(path, 'structure', 'a WordFlash goes in a hook, where it opens a version of the video: in the body, make it a KineticHeadline');
+  }
   if (scene.piece === 'WordCycle') {
     const [prefix, ...words] = scene.lines;
     if (prefix?.kind !== 'framing') report(path, 'structure', 'WordCycle needs a framing line first');

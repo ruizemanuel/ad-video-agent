@@ -4,6 +4,7 @@ import {
   EdlSchema,
   FPS,
   applyPatches,
+  fewestBeats,
   judgeItems,
   layoutScenes,
   scenePaths,
@@ -487,6 +488,52 @@ describe('validateEdl: structure', () => {
           'body[0].lines[1]: the subline "Cobrás directo a tu cuenta, sin intermediarios ni vueltas." (58 characters) is readable 1.37 s of the 3.41 s it needs: drop the subline and give the scene 6 beats, or cut it to 24 characters and 4 words',
         ]));
     });
+  });
+
+  describe('WordFlash', () => {
+    const flash = (words: string[], beats: number): Scene => ({ piece: 'WordFlash', beats, lines: words.map((word) => framing(word)) });
+    const asHook = (scene: Scene, bpm = edlShop.bpm): Case => shop({ ...edlShop, bpm, hooks: [[scene], ...edlShop.hooks.slice(1)] });
+    // The fewest beats in which a scene reads wherever it plays at 112 bpm, the shop's.
+    const readIn = (words: string[]): Scene => {
+      const beats = fewestBeats(flash(words, 2), edlShop.bpm);
+      if (beats === undefined) throw new Error(`no length reads ${words.join(' ')}`);
+      return flash(words, beats);
+    };
+    const words = ['Vendé', 'Cobrás', 'todo.', 'ya.', 'hoy.', 'mismo.'];
+    const countMessage = (n: number) => `WordFlash needs 2 to 5 words or short phrases (lines), got ${n}`;
+    const atLine = (c: Case, where: string) => problemsOf(c).filter((p) => p.where === where);
+
+    it.each([1, 6])('rejects %s lines, at that scene', (n) =>
+      expect(notReading(asHook(flash(words.slice(0, n), 8)))).toEqual([{ where: 'hooks[0][0]', rule: 'structure', detail: countMessage(n) }]));
+    it.each([2, 5])('accepts %s lines', (n) => clean(asHook(readIn(words.slice(0, n)))));
+
+    it('accepts a WordFlash as a whole hook and as the second scene of one', () => {
+      clean(asHook(readIn(['Vendé', 'lo tuyo.', 'Cobrás', 'todo.'])));
+      clean(shop({ ...edlShop, hooks: [[get(get(edlShop.hooks, 0), 0), readIn(['Cobrás', 'todo.', 'ya.'])], ...edlShop.hooks.slice(1)] }));
+    });
+
+    it.each([0, 3])('rejects a WordFlash in the body, at that scene (body[%s])', (j) => {
+      const replaced = get(edlShop.body, j);
+      const scene: Scene = { ...flash(words.slice(0, 4), replaced.beats), ...(replaced.transitionIn ? { transitionIn: replaced.transitionIn } : {}) };
+      expect(notReading(shop(withBody(j, scene)))).toEqual([
+        { where: `body[${j}]`, rule: 'structure', detail: 'a WordFlash goes in a hook, where it opens a version of the video: in the body, make it a KineticHeadline' },
+      ]);
+    });
+    // The cta has its own rule (an EndCard), and it is what is said there.
+    it('leaves the cta to its own rule', () =>
+      expect(notReading(shop({ ...edlShop, cta: { ...flash(words.slice(0, 2), 6), transitionIn: 'wipe' } })).map((p) => p.detail)).toEqual(['cta must be an EndCard, got WordFlash']));
+
+    // At 124 bpm a beat is 14.5 frames, and falls on 14 or 15: the half second a word alone needs (15 frames) is not met by
+    // every beat, and a tolerance of two frames would have let it pass.
+    it('names the half second a word alone needs, with no tolerance, and the beats that read it, never a cut', () =>
+      expect(atLine(asHook(flash(words.slice(0, 4), 6), 124), 'hooks[0][0].lines[3]')).toEqual([
+        { where: 'hooks[0][0].lines[3]', rule: 'structure', detail: 'word 4 "ya." (3 characters) is readable 0.47 s of the 0.50 s it needs: give the scene 7 beats' },
+      ]));
+
+    it('drops a word of a WordFlash when no length a scene may have reads them all', () =>
+      expect(atLine(asHook(flash(['Vendé', 'lo', 'tuyo.', 'Cobrás', 'todo.'], 8), 124), 'hooks[0][0].lines[4]')).toEqual([
+        { where: 'hooks[0][0].lines[4]', rule: 'structure', detail: 'word 5 "todo." (5 characters) is readable 0.47 s of the 0.50 s it needs: drop a word' },
+      ]));
   });
 
   describe('WordCycle', () => {
