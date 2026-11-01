@@ -11,6 +11,7 @@ export * from './order';
 export * from './product';
 export * from './qa';
 export * from './site';
+export * from './surfaces';
 export * from './timing';
 export * from './validate';
 export * from './vm-protocol';
