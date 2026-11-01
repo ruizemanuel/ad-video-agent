@@ -63,6 +63,12 @@ describe('sceneSurfaces', () => {
       expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'contrast', 'base', 'brand', 'base', 'brand']);
     });
 
+    it('takes contrast for a series whatever the turn', () => {
+      // After the ClaimStack the turn is brand's, but the series takes contrast, its first choice, where its neighbors allow.
+      const scenes = videoOf('UiFocus', 'ClaimStack', 'UiFocus', 'PointCard', 'PointCard', 'UiFocus', 'EndCard');
+      expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'base', 'contrast', 'contrast', 'base', 'brand']);
+    });
+
     it('falls back to base for a series between a contrast scene and the brand close', () => {
       const scenes = videoOf('UiFocus', 'ClaimStack', 'PointCard', 'PointCard', 'EndCard');
       expect(sceneSurfaces(scenes, surfaces)).toEqual(['base', 'contrast', 'base', 'base', 'brand']);

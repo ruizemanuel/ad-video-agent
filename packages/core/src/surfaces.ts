@@ -33,9 +33,11 @@ const pinned = (t: TimedScene, surfaces: Surfaces): SurfaceName | undefined => {
  * it is never. The turn is spent only when a scene takes it: a scene that gives way for a neighbor leaves it to the next.
  *
  * The cards of a series (see pointSeries) are one piece of the video, so they take one background and the cut between
- * two of them is a wipe on it, not a change of color: the first card chooses for all, against the scene before the series
- * and the one after it, and the rest copy it. The alternation goes on from the surface the series took; a series that
- * had to fall back to the page leaves the turn where it was, as any scene that gives way does.
+ * two of them is a wipe on it, not a change of color: the first card chooses for all, and the rest copy it. A series takes
+ * contrast first, whatever the turn, and brand when the scene before it is on contrast: it differs from that scene and
+ * from the one after its last card, which counts only when its surface is fixed (a type scene there has yet to choose,
+ * and gives way to the series). The alternation goes on from the surface the series took; a series that had to fall back
+ * to the page leaves the turn where it was, as any scene that gives way does.
  */
 export const sceneSurfaces = (scenes: readonly TimedScene[], surfaces: Surfaces): SurfaceName[] => {
   const fixed = scenes.map((t) => pinned(t, surfaces));
