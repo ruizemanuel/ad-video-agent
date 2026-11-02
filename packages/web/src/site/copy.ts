@@ -10,10 +10,17 @@ export const NAV = [
   { href: '/#agents', label: 'For agents' },
 ] as const;
 
+/**
+ * How long an order usually takes, in minutes, wherever the pages say it: the median time from payment to delivery of
+ * the delivered orders, rounded up. Measured on 2026-11-02 over the 7 orders delivered by then (6.0 to 8.1 minutes,
+ * median 7.6).
+ */
+export const USUAL_MINUTES = 8;
+
 export const HOME = {
   /** The headline, one line each. */
   title: ['Your site, as a video ad.', 'Ready to post.'],
-  lede: 'Paste your URL. In about 8 minutes you get a vertical video made from your real product, with the source of every line it says.',
+  lede: `Paste your URL. In about ${USUAL_MINUTES} minutes you get a vertical video made from your real product, with the source of every line it says.`,
 
   included: {
     title: 'What’s included',
@@ -38,7 +45,7 @@ export const HOME = {
     title: 'How it works',
     steps: [
       { title: 'Paste and pay', text: 'Your URL, a wallet, one payment. Nothing to sign up for.' },
-      { title: 'Come back in ~8 min', text: 'You get a link to your order. Close the tab if you like.' },
+      { title: `Come back in ~${USUAL_MINUTES} min`, text: 'You get a link to your order. Close the tab if you like.' },
       { title: 'Download or post', text: 'MP4 ready for X, Reels, TikTok and Shorts.' },
     ],
   },
@@ -166,7 +173,7 @@ export const ORDER_PAGE = {
 
   making: {
     title: 'Making your video',
-    lede: 'Usually about 8 minutes. You can close this tab — this link brings you back here.',
+    lede: `Usually about ${USUAL_MINUTES} minutes. You can close this tab — this link brings you back here.`,
     fine: 'If the video can’t pass our quality check, nothing is delivered and your payment goes back to your wallet automatically.',
   },
   link: {
