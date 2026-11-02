@@ -216,7 +216,10 @@ describe('what the delivered video shows', () => {
       "The body's points in type go on cards: when it states two or three of the site's points in type (each would be a `KineticHeadline` of one or two lines, or the list of a `WordCycle`), they are one series of `PointCard`s instead, a card per point, its second line as the card's subline.",
     );
     expect(rules).toContain('A single point in type stays a `KineticHeadline` or a `WordCycle`.');
-    expect(rules).toContain('With a `WordFlash` in hooks[0] the cards are 2 and the rest of the body shows the product, so that type stays at half.');
+    // Whatever type hooks[0] opens on, and on a site whose product is its numbers: the cards leave room for two scenes
+    // that are not type, or the main cut passes half.
+    expect(rules).toContain('With hooks[0] on type, the cards are 2 and at least two other body scenes are a `UiFocus` or a `UiScroll`, so that type stays at half.');
+    expect(rules).not.toContain('the rest of the body shows the product');
     expect(rules).toContain('a dense site gives its cards a subline; an airy one keeps them to a title');
     expect(rules).not.toContain('a dense site lays two or three of its points out');
   });

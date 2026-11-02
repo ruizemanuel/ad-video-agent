@@ -115,8 +115,9 @@ ${BEAT_TABLE}
 - The body's points in type go on cards: when it states two or three of the site's points in type
   (each would be a \`KineticHeadline\` of one or two lines, or the list of a \`WordCycle\`), they are
   one series of \`PointCard\`s instead, a card per point, its second line as the card's subline. A
-  single point in type stays a \`KineticHeadline\` or a \`WordCycle\`. With a \`WordFlash\` in hooks[0]
-  the cards are 2 and the rest of the body shows the product, so that type stays at half.
+  single point in type stays a \`KineticHeadline\` or a \`WordCycle\`. With hooks[0] on type, the cards
+  are 2 and at least two other body scenes are a \`UiFocus\` or a \`UiScroll\`, so that type stays at
+  half.
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
   get the same ad: a bold site keeps its hook scenes to the beats their texts need and leans on
   \`TypeIn\` in its other hooks; a calm one holds its scenes longer and lets the product breathe in
