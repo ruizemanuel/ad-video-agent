@@ -15,31 +15,66 @@ const states = (rows: ReturnType<typeof progressRows>) => rows.map(({ state }) =
 const labels = (rows: ReturnType<typeof progressRows>) => rows.map(({ label }) => label);
 
 describe('progressRows', () => {
-  it('labels the steps for people and hides vm and delivery', () => {
+  it('tells what was done in the past, the step being done as it goes, and the rest as the action to come', () => {
+    // Seven rows from nine steps: the VM and the delivery have none of their own.
     expect(labels(progressRows(status(), 'music'))).toEqual([
-      'Payment received',
-      'Site captured',
-      'Script written, every line sourced',
-      'Music chosen',
-      'Key frames ready',
-      'Quality check',
-      'Final video',
+      'Confirming your payment…',
+      'Reading your page',
+      'Writing the script in your site’s own words',
+      'Making music for your video',
+      'Filming your product',
+      'Checking the video',
+      'Making the final video',
+    ]);
+    const writing = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'running' }), 'music');
+    expect(labels(writing).slice(0, 4)).toEqual([
+      'I got your payment',
+      'I read your page and found your colors and fonts',
+      'Writing the script in your site’s own words…',
+      'Making music for your video',
     ]);
   });
 
+  it('keeps one key per row, whatever its words', () => {
+    expect(progressRows(status(), 'music').map(({ key }) => key)).toEqual(['payment', 'capture', 'script', 'music', 'preview', 'review', 'render']);
+    expect(progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refunding' }), 'none').map(({ key }) => key)).toEqual([
+      'payment',
+      'capture',
+      'script',
+      'preview',
+      'review',
+      'render',
+      'refund',
+    ]);
+  });
+
+  it('films again in a correction round, with the check still to finish', () => {
+    // After a review that blocks, the key frames of the corrected script are made while the review step is still open.
+    const round = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'done', preview: 'running', review: 'running' }), 'music');
+    expect(round[4]).toEqual({ key: 'preview', label: 'Filming your product…', state: 'now' });
+    expect(round[5]).toEqual({ key: 'review', label: 'Checking the video', state: 'todo' });
+  });
+
+  it('confirms a payment that is still being settled', () => {
+    const rows = progressRows(status({ payment: 'running' }, { status: 'awaiting_settlement' }), 'music');
+    expect(rows[0]).toEqual({ key: 'payment', label: 'Confirming your payment…', state: 'now' });
+    expect(states(rows)).toEqual(['now', 'todo', 'todo', 'todo', 'todo', 'todo', 'todo']);
+  });
+
   it('counts the VM as part of the capture, and the delivery as part of the final video', () => {
-    // The VM being set up is the first part of "Site captured"; once it is up and the capture runs, that is still the row.
-    expect(progressRows(status({ payment: 'done', vm: 'running' }), 'music')[1]).toEqual({ label: 'Site captured', state: 'now' });
-    expect(progressRows(status({ payment: 'done', vm: 'done', capture: 'running' }), 'music')[1]).toEqual({ label: 'Site captured', state: 'now' });
+    // The VM being set up is the first part of reading the page; once it is up and the capture runs, that is still the row.
+    expect(progressRows(status({ payment: 'done', vm: 'running' }), 'music')[1]).toEqual({ key: 'capture', label: 'Reading your page…', state: 'now' });
+    expect(progressRows(status({ payment: 'done', vm: 'done', capture: 'running' }), 'music')[1]).toEqual({ key: 'capture', label: 'Reading your page…', state: 'now' });
     // Failed if either failed; done once the later one is.
     expect(progressRows(status({ vm: 'failed' }), 'music')[1]?.state).toBe('failed');
     expect(progressRows(status({ vm: 'done', capture: 'failed' }), 'music')[1]?.state).toBe('failed');
     expect(progressRows(status({ vm: 'done', capture: 'done' }), 'music')[1]?.state).toBe('done');
     // The render done is not the video: it is delivered when the delivery is done.
     const rendered = status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'done', preview: 'done', review: 'done', render: 'done' });
-    expect(progressRows(rendered, 'music').at(-1)).toEqual({ label: 'Final video', state: 'now' });
+    expect(progressRows(rendered, 'music').at(-1)).toEqual({ key: 'render', label: 'Making the final video…', state: 'now' });
     expect(progressRows({ ...rendered, steps: rendered.steps.map((s) => (s.name === 'delivery' ? { ...s, state: 'running' as const } : s)) }, 'music').at(-1)).toEqual({
-      label: 'Final video',
+      key: 'render',
+      label: 'Making the final video…',
       state: 'now',
     });
     expect(progressRows(status({ render: 'done', delivery: 'done' }), 'music').at(-1)?.state).toBe('done');
@@ -53,7 +88,7 @@ describe('progressRows', () => {
 
   it('hides music for audio none', () => {
     const rows = progressRows(status(), 'none');
-    expect(labels(rows)).not.toContain('Music chosen');
+    expect(labels(rows)).not.toContain('Making music for your video');
     expect(rows).toHaveLength(6);
   });
 
@@ -77,40 +112,60 @@ describe('progressRows', () => {
       { status: 'delivered' },
     );
     expect(states(progressRows(done, 'music'))).toEqual(Array(7).fill('done'));
+    expect(labels(progressRows(done, 'music'))).toEqual([
+      'I got your payment',
+      'I read your page and found your colors and fonts',
+      'I wrote the script in your site’s own words',
+      'I made music for your video',
+      'I filmed your product',
+      'I checked the video',
+      'I made the final video',
+    ]);
   });
 
   it('shows the refund step only when there is one', () => {
-    expect(labels(progressRows(status({ payment: 'done', vm: 'done', capture: 'failed' }), 'music'))).not.toContain('Refund sent');
+    expect(progressRows(status({ payment: 'done', vm: 'done', capture: 'failed' }), 'music').map(({ key }) => key)).not.toContain('refund');
 
     const refunding = status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refunding' });
     const rows = progressRows(refunding, 'music');
-    expect(rows.at(-1)).toEqual({ label: 'Refund sent', state: 'now' });
+    expect(rows.at(-1)).toEqual({ key: 'refund', label: 'Sending your refund…', state: 'now' });
     expect(rows[1]?.state).toBe('failed');
     // The steps after the one that failed will not be done: none of them is waiting, and none is the current one.
     expect(states(rows)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'now']);
+    // Only what was done is told in the past: the step that failed and those never reached keep the action's words.
+    expect(labels(rows)).toEqual([
+      'I got your payment',
+      'Reading your page',
+      'Writing the script in your site’s own words',
+      'Making music for your video',
+      'Filming your product',
+      'Checking the video',
+      'Making the final video',
+      'Sending your refund…',
+    ]);
 
     const sent = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'done' }, { status: 'refunded' }), 'music');
-    expect(sent.at(-1)).toEqual({ label: 'Refund sent', state: 'done' });
+    expect(sent.at(-1)).toEqual({ key: 'refund', label: 'I sent your refund', state: 'done' });
     expect(states(sent)).not.toContain('now');
 
     const stuck = progressRows(status({ payment: 'done', capture: 'failed', refund: 'failed' }, { status: 'refund_failed' }), 'music');
-    expect(stuck.at(-1)).toEqual({ label: 'Refund sent', state: 'failed' });
+    expect(stuck.at(-1)).toEqual({ key: 'refund', label: 'Sending your refund', state: 'failed' });
   });
 
   it('lets an order that has ended say how its refund ended, whatever the step says', () => {
     // The flow moves the order to `refunded` and then its step; the reconciliation moves the order and not the step.
     const sent = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refunded' }), 'music');
-    expect(sent.at(-1)).toEqual({ label: 'Refund sent', state: 'done' });
+    expect(sent.at(-1)).toEqual({ key: 'refund', label: 'I sent your refund', state: 'done' });
     expect(states(sent)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never', 'done']);
 
     const delayed = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed', refund: 'running' }, { status: 'refund_failed' }), 'music');
-    expect(delayed.at(-1)).toEqual({ label: 'Refund sent', state: 'failed' });
+    expect(delayed.at(-1)).toEqual({ key: 'refund', label: 'Sending your refund', state: 'failed' });
     expect(states(delayed)).not.toContain('now');
   });
 
   it('says a step an order that has ended never got to was not done, instead of waiting', () => {
     const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'done', preview: 'done', review: 'failed', refund: 'done' }, { status: 'refunded' }), 'music');
-    expect(rows.find(({ label }) => label === 'Final video')).toEqual({ label: 'Final video', state: 'never' });
+    expect(rows.find(({ key }) => key === 'render')).toEqual({ key: 'render', label: 'Making the final video', state: 'never' });
     expect(ORDER_PAGE.stateOf.never).toBe('Not done');
   });
 
@@ -133,12 +188,12 @@ describe('progressRows', () => {
   it('shows music that could not be made as a step that is over, in every status', () => {
     for (const order of ORDER_STATUSES) {
       const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'failed' }, { status: order }), 'music');
-      expect(rows[3], order).toEqual({ label: 'No music this time', state: 'done' });
+      expect(rows[3], order).toEqual({ key: 'music', label: 'I couldn’t make music this time', state: 'done' });
     }
     // The video goes on: the step after it is the one being done, and nothing is red.
     const going = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'failed', preview: 'running' }), 'music');
     expect(states(going)).toEqual(['done', 'done', 'done', 'done', 'now', 'todo', 'todo']);
-    expect(labels(progressRows(status({ music: 'failed' }), 'none'))).not.toContain('No music this time');
+    expect(labels(progressRows(status({ music: 'failed' }), 'none'))).not.toContain('I couldn’t make music this time');
   });
 
   it('marks nothing as now for an order that never got going', () => {

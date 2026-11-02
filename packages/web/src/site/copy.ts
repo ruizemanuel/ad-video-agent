@@ -155,8 +155,8 @@ export const AGENTS = {
 } as const;
 
 /**
- * The order page: the page a person lands on after paying, and comes back to by its link. The steps' names are the ones
- * a person would use: nothing of the flow's own words.
+ * The order page: the page a person lands on after paying, and comes back to by its link. The steps are told the way a
+ * person would tell them: nothing of the flow's own words.
  */
 export const ORDER_PAGE = {
   /** The tab's title. */
@@ -177,18 +177,21 @@ export const ORDER_PAGE = {
     selected: 'Link selected. Copy it from here.',
   },
 
-  /** The steps, in the order they happen. The VM is part of the capture, and the delivery part of the final video. */
+  /**
+   * The steps, in the order they happen, told in the first person: `done` once the step is done, `doing` while it is
+   * being done (with "…") and for one still to come, never reached or failed. The VM is part of reading the page, and
+   * the delivery part of the final video.
+   */
   steps: {
-    payment: 'Payment received',
-    capture: 'Site captured',
-    script: 'Script written, every line sourced',
-    music: 'Music chosen',
-    /** The music could not be made: the video goes on without it. */
-    noMusic: 'No music this time',
-    preview: 'Key frames ready',
-    review: 'Quality check',
-    render: 'Final video',
-    refund: 'Refund sent',
+    payment: { done: 'I got your payment', doing: 'Confirming your payment' },
+    capture: { done: 'I read your page and found your colors and fonts', doing: 'Reading your page' },
+    script: { done: 'I wrote the script in your site’s own words', doing: 'Writing the script in your site’s own words' },
+    /** `notMade`: the music could not be made, and the video goes on without it. */
+    music: { done: 'I made music for your video', doing: 'Making music for your video', notMade: 'I couldn’t make music this time' },
+    preview: { done: 'I filmed your product', doing: 'Filming your product' },
+    review: { done: 'I checked the video', doing: 'Checking the video' },
+    render: { done: 'I made the final video', doing: 'Making the final video' },
+    refund: { done: 'I sent your refund', doing: 'Sending your refund' },
   },
   /** Beside the step being done. */
   now: 'now',

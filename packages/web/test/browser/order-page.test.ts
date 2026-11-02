@@ -66,14 +66,14 @@ describe('the order page', () => {
       expect(await page.$eval('meta[name="robots"]', (meta) => meta.getAttribute('content'))).toBe('noindex, nofollow');
 
       // The capture is running: it is the step the page marks as now, and the one before it is done.
-      await waitForCurrent(page, 'Site captured', WAIT);
+      await waitForCurrent(page, 'Reading your page…', WAIT);
       expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'now', 'todo', 'todo', 'todo', 'todo', 'todo']);
 
       // From here the page runs in the browser and follows the order: the capture ends and the script starts.
       await waitForFirstPoll(page);
       await store.setStep(id, 'capture', 'done');
       await store.setStep(id, 'script', 'running');
-      await waitForCurrent(page, 'Script written, every line sourced', FOLLOWS);
+      await waitForCurrent(page, 'Writing the script in your site’s own words…', FOLLOWS);
       expect(await page.$$eval('ol li', (items) => items.map((item) => item.getAttribute('data-state')))).toEqual(['done', 'done', 'now', 'todo', 'todo', 'todo', 'todo']);
       expect(blockedRequests()).toEqual([]);
     } finally {

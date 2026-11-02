@@ -112,8 +112,8 @@ function CopyLink({ link }: { link: string }) {
 function Steps({ rows }: { rows: ProgressRow[] }) {
   return (
     <ol className={styles.steps}>
-      {rows.map(({ label, state }) => (
-        <li key={label} className={styles.step} data-state={state} aria-current={state === 'now' ? 'step' : undefined}>
+      {rows.map(({ key, label, state }) => (
+        <li key={key} className={styles.step} data-state={state} aria-current={state === 'now' ? 'step' : undefined}>
           <span className={`${styles.mark} ${styles[state]}`} aria-hidden="true" />
           <span>
             <span className={styles.hidden}>{ORDER_PAGE.stateOf[state]}: </span>

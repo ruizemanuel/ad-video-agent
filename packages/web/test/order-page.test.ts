@@ -117,14 +117,15 @@ describe('the order page', () => {
     // The link is the order's own, as the service is addressed.
     expect(/<input [^>]*value="([^"]+)"/.exec(html)?.[1]).toBe(`${BASE}/o/${id}`);
 
+    // What was done in the past, the step being done as it goes, the rest as the action to come.
     expect(rows(html)).toEqual([
-      { state: 'done', words: expect.stringContaining('Payment received') },
-      { state: 'now', words: expect.stringContaining('Site captured') },
-      { state: 'todo', words: expect.stringContaining('Script written, every line sourced') },
-      { state: 'todo', words: expect.stringContaining('Music chosen') },
-      { state: 'todo', words: expect.stringContaining('Key frames ready') },
-      { state: 'todo', words: expect.stringContaining('Quality check') },
-      { state: 'todo', words: expect.stringContaining('Final video') },
+      { state: 'done', words: 'Done: I got your payment' },
+      { state: 'now', words: 'In progress: Reading your page… now' },
+      { state: 'todo', words: "Waiting: Writing the script in your site's own words" },
+      { state: 'todo', words: 'Waiting: Making music for your video' },
+      { state: 'todo', words: 'Waiting: Filming your product' },
+      { state: 'todo', words: 'Waiting: Checking the video' },
+      { state: 'todo', words: 'Waiting: Making the final video' },
     ]);
   });
 
@@ -132,7 +133,7 @@ describe('the order page', () => {
     const id = await seedOrder(dir, 'running');
     const status = (await readStatus(store, id, SETTINGS))?.status as StatusJson;
     const html = renderToStaticMarkup(createElement(OrderView, { initial: status, audio: 'none', site: 'cobrame.example', siteUrl: 'https://cobrame.example/', shortId: id.slice(4, 12), link: `${BASE}/o/${id}` }));
-    expect(rows(html).map((row) => row.words)).not.toContainEqual(expect.stringContaining('Music chosen'));
+    expect(rows(html).map((row) => row.words)).not.toContainEqual(expect.stringContaining('Making music for your video'));
     expect(rows(html)).toHaveLength(6);
   });
 
@@ -201,12 +202,12 @@ describe('the refund of an order', () => {
   it('shows the refund step as ended once the order says so, whatever the step says', () => {
     // The step can still say `running` when the order is already over, and the page does not poll again to find out.
     const sent = view('refunded', { status: 'confirmed', txHash: HASH }, 'running');
-    expect(rows(sent).at(-1)).toEqual({ state: 'done', words: expect.stringContaining('Refund sent') });
+    expect(rows(sent).at(-1)).toEqual({ state: 'done', words: 'Done: I sent your refund' });
     expect(rows(sent).map(({ state }) => state)).not.toContain('now');
     expect(sent).not.toContain('aria-current');
 
     const delayed = view('refund_failed', { status: 'reverted', txHash: null }, 'running');
-    expect(rows(delayed).at(-1)).toEqual({ state: 'failed', words: expect.stringContaining('Refund sent') });
+    expect(rows(delayed).at(-1)).toEqual({ state: 'failed', words: 'Failed: Sending your refund' });
     expect(delayed).not.toContain('aria-current');
   });
 
