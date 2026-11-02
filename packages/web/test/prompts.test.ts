@@ -29,7 +29,8 @@ describe('DIRECTOR_SYSTEM', () => {
     expect(DIRECTOR_SYSTEM).not.toContain('`post`');
   });
 
-  it('asks for three hooks, strongest first', () => expect(DIRECTOR_SYSTEM).toContain('Three hooks, strongest first: hooks[0] is the main version.'));
+  it('asks for three hooks, the strongest in hooks[0], the only one delivered', () =>
+    expect(DIRECTOR_SYSTEM.replace(/\s+/g, ' ')).toContain('Three hooks: hooks[0] is the main version, the only one rendered and delivered, so the strongest hook goes there.'));
 
   it('keeps framing lines from asserting anything about the product', () =>
     expect(DIRECTOR_SYSTEM).toContain("Framing lines never assert anything about the product (no 'the cheapest', 'the best', 'the fastest')."));
@@ -188,6 +189,25 @@ describe('DIRECTOR_SYSTEM', () => {
       ])
         expect(flat(DIRECTOR_SYSTEM)).toContain(sentence);
     });
+  });
+});
+
+describe('what the delivered video shows', () => {
+  // The prompts wrap their lines: the rules are read as a sentence.
+  const flat = (text: string): string => text.replace(/\s+/g, ' ');
+  const systems: [string, string][] = [
+    ['the director', DIRECTOR_SYSTEM],
+    ['the corrector', PATCH_SYSTEM],
+  ];
+
+  it.each(systems)('tells %s that hooks[0] opens on type: the WordFlash of the main line when it splits into one', (_, system) => {
+    const rules = flat(system);
+    expect(rules).toContain(
+      "hooks[0] opens on type. When the site's main line (its tagline, or the heading of its first section) splits into 2 to 5 words or short phrases as the `WordFlash` rule asks, hooks[0] is that `WordFlash`.",
+    );
+    expect(rules).toContain(
+      "Otherwise it is another hook of type, unless the product's own screen says the promise better than any line of the site (a result, a number, what the product makes): then it opens on that screen.",
+    );
   });
 });
 

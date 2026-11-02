@@ -1,7 +1,8 @@
-// The director's instructions: the prompt of the quality test, with three hooks of different kinds, every piece the
-// renderer has (the type pieces, the UI scenes and the caption that changes on a beat, TypeIn, WordCycle, the series of
-// numbered cards, the word flash and the two-step EndCard), the rhythm in beats and the limits validateEdl checks, how long
-// a text stays on screen among them. The corrector works under the same rules, so it reads the same sections.
+// The director's instructions: the prompt of the quality test, with three hooks of different kinds (the first, the one
+// delivered, on type), every piece the renderer has (the type pieces, the UI scenes and the caption that changes on a
+// beat, TypeIn, WordCycle, the series of numbered cards, the word flash and the two-step EndCard), the rhythm in beats
+// and the limits validateEdl checks, how long a text stays on screen among them. The corrector works under the same
+// rules, so it reads the same sections.
 import { BANNED_PHRASES, CAPTION_DELAY, FLASH_READING, FPS, MIN_SWAP_BEATS, READING_RULE, REVEAL_FRAMES, TYPED_BY, WIPE_FRAMES, type SiteData } from '@app/core';
 import { siteForModel, type ModelSite } from '../pipeline/site-for-model';
 import type { DirectorImage } from '../ports';
@@ -71,9 +72,14 @@ export const HARD_RULES = `# Hard rules (a video that breaks one is rejected)
 
 export const STRUCTURE_RULES = `# Structure and timing
 
-- Three hooks, strongest first: hooks[0] is the main version. Each hook is 1 or 2 scenes and about
-  3 seconds (a \`WordFlash\` hook, 3 to 4 seconds). Only the hook changes between versions: the
-  **body** and the **cta** are shared.
+- Three hooks: hooks[0] is the main version, the only one rendered and delivered, so the strongest
+  hook goes there. Each hook is 1 or 2 scenes and about 3 seconds (a \`WordFlash\` hook, 3 to 4
+  seconds). Only the hook changes between versions: the **body** and the **cta** are shared.
+- hooks[0] opens on type. When the site's main line (its tagline, or the heading of its first
+  section) splits into 2 to 5 words or short phrases as the \`WordFlash\` rule asks, hooks[0] is that
+  \`WordFlash\`. Otherwise it is another hook of type, unless the product's own screen says the
+  promise better than any line of the site (a result, a number, what the product makes): then it
+  opens on that screen.
 - The three hooks are different kinds, chosen from: the site's main promise; the site's main line,
   word by word (a \`WordFlash\`); an inversion ("X is not the problem. Y is."); a typed question
   (\`TypeIn\` with \`variant: "prompt"\`); the typed address (\`TypeIn\` with \`variant: "url"\`); a
