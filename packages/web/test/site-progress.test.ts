@@ -169,6 +169,17 @@ describe('progressRows', () => {
     expect(ORDER_PAGE.stateOf.never).toBe('Not done');
   });
 
+  it('claims no step is being done between a failure and its refund', () => {
+    // The flow marks the step failed, then shuts the VM down and prepares the refund before the order turns `refunding`;
+    // a lost run can stay there until the reconciliation. Nothing after the failure is being done, or will be.
+    const capture = progressRows(status({ payment: 'done', vm: 'done', capture: 'failed' }), 'music');
+    expect(states(capture)).toEqual(['done', 'failed', 'never', 'never', 'never', 'never', 'never']);
+    expect(labels(capture).slice(1, 3)).toEqual(['Reading your page', 'Writing the script in your site’s own words']);
+    const review = progressRows(status({ payment: 'done', vm: 'done', capture: 'done', script: 'done', music: 'done', preview: 'done', review: 'failed' }), 'music');
+    expect(states(review)).toEqual(['done', 'done', 'done', 'done', 'done', 'failed', 'never']);
+    expect(review.at(-1)).toEqual({ key: 'render', label: 'Making the final video', state: 'never' });
+  });
+
   it('makes the refund the step being done while it is on its way, even when the run was lost with a step running', () => {
     // A lost run is refunded with its last step still `running` (the reconciliation's refundLostRun).
     const rows = progressRows(status({ payment: 'done', vm: 'done', capture: 'running', refund: 'running' }, { status: 'refunding' }), 'music');

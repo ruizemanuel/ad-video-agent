@@ -107,6 +107,9 @@ export function progressRows(status: StatusJson, audio: 'music' | 'none'): Progr
   const refundAt = status.steps.some((step) => step.name === 'refund') ? rows.length : -1;
   if (refundAt !== -1) rows.push(row('refund', refundSeen(status)));
 
+  // The video is being made until the order leaves its making or one of its steps fails: a step that failed is refunded
+  // (music that could not be made is not one, see musicRow), though the order turns `refunding` only a few steps later.
+  const making = phaseOf(status.status) === 'making' && !rows.some((row) => row.seen === 'failed');
   // The step being done: while the refund is on its way, the refund, whatever step a lost run left running; otherwise
   // the step running or, while the video is being made and none has begun, the one that comes next.
   let now = -1;
@@ -115,11 +118,11 @@ export function progressRows(status: StatusJson, audio: 'music' | 'none'): Progr
       now = refundAt;
     } else {
       now = rows.findIndex((row) => row.seen === 'running');
-      if (now === -1 && phaseOf(status.status) === 'making') now = rows.findIndex((row) => row.seen === 'pending');
+      if (now === -1 && making) now = rows.findIndex((row) => row.seen === 'pending');
     }
   }
-  // Once the video is no longer being made (it is refunded, or the order is over), what it did not get to never comes.
-  const making = phaseOf(status.status) === 'making';
+  // Once the video is no longer being made (a step failed, it is refunded, or the order is over), what it did not get
+  // to never comes.
   return rows.map(({ key, words, seen: state }, index) => {
     const shown: RowState = state === 'done' ? 'done' : state === 'failed' ? 'failed' : index === now ? 'now' : making ? 'todo' : 'never';
     return { key, label: labelOf(words, shown), state: shown };
