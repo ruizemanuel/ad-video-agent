@@ -112,12 +112,16 @@ ${BEAT_TABLE}
   into the cta.
 - \`style.energy\` and \`style.density\` describe the site: "bold" for strong colors and big type,
   "calm" otherwise; "airy" for lots of white space, "dense" otherwise.
+- The body's points in type go on cards: when it states two or three of the site's points in type
+  (each would be a \`KineticHeadline\` of one or two lines, or the list of a \`WordCycle\`), they are
+  one series of \`PointCard\`s instead, a card per point, its second line as the card's subline. A
+  single point in type stays a \`KineticHeadline\` or a \`WordCycle\`. With a \`WordFlash\` in hooks[0]
+  the cards are 2 and the rest of the body shows the product, so that type stays at half.
 - Vary the rhythm and the pieces with \`style.energy\` and \`style.density\`, so that two sites never
-  get the same ad: a bold site keeps its hook scenes to the beats their texts need and leans on \`TypeIn\` there and on
-  \`WordCycle\` in its body; a calm one holds its scenes longer and lets the product breathe in \`UiFocus\` and
-  \`UiScroll\`; a dense site lays two or three of its points out as a series of \`PointCard\`s, rather
-  than one short line per scene, or stacks them in a \`ClaimStack\`; an airy one keeps one short line
-  per scene.`;
+  get the same ad: a bold site keeps its hook scenes to the beats their texts need and leans on
+  \`TypeIn\` in its other hooks; a calm one holds its scenes longer and lets the product breathe in
+  \`UiFocus\` and \`UiScroll\`; a dense site gives its cards a subline; an airy one keeps them to a
+  title.`;
 
 export const PIECE_RULES = `# Pieces (the renderer only has these)
 

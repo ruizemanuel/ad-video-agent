@@ -71,7 +71,7 @@ describe('DIRECTOR_SYSTEM', () => {
     ])('tells %s a WordCycle is too long for a hook and goes in the body', (_, system) => {
       const rules = flat(system);
       expect(rules).toContain('too long for a hook: it goes in the body');
-      expect(rules).toContain('a bold site keeps its hook scenes to the beats their texts need and leans on `TypeIn` there and on `WordCycle` in its body');
+      expect(rules).toContain('a bold site keeps its hook scenes to the beats their texts need and leans on `TypeIn` in its other hooks');
       expect(rules).not.toContain('leans on `WordCycle` and `TypeIn`');
     });
 
@@ -209,6 +209,17 @@ describe('what the delivered video shows', () => {
       "Otherwise it is another hook of type, unless the product's own screen says the promise better than any line of the site (a result, a number, what the product makes): then it opens on that screen.",
     );
   });
+
+  it.each(systems)('tells %s to lay two or three points in type out as a series of cards, whatever the density', (_, system) => {
+    const rules = flat(system);
+    expect(rules).toContain(
+      "The body's points in type go on cards: when it states two or three of the site's points in type (each would be a `KineticHeadline` of one or two lines, or the list of a `WordCycle`), they are one series of `PointCard`s instead, a card per point, its second line as the card's subline.",
+    );
+    expect(rules).toContain('A single point in type stays a `KineticHeadline` or a `WordCycle`.');
+    expect(rules).toContain('With a `WordFlash` in hooks[0] the cards are 2 and the rest of the body shows the product, so that type stays at half.');
+    expect(rules).toContain('a dense site gives its cards a subline; an airy one keeps them to a title');
+    expect(rules).not.toContain('a dense site lays two or three of its points out');
+  });
 });
 
 describe('how long a text stays on screen', () => {
@@ -329,11 +340,6 @@ describe('how long a text stays on screen', () => {
       expect(validateEdl(example, siteShop())).toEqual([]);
     });
   });
-
-  it.each(systems)('recommends a series of cards for a dense site to %s', (_, system) =>
-    expect(flat(system)).toContain(
-      'a dense site lays two or three of its points out as a series of `PointCard`s, rather than one short line per scene, or stacks them in a `ClaimStack`',
-    ));
 
   it.each(systems)('gives %s the tables of what fits, as the reading rule computes them, and points to them for the beats', (_, system) => {
     expect(CHARACTER_TABLE).toBe(characterTable());
