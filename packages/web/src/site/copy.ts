@@ -95,6 +95,8 @@ export const ORDER_FORM = {
     checking: 'Checking your site…',
     /** The form stopped before the wallet, for a site that shows little. */
     thinPaused: 'Add pages above if you can, or continue as it is.',
+    /** The browser has more than one wallet: the person chooses the one that pays. */
+    choosing: 'Which wallet do you want to pay with?',
     connecting: 'Connect your wallet to go on…',
     switching: 'Switch your wallet to Celo to go on…',
     signing: 'Confirm the payment in your wallet. It’s one signature, with no gas.',
@@ -102,6 +104,8 @@ export const ORDER_FORM = {
     placed: 'Order placed. Opening it…',
     openOrder: 'Open your order',
   },
+  /** The wallets the browser has, when it has more than one: each by the name and icon it gives itself. */
+  wallets: { label: 'Wallets in this browser', cancel: 'Cancel' },
   thin: 'Your site shows little of the product. Adding up to 3 public pages makes a better video.',
   errors: {
     url: 'Enter your site’s address, like yourproject.xyz.',
@@ -118,6 +122,12 @@ export const ORDER_FORM = {
     connectCancelled: 'You didn’t connect a wallet. Nothing was charged.',
     wrongNetwork: 'Your wallet has to be on Celo to pay. Nothing was charged.',
     noWallet: 'We found no wallet in this browser. Add one, like MetaMask or Rabby, to pay.',
+    /**
+     * A phone's browser with no wallet: the wallet is an app, with a browser of its own, and the form offers to open
+     * there, filled in (`openInMetaMask`).
+     */
+    noWalletPhone: 'This browser has no wallet. Open this page in your wallet’s app to pay.',
+    openInMetaMask: 'Open in MetaMask',
     walletBusy: 'Your wallet has a request open. Finish it there, then try again. Nothing was charged.',
     /** The service turned the payment down and gave no reason of its own: it took nothing. */
     paymentRefused: 'The payment didn’t go through. Nothing was charged. Try again.',

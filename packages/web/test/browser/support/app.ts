@@ -13,8 +13,8 @@ import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { ensureBrowser } from '@remotion/renderer';
-import puppeteer, { type Browser, type HTTPRequest, type Page } from 'puppeteer-core';
-import { inPageWallet, stubWallet, walletInfo, type RpcAnswer, type StubWallet, type WalletOptions } from './wallet';
+import puppeteer, { KnownDevices, type Browser, type HTTPRequest, type Page } from 'puppeteer-core';
+import { chainReads, inPageWallet, stubWallet, walletInfo, type RpcAnswer, type StubWallet, type WalletOptions } from './wallet';
 
 const WEB_DIR = fileURLToPath(new URL('../../..', import.meta.url));
 const NEXT_BIN = createRequire(import.meta.url).resolve('next/dist/bin/next');
@@ -164,8 +164,9 @@ export async function startApp(settings: Record<string, string> = {}): Promise<A
 
 // ---------------------------------------------------------------- the browser
 
-/** The function the wallet in the page reaches the test's process through. */
+/** The function the wallet in the page reaches the test's process through, and the one the second wallet does. */
 const WALLET_BINDING = '__stubWalletRequest';
+const SECOND_BINDING = '__stubSecondWalletRequest';
 /** Celo's public node, which the page reads the chain from. */
 const CELO_NODE = 'https://forno.celo.org';
 /** Where the fake blob store's presigned links point (see FileBlob.presignGet): no browser can reach it. */
@@ -185,10 +186,22 @@ const TYPES: Record<string, string> = {
  */
 export type AppAnswer = { status: number; contentType: string; body: string; headers?: Record<string, string> } | { unanswered: true };
 
+/** The browser a page opens in, past its wallet. */
+export type BrowserOptions = {
+  /** No wallet at all, as a phone's browser holds none: `wallet` is then one the page never reaches. */
+  noWallet?: boolean;
+  /** A second wallet, as a second extension: announced by EIP-6963 only, with its own key and balances. */
+  second?: WalletOptions & { name: string };
+  /** The page as a phone opens it: an iPhone's screen, touch and user agent. */
+  phone?: boolean;
+};
+
 export type LaunchedPage = {
   browser: Browser;
   page: Page;
   wallet: StubWallet;
+  /** The second wallet, when the browser has one. */
+  second?: StubWallet;
   /** Every request the page made that was cut off, by URL, in order. */
   blockedRequests(): string[];
   /**
@@ -246,7 +259,7 @@ async function serveBlob(request: HTTPRequest, fakeDir: string): Promise<void> {
  * - anything else is cut off and listed in `blockedRequests()`. Chrome also resolves no name, so what the interception
  *   does not see (a preconnect, a DNS prefetch) cannot leave either.
  */
-export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: WalletOptions = {}): Promise<LaunchedPage> {
+export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: WalletOptions = {}, browserOptions: BrowserOptions = {}): Promise<LaunchedPage> {
   const status = await ensureBrowser();
   if (!('path' in status)) throw new Error(`chrome-headless-shell is not available (${status.type}).`);
   const appUrl = new URL(app.url);
@@ -258,10 +271,25 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
   });
   try {
     const page = await browser.newPage();
-    const { wallet, answer, read } = stubWallet(options);
-    await page.exposeFunction(WALLET_BINDING, answer);
-    await page.evaluateOnNewDocument(inPageWallet, WALLET_BINDING, walletInfo());
+    if (browserOptions.phone === true) await page.emulate(KnownDevices['iPhone 15']);
+    const { wallet, answer } = stubWallet(options);
+    // Celo's node answers for every wallet in the browser.
+    const holders = [{ address: wallet.address, balances: options.balances }];
+    if (browserOptions.noWallet !== true) {
+      await page.exposeFunction(WALLET_BINDING, answer);
+      await page.evaluateOnNewDocument(inPageWallet, WALLET_BINDING, walletInfo());
+    }
+    let second: StubWallet | undefined;
+    if (browserOptions.second !== undefined) {
+      const { name, ...secondOptions } = browserOptions.second;
+      const made = stubWallet(secondOptions);
+      second = made.wallet;
+      holders.push({ address: made.wallet.address, balances: secondOptions.balances });
+      await page.exposeFunction(SECOND_BINDING, made.answer);
+      await page.evaluateOnNewDocument(inPageWallet, SECOND_BINDING, walletInfo(name, 'test.second-wallet'), false);
+    }
 
+    const read = chainReads(holders);
     const blocked: string[] = [];
     let inAppsPlace: Parameters<LaunchedPage['answerForApp']>[0] | undefined;
     const route = async (request: HTTPRequest): Promise<void> => {
@@ -288,6 +316,7 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
       browser,
       page,
       wallet,
+      ...(second !== undefined && { second }),
       blockedRequests: () => [...blocked],
       answerForApp: (answer) => {
         inAppsPlace = answer;

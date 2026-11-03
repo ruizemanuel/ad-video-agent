@@ -1,7 +1,9 @@
 'use client';
 // The order form of the home. One press of its button runs the whole order: the free quote, the wallet (connected and
 // moved to Celo), that wallet's own quote and price, the token it holds enough of, one signature, and the order page.
-// A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on. A press
+// A site that shows little stops it once, before the wallet, to suggest adding pages; the next press goes on. A browser
+// with more than one wallet has the person choose the one that pays, at every press. A phone's browser with none offers
+// to open the form in MetaMask's app, filled in from the link (see wallet-app.ts). A press
 // never pays more than its button showed: a dearer price is shown first, and the next press pays it. A payment that may
 // have gone through locks the button until the person says it is not in their wallet (or reloads the page), so it is
 // never paid twice.
@@ -9,19 +11,17 @@
 // browser only: everything it does needs the person's wallet, which the server cannot see.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { parseUnits, ResourceUnavailableRpcError, UserRejectedRequestError, type Address } from 'viem';
-import { useConfig, useConnection } from 'wagmi';
+import { useConfig, useConnection, type Connector } from 'wagmi';
 import { TOKENS, type TokenSymbol } from '../payments/tokens';
 import { ORDER_FORM } from './copy';
 import styles from './OrderForm.module.css';
 import { chooseToken, PaymentNotConfirmed, payOrder } from './pay';
 import { normalizeUrl, requestOffer, requestQuote, type OrderInput, type Quote } from './quote';
-import { connectWallet, onCelo, switchToCelo, tokenBalances, walletSigner, WalletProviders } from './wallet';
+import { browserWallets, connectWallet, onCelo, switchToCelo, tokenBalances, walletSigner, WalletProviders } from './wallet';
+import { BRIEF_MAX, fieldsFromQuery, isPhone, metaMaskLink, type Fields } from './wallet-app';
 
-/** The service's limits: a brief of up to 200 characters, and up to 3 extra pages. */
-const BRIEF_MAX = 200;
-const PAGES = 3;
 const OFFER_KEY = ['offer'];
 
 type Props = {
@@ -48,16 +48,14 @@ export function OrderForm(props: Props) {
   );
 }
 
-type Fields = { url: string; brief: string; pages: string[]; audio: 'music' | 'none' };
 /** The field that holds no address the service could take. */
 type Invalid = { field: 'url' } | { field: 'page'; index: number };
-type Notice = { tone: 'progress' | 'error' | 'done'; text: string; href?: string };
+/** What the form says: `href` links the order placed; `walletApp` offers to open the form in MetaMask's app. */
+type Notice = { tone: 'progress' | 'error' | 'done'; text: string; href?: string; walletApp?: true };
 /** Where the order was when it stopped: what to tell the person depends on it. */
 type Stage = 'quote' | 'connect' | 'switch' | 'balances' | 'sign';
 /** The connected wallet's own price, once its quote is in, and the token it pays with once that is known. */
 type WalletPrice = { address: Address; price: string; token?: TokenSymbol };
-
-const EMPTY: Fields = { url: '', brief: '', pages: Array.from({ length: PAGES }, () => ''), audio: 'music' };
 
 /** The order the fields make, leaving out what is empty; or the first field that is not an address. */
 function orderInput(fields: Fields): { ok: true; input: OrderInput } | { ok: false; invalid: Invalid } {
@@ -122,14 +120,16 @@ function Form({ price, promoSlots }: Props) {
   const queryClient = useQueryClient();
   const offer = useQuery({ queryKey: OFFER_KEY, queryFn: () => requestOffer() });
 
-  const [fields, setFields] = useState<Fields>(EMPTY);
+  // The fields start as the address carries them: a link to MetaMask's app opens the form as the person left it.
+  const [initial] = useState(() => fieldsFromQuery(window.location.search));
+  const [fields, setFields] = useState<Fields>(initial);
   const [invalid, setInvalid] = useState<Invalid | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [thin, setThin] = useState(false);
   // The site (its address as quoted) the form already stopped for because it shows little: the next press goes on.
   const [thinPausedFor, setThinPausedFor] = useState<string | null>(null);
-  const [briefOpen, setBriefOpen] = useState(false);
-  const [pagesOpen, setPagesOpen] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(initial.brief !== '');
+  const [pagesOpen, setPagesOpen] = useState(initial.pages.some((page) => page !== ''));
   const [walletPrice, setWalletPrice] = useState<WalletPrice | null>(null);
   const [busy, setBusy] = useState(false);
   // Set at once on a press, before React renders the button disabled: a second press in between finds it set.
@@ -137,6 +137,10 @@ function Form({ price, promoSlots }: Props) {
   // A payment went out and nothing says whether it was charged: no press signs again until the person unlocks it.
   const [unconfirmed, setUnconfirmed] = useState(false);
   const locked = useRef(false);
+  // The wallets the person chooses from while the order waits on the choice, and the way the choice reaches the order.
+  const [choosing, setChoosing] = useState<readonly Connector[] | null>(null);
+  const settleChoice = useRef<((wallet: Connector | null) => void) | null>(null);
+  const choices = useRef<HTMLDivElement>(null);
   const urlField = useRef<HTMLInputElement>(null);
   const pageFields = useRef<(HTMLInputElement | null)[]>([]);
   const id = useId();
@@ -177,6 +181,26 @@ function Form({ price, promoSlots }: Props) {
     setNotice(null);
   }
 
+  /** Has the person choose one of `wallets`: the one chosen, or null when they choose none. */
+  function chooseWallet(wallets: readonly Connector[]): Promise<Connector | null> {
+    return new Promise((resolve) => {
+      settleChoice.current = resolve;
+      setChoosing(wallets);
+    });
+  }
+
+  function choose(wallet: Connector | null) {
+    const settle = settleChoice.current;
+    settleChoice.current = null;
+    setChoosing(null);
+    settle?.(wallet);
+  }
+
+  // The choice takes the keyboard's focus as it appears, on its first wallet.
+  useEffect(() => {
+    if (choosing !== null) choices.current?.querySelector('button')?.focus();
+  }, [choosing]);
+
   /** Whether the quote has a price; if not, the person is told why. */
   function priced(quote: Quote): quote is Extract<Quote, { kind: 'priced' }> {
     if (quote.kind === 'refused') setNotice(stopped(quote.reason));
@@ -215,8 +239,20 @@ function Form({ price, promoSlots }: Props) {
       }
 
       stage = 'connect';
+      // More than one wallet: the person chooses, at every press, so that none takes over for being connected before.
+      const wallets = browserWallets(config);
+      let connector: Connector | undefined;
+      if (wallets.length > 1) {
+        setNotice(progress(ORDER_FORM.progress.choosing));
+        const chosen = await chooseWallet(wallets);
+        if (chosen === null) {
+          setNotice(stopped(ORDER_FORM.errors.connectCancelled));
+          return false;
+        }
+        connector = chosen;
+      }
       setNotice(progress(ORDER_FORM.progress.connecting));
-      const address = await connectWallet(config);
+      const address = await connectWallet(config, connector);
       stage = 'switch';
       if (!onCelo(config)) {
         setNotice(progress(ORDER_FORM.progress.switching));
@@ -275,6 +311,8 @@ function Form({ price, promoSlots }: Props) {
     } catch (error) {
       // The payment was sent and its answer never came back: as with an answer that names no order.
       if (error instanceof PaymentNotConfirmed) mayHaveBeenCharged();
+      // A phone's wallet is an app with a browser of its own: the form offers to open there.
+      else if (hasName(error, 'ProviderNotFoundError') && isPhone(navigator)) setNotice({ ...stopped(ORDER_FORM.errors.noWalletPhone), walletApp: true });
       else setNotice(stopped(stoppedText(error, stage)));
       return false;
     }
@@ -427,6 +465,25 @@ function Form({ price, promoSlots }: Props) {
           </>
         )}
       </p>
+      {choosing === null ? null : (
+        <div ref={choices} className={styles.wallets} data-part="wallets" role="group" aria-label={ORDER_FORM.wallets.label}>
+          {choosing.map((wallet) => (
+            <button key={wallet.uid} type="button" className={styles.wallet} data-wallet={wallet.name} onClick={() => choose(wallet)}>
+              {/* The icon a wallet gives itself by EIP-6963 is an image in a data: URI; no other address is fetched. */}
+              {wallet.icon?.startsWith('data:image/') === true ? <img src={wallet.icon} alt="" width={20} height={20} /> : null}
+              {wallet.name}
+            </button>
+          ))}
+          <button type="button" className={styles.cancelWallet} data-part="cancel-wallet" onClick={() => choose(null)}>
+            {ORDER_FORM.wallets.cancel}
+          </button>
+        </div>
+      )}
+      {notice?.walletApp === true ? (
+        <a className={styles.walletApp} href={metaMaskLink(window.location.host, fields)}>
+          {ORDER_FORM.errors.openInMetaMask}
+        </a>
+      ) : null}
       {unconfirmed ? (
         <button type="button" className={styles.unlock} data-part="unlock" onClick={unlock}>
           {ORDER_FORM.button.notInWallet}

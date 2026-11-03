@@ -41,6 +41,8 @@ export type StubWallet = {
   readonly address: Address;
   /** How many times the page asked it to sign, whatever the person answered. */
   signatureRequests(): number;
+  /** Whether the page asked to connect to it: the person would have seen it open. */
+  connected(): boolean;
   /** From now on the person turns down every request to sign (true), or signs (false). */
   setRejectSignature(reject: boolean): void;
 };
@@ -65,12 +67,15 @@ function notAnswered(what: string, code = -32601): RpcAnswer {
   return { error: { code, message: `The stub wallet does not answer ${what}.` } };
 }
 
+/** An address and what it holds of each token, in atomic units: none when left out. */
+export type Holder = { address: Address; balances?: WalletOptions['balances'] };
+
 /**
  * The answers to the reads of Celo's state, for the wallet and for Celo's node alike: the chain id, the block number, no
- * CELO, and `balanceOf` on USDT and USDC (`owner` holds `balances`, anyone else nothing), on its own or in a Multicall3
- * `aggregate3`. Anything else is an error, logged.
+ * CELO, and `balanceOf` on USDT and USDC (each of `holders` holds its balances, anyone else nothing), on its own or in a
+ * Multicall3 `aggregate3`. Anything else is an error, logged.
  */
-export function chainReads(owner: Address, balances: WalletOptions['balances'] = {}): (method: string, params: unknown) => RpcAnswer {
+export function chainReads(holders: Holder[]): (method: string, params: unknown) => RpcAnswer {
   const call = (to: string, data: Hex): RpcAnswer => {
     try {
       const symbol = tokenSymbol(to);
@@ -86,7 +91,7 @@ export function chainReads(owner: Address, balances: WalletOptions['balances'] =
       } else if (symbol !== undefined) {
         const decoded = decodeFunctionData({ abi: erc20Abi, data });
         if (decoded.functionName === 'balanceOf') {
-          const held = sameAddress(decoded.args[0], owner) ? (balances[symbol] ?? 0n) : 0n;
+          const held = holders.find((holder) => sameAddress(decoded.args[0], holder.address))?.balances?.[symbol] ?? 0n;
           return { result: encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: held }) };
         }
       }
@@ -125,7 +130,7 @@ export function chainReads(owner: Address, balances: WalletOptions['balances'] =
  */
 export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; answer(method: string, params: unknown): Promise<RpcAnswer>; read(method: string, params: unknown): RpcAnswer } {
   const account = privateKeyToAccount(generatePrivateKey());
-  const read = chainReads(account.address, options.balances);
+  const read = chainReads([{ address: account.address, balances: options.balances }]);
   let chainId = options.chainId ?? CELO_CHAIN_ID;
   const known = new Set([ETHEREUM_CHAIN_ID, chainId]);
   let connected = false;
@@ -184,6 +189,7 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
   const wallet: StubWallet = {
     address: account.address,
     signatureRequests: () => signatureRequests,
+    connected: () => connected,
     setRejectSignature: (reject) => {
       rejectSignature = reject;
     },
@@ -195,9 +201,10 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
  * The wallet in the page: runs there, before any script of the page, so it is sent as source and uses nothing from
  * here. Each request goes to `binding`, the function the test exposed, and comes back as its result, or as an error with
  * an EIP-1193 code; the events that come with it are emitted before the request resolves. It is announced by EIP-6963
- * (and again on each `eip6963:requestProvider`) and set as window.ethereum.
+ * (and again on each `eip6963:requestProvider`), and set as window.ethereum unless `windowEthereum` is false: of two
+ * wallets, as of two extensions, only one holds it.
  */
-export function inPageWallet(binding: string, info: { uuid: string; name: string; rdns: string; icon: string }): void {
+export function inPageWallet(binding: string, info: { uuid: string; name: string; rdns: string; icon: string }, windowEthereum = true): void {
   type Answer = { result: unknown; events?: { event: string; data: unknown }[] } | { error: { code: number; message: string } };
   const page = window as unknown as Record<string, unknown>;
   const listeners = new Map<string, Set<(data: unknown) => void>>();
@@ -219,16 +226,16 @@ export function inPageWallet(binding: string, info: { uuid: string; name: string
       return provider;
     },
   };
-  page.ethereum = provider;
+  if (windowEthereum) page.ethereum = provider;
   const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }));
   window.addEventListener('eip6963:requestProvider', announce);
   announce();
 }
 
 /** What the page learns of a wallet by EIP-6963: a uuid of its own, a name, a reverse domain and an icon. */
-export const walletInfo = (): { uuid: string; name: string; rdns: string; icon: string } => ({
+export const walletInfo = (name = 'Stub Wallet', rdns = 'test.stub-wallet'): { uuid: string; name: string; rdns: string; icon: string } => ({
   uuid: randomUUID(),
-  name: 'Stub Wallet',
-  rdns: 'test.stub-wallet',
+  name,
+  rdns,
   icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'><rect width='1' height='1'/></svg>",
 });

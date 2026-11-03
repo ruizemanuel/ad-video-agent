@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FileStore } from '../../src/adapters/fake/store';
 import { TOKENS } from '../../src/payments/tokens';
 import type { Order } from '../../src/ports';
-import { launchPage, startApp, type App, type AppAnswer, type LaunchedPage } from './support/app';
+import { launchPage, startApp, type App, type AppAnswer, type BrowserOptions, type LaunchedPage } from './support/app';
 import { seedOrder } from './support/seed';
 import type { Eip1193Provider, WalletOptions } from './support/wallet';
 
@@ -30,8 +30,8 @@ async function storedOrders(fakeDir: string): Promise<Order[]> {
 }
 
 /** The home, with its order form ready to use (it appears once the page runs in the browser). */
-async function openForm(app: App, wallet: WalletOptions = {}): Promise<LaunchedPage> {
-  const launched = await launchPage(app, wallet);
+async function openForm(app: App, wallet: WalletOptions = {}, browserOptions: BrowserOptions = {}): Promise<LaunchedPage> {
+  const launched = await launchPage(app, wallet, browserOptions);
   try {
     expect((await launched.page.goto(`${app.url}/`, { waitUntil: 'load' }))?.status()).toBe(200);
     await launched.page.waitForSelector(URL_FIELD, WAIT);
@@ -96,6 +96,11 @@ const buttonState = (page: Page): Promise<{ disabled: boolean; text: string | nu
 /** Waits until the pay button says `text`. */
 const waitForButton = (page: Page, text: string): Promise<unknown> =>
   page.waitForFunction((selector, wanted) => document.querySelector(selector)?.textContent === wanted, WAIT, BUTTON, text);
+
+/** The wallets the form asks the person to choose from, by name, and the way out of the choice. */
+const CHOICES = `${FORM} [data-part="wallets"]`;
+const choice = (name: string): string => `${CHOICES} button[data-wallet="${name}"]`;
+const CANCEL_CHOICE = `${CHOICES} button[data-part="cancel-wallet"]`;
 
 /** What the service says when the first-video price is gone by the time the payment arrives (409 promo_unavailable). */
 const PROMO_GONE = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
@@ -217,6 +222,98 @@ describe('the order form', () => {
       expect(wallet.signatureRequests()).toBe(0);
       expect(await page.$eval(BUTTON, (button) => (button as HTMLButtonElement).disabled)).toBe(false);
       expect(await storedOrders(app.fakeDir)).toHaveLength(before);
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('asks which wallet pays when the browser has two, and asks again on the next press', async () => {
+    const { browser, page, wallet, second, blockedRequests } = await openForm(app, {}, { second: { name: 'Other Wallet', balances: { USDT: PLENTY } } });
+    try {
+      await fill(page, { url: 'https://two.tiendita.example/' });
+      await page.click(BUTTON);
+      await page.waitForSelector(choice('Other Wallet'), WAIT);
+      await waitForText(page, 'Which wallet do you want to pay with?');
+      expect(await page.$$eval(`${CHOICES} button[data-wallet]`, (buttons) => buttons.map((button) => button.textContent))).toEqual(['Stub Wallet', 'Other Wallet']);
+      // Nothing opens before the person chooses.
+      expect([wallet.connected(), second?.connected()]).toEqual([false, false]);
+
+      // The first wallet holds nothing: the order stops, and the next press asks again rather than going back to it.
+      await page.click(choice('Stub Wallet'));
+      await waitForText(page, 'You need 0.05 USDT or USDC on Celo.');
+      expect(await page.$(CHOICES)).toBeNull();
+      await page.click(BUTTON);
+      await page.waitForSelector(choice('Other Wallet'), WAIT);
+      await page.click(choice('Other Wallet'));
+      const id = await waitForOrderPage(page);
+
+      expect((await storedOrders(app.fakeDir)).find((order) => order.id === id)).toMatchObject({ payer: second?.address, amount: 50_000n });
+      expect([wallet.signatureRequests(), second?.signatureRequests()]).toEqual([0, 1]);
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('charges nothing when the person chooses no wallet', async () => {
+    const before = (await storedOrders(app.fakeDir)).length;
+    const { browser, page, wallet, second, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY } }, { second: { name: 'Other Wallet', balances: { USDT: PLENTY } } });
+    try {
+      await fill(page, { url: 'https://undecided.tiendita.example/' });
+      await page.click(BUTTON);
+      await page.waitForSelector(CANCEL_CHOICE, WAIT);
+      // The choice takes the keyboard's focus, on its first wallet.
+      expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.wallet)).toBe('Stub Wallet');
+      await page.click(CANCEL_CHOICE);
+      await waitForText(page, 'You didn’t connect a wallet. Nothing was charged.');
+
+      expect(await page.$(CHOICES)).toBeNull();
+      expect(await buttonState(page)).toEqual({ disabled: false, text: 'Connect wallet and pay 0.05 USDT' });
+      expect([wallet.connected(), second?.connected()]).toEqual([false, false]);
+      expect(await storedOrders(app.fakeDir)).toHaveLength(before);
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('offers to open the form, filled in, in MetaMask on a phone with no wallet', async () => {
+    const { browser, page, blockedRequests } = await openForm(app, {}, { noWallet: true, phone: true });
+    try {
+      await fill(page, { url: 'phone.tiendita.example', brief: 'For freelancers', extraUrl: 'phone.tiendita.example/app', audio: 'none' });
+      await page.click(BUTTON);
+      await waitForText(page, 'This browser has no wallet. Open this page in your wallet’s app to pay.');
+
+      const host = new URL(app.url).host;
+      const link = await page.$eval(`${FORM} a[href^="https://link.metamask.io/"]`, (anchor) => ({ href: (anchor as HTMLAnchorElement).href, text: anchor.textContent }));
+      expect(link).toEqual({
+        href: `https://link.metamask.io/dapp/${host}/?url=phone.tiendita.example&brief=For+freelancers&page=phone.tiendita.example%2Fapp&audio=none#order`,
+        text: 'Open in MetaMask',
+      });
+
+      // MetaMask opens the page the link names: the form is there, as the person left it.
+      await page.goto(link.href.replace(`https://link.metamask.io/dapp/${host}`, app.url), { waitUntil: 'load' });
+      await page.waitForSelector(URL_FIELD, WAIT);
+      expect(await page.$eval(URL_FIELD, (input) => (input as HTMLInputElement).value)).toBe('phone.tiendita.example');
+      expect(await page.$eval(`${FORM} details[data-part="brief"]`, (details) => (details as HTMLDetailsElement).open)).toBe(true);
+      expect(await page.$eval(`${FORM} textarea[name="brief"]`, (input) => (input as HTMLTextAreaElement).value)).toBe('For freelancers');
+      expect(await page.$eval(`${FORM} details[data-part="pages"]`, (details) => (details as HTMLDetailsElement).open)).toBe(true);
+      expect(await page.$eval(`${FORM} input[name="extraUrls.0"]`, (input) => (input as HTMLInputElement).value)).toBe('phone.tiendita.example/app');
+      expect(await page.$eval(`${FORM} input[name="audio"][value="none"]`, (input) => (input as HTMLInputElement).checked)).toBe(true);
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('says to add a wallet on a computer with none, with no link to an app', async () => {
+    const { browser, page, blockedRequests } = await openForm(app, {}, { noWallet: true });
+    try {
+      await fill(page, { url: 'https://nowallet.tiendita.example/' });
+      await page.click(BUTTON);
+      await waitForText(page, 'We found no wallet in this browser. Add one, like MetaMask or Rabby, to pay.');
+      expect(await page.$(`${FORM} a[href^="https://link.metamask.io/"]`)).toBeNull();
       expect(blockedRequests()).toEqual([]);
     } finally {
       await browser.close();

@@ -1,13 +1,14 @@
 'use client';
 // The person's browser wallet, through wagmi: Celo only, any wallet the browser has (each one that announces itself by
 // EIP-6963, and window.ethereum for one that does not), and Celo's public node for every read. What the order form asks
-// of the wallet lives here: connect it, move it to Celo, read what it holds of USDT and USDC, and sign as it.
+// of the wallet lives here: which wallets the browser has, connect the one that pays, move it to Celo, read what it
+// holds of USDT and USDC, and sign as it.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ClientEvmSigner } from '@x402/evm';
 import { useState, type ReactNode } from 'react';
 import { erc20Abi, type Address } from 'viem';
 import { celo } from 'viem/chains';
-import { createConfig, http, WagmiProvider, type Config } from 'wagmi';
+import { createConfig, http, WagmiProvider, type Config, type Connector } from 'wagmi';
 import { connect, getConnection, getConnectors, readContracts, signTypedData, switchChain } from 'wagmi/actions';
 import { injected } from 'wagmi/connectors/injected';
 import { TOKENS, type TokenSymbol } from '../payments/tokens';
@@ -39,16 +40,18 @@ export function WalletProviders({ children }: { children: ReactNode }) {
   );
 }
 
+/** The wallets the browser announced by EIP-6963, in the order it did: those the person chooses from. */
+export const browserWallets = (config: Config): readonly Connector[] => getConnectors(config).filter((connector) => connector.id !== WINDOW_ETHEREUM);
+
 /**
- * The address of the connected wallet, asking the person to connect one when none is: the first wallet the browser
- * announced by EIP-6963, else window.ethereum. It throws wagmi's ProviderNotFoundError when the browser has no wallet,
- * and the wallet's own error when the person turns it down.
+ * The address of `wallet`, asking the person to connect it unless it is the one connected. With no wallet named: the
+ * one connected, else the first the browser announced by EIP-6963, else window.ethereum. It throws wagmi's
+ * ProviderNotFoundError when the browser has no wallet, and the wallet's own error when the person turns it down.
  */
-export async function connectWallet(config: Config): Promise<Address> {
+export async function connectWallet(config: Config, wallet?: Connector): Promise<Address> {
   const current = getConnection(config);
-  if (current.isConnected && current.address !== undefined) return current.address;
-  const connectors = getConnectors(config);
-  const connector = connectors.find((candidate) => candidate.id !== WINDOW_ETHEREUM) ?? connectors[0];
+  if (current.isConnected && current.address !== undefined && (wallet === undefined || current.connector?.uid === wallet.uid)) return current.address;
+  const connector = wallet ?? browserWallets(config)[0] ?? getConnectors(config)[0];
   if (connector === undefined) throw new Error('wagmi has no connector.');
   const { accounts } = await connect(config, { connector });
   const [address] = accounts;
