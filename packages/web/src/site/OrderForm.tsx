@@ -367,6 +367,8 @@ function Form({ price, promoSlots }: Props) {
         spellCheck={false}
         placeholder={ORDER_FORM.url.placeholder}
         value={fields.url}
+        // While an order is on its way the fields hold still: it goes with what they said at the press.
+        readOnly={busy}
         onChange={(event) => update({ url: event.target.value })}
         aria-invalid={invalid?.field === 'url' ? true : undefined}
         aria-describedby={invalid?.field === 'url' ? ids.urlError : undefined}
@@ -390,6 +392,7 @@ function Form({ price, promoSlots }: Props) {
             maxLength={BRIEF_MAX}
             placeholder={ORDER_FORM.brief.placeholder}
             value={fields.brief}
+            readOnly={busy}
             onChange={(event) => update({ brief: event.target.value })}
             aria-labelledby={ids.brief}
             aria-describedby={ids.count}
@@ -425,6 +428,7 @@ function Form({ price, promoSlots }: Props) {
                 spellCheck={false}
                 placeholder={ORDER_FORM.pages.placeholder}
                 value={page}
+                readOnly={busy}
                 onChange={(event) => update({ pages: fields.pages.map((current, at) => (at === index ? event.target.value : current)) })}
                 aria-label={ORDER_FORM.pages.pageLabel(index + 1)}
                 aria-invalid={wrong ? true : undefined}
@@ -445,7 +449,7 @@ function Form({ price, promoSlots }: Props) {
           <legend className={styles.hidden}>{ORDER_FORM.audio.legend}</legend>
           {(['music', 'none'] as const).map((value) => (
             <label key={value} className={styles.choice}>
-              <input type="radio" name="audio" value={value} checked={fields.audio === value} onChange={() => update({ audio: value })} />
+              <input type="radio" name="audio" value={value} checked={fields.audio === value} disabled={busy} onChange={() => update({ audio: value })} />
               {ORDER_FORM.audio[value]}
             </label>
           ))}

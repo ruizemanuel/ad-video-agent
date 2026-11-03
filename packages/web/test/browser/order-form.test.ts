@@ -102,6 +102,12 @@ const CHOICES = `${FORM} [data-part="wallets"]`;
 const choice = (name: string): string => `${CHOICES} button[data-wallet="${name}"]`;
 const CANCEL_CHOICE = `${CHOICES} button[data-part="cancel-wallet"]`;
 
+/** Whether each of the form's fields takes no typing or choosing: the address, the brief, the 3 pages, the 2 audios. */
+const fieldsLocked = (page: Page): Promise<boolean[]> =>
+  page.$$eval(`${FORM} input[type="text"], ${FORM} textarea, ${FORM} input[type="radio"]`, (fields) =>
+    fields.map((field) => (field as HTMLInputElement).readOnly || (field as HTMLInputElement).disabled),
+  );
+
 /** What the service says when the first-video price is gone by the time the payment arrives (409 promo_unavailable). */
 const PROMO_GONE = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
 
@@ -265,8 +271,11 @@ describe('the order form', () => {
       await page.waitForSelector(CANCEL_CHOICE, WAIT);
       // The choice takes the keyboard's focus, on its first wallet.
       expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.wallet)).toBe('Stub Wallet');
+      // The order is the one the press made: what the person would type now could not reach it, so nothing takes typing.
+      expect(await fieldsLocked(page)).toEqual(Array.from({ length: 7 }, () => true));
       await page.click(CANCEL_CHOICE);
       await waitForText(page, 'You didn’t connect a wallet. Nothing was charged.');
+      expect(await fieldsLocked(page)).toEqual(Array.from({ length: 7 }, () => false));
 
       expect(await page.$(CHOICES)).toBeNull();
       expect(await buttonState(page)).toEqual({ disabled: false, text: 'Connect wallet and pay 0.05 USDT' });
