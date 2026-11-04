@@ -25,6 +25,7 @@ import {
   readSignedPayment,
   routeConfig,
   type SettledPayment,
+  type SettleFailure,
   type SignedPayment,
 } from '../../../payments/x402';
 import { precheck, PrecheckCapReached, type PrecheckDeps } from '../../../precheck/precheck';
@@ -161,6 +162,14 @@ async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promis
   }
 }
 
+/**
+ * Runs after each settlement that did not go through, before the payer gets the answer: the facilitator's reason goes to
+ * the log, with whether it said no (`refused`, nothing moved) or left it unknown (`no_answer`).
+ */
+async function paymentSettleFailed(failure: SettleFailure): Promise<void> {
+  console.error('[settle_failed]', failure.asset, failure.payer, failure.nonce, failure.refused ? 'refused' : 'no_answer', failure.reason);
+}
+
 type PaidHandler = (request: NextRequest) => Promise<NextResponse>;
 
 // Built once per set of dependencies: making it asks the facilitator what it supports. The price each request is
@@ -169,7 +178,12 @@ let paid: { deps: VideosDeps; handler: PaidHandler } | undefined;
 
 function paidHandler(deps: VideosDeps, settings: Env): PaidHandler {
   if (paid?.deps !== deps) {
-    const server = createResourceServer(settings, deps.facilitator, (payment) => paymentSettled(payment, deps));
+    const server = createResourceServer(
+      settings,
+      deps.facilitator,
+      (payment) => paymentSettled(payment, deps),
+      (failure) => paymentSettleFailed(failure),
+    );
     const routes = { [ROUTE]: routeConfig(settings, promoGate(settings, deps.store)) };
     paid = { deps, handler: withX402(createOrder(deps, settings), routes, server) };
   }

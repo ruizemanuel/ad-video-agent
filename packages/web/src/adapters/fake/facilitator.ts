@@ -1,7 +1,8 @@
 // A facilitator that never touches a chain: it says every payment is valid and settles it at once, unless a test asks
-// it to refuse the payment, to fail the settlement, or to time out while settling (an outcome nobody knows). It
-// counts the calls, so a test can say a payment was (or was not) looked at. The route's tests hand it over themselves;
-// the app takes it when AD_AGENT_ADAPTERS is `fake` (see app/v1/videos/deps.ts), so no payment reaches Celo's.
+// it to refuse the payment, to fail the settlement, or to time out or leave it pending while settling (outcomes nobody
+// knows). It counts the calls, so a test can say a payment was (or was not) looked at. The route's tests hand it over
+// themselves; the app takes it when AD_AGENT_ADAPTERS is `fake` (see app/v1/videos/deps.ts), so no payment reaches
+// Celo's.
 import { FacilitatorTimeoutError, type FacilitatorClient } from '@x402/core/server';
 import type { PaymentPayload, PaymentRequirements, SettleResponse, SupportedResponse, VerifyResponse } from '@x402/core/types';
 
@@ -16,8 +17,11 @@ export class FakeFacilitator implements FacilitatorClient {
   readonly calls = { verify: 0, settle: 0, supported: 0 };
   /** What the next verifications answer. `invalid` is what a reused or forged payment gets from the real one. */
   verification: 'valid' | 'invalid' = 'valid';
-  /** What the next settlements do. */
-  settlement: 'success' | 'failure' | 'timeout' = 'success';
+  /**
+   * What the next settlements do. `pending` is what the real one answers when it sent the transaction but did not see it
+   * land: the tokens may still move.
+   */
+  settlement: 'success' | 'failure' | 'timeout' | 'pending' = 'success';
 
   async verify(payload: PaymentPayload): Promise<VerifyResponse> {
     this.calls.verify += 1;
@@ -31,6 +35,7 @@ export class FakeFacilitator implements FacilitatorClient {
     const payer = payerOf(payload);
     if (this.settlement === 'timeout') throw new FacilitatorTimeoutError('settle', 90_000);
     if (this.settlement === 'failure') return { success: false, errorReason: 'insufficient_funds', transaction: '', network: requirements.network, payer };
+    if (this.settlement === 'pending') return { success: false, errorReason: 'settlement_pending', transaction: FAKE_SETTLE_TX, network: requirements.network, payer };
     return { success: true, transaction: FAKE_SETTLE_TX, network: requirements.network, payer };
   }
 

@@ -142,6 +142,8 @@ Only for tests and for the refund run, never for a normal deployment:
 
 - An order whose refund could not be paid stays `refund_failed`: a "Refund not paid" alert rings once (see [Alerts](#alerts)), and the reconciliation logs it as `[refund_failed]` every 10 minutes; once the cause is fixed, `pnpm --filter @app/web refund:retry <orderId>`, run with the production settings in the environment, moves it back to `refunding` and signs and sends its refund in one go (the reconciliation then confirms it).
 
+- A payment whose settlement did not go through is logged as `[settle_failed]`, with its token, payer and nonce, then one word and the facilitator's reason: `refused` when the facilitator said no before sending any transaction (nothing moved), and `no_answer` when it is not known whether the tokens moved (a timeout, a network error, or a transaction sent that was not seen to land, `settlement_pending`). Either way the order stays `awaiting_settlement`: it starts if the payment reaches the chain, and turns `unpaid` once its authorization has expired.
+
 - A paid order is refunded by the reconciliation two hours after its payment when its run is no longer at work (the runtime says it failed, was cancelled, completed without letting the order go, is still pending, is unknown or cannot be asked) or never started (every start failed). A run that says it is still running is given until a day after the payment.
 
 ### Alerts

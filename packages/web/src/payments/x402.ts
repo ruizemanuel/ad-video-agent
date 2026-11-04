@@ -2,7 +2,7 @@
 // EIP-3009 authorization; the facilitator checks it, and after the order is made it moves the tokens straight from
 // the client to PAYTO_ADDRESS (it never holds them).
 import { HTTPFacilitatorClient, x402ResourceServer, type FacilitatorClient, type HTTPAdapter, type HTTPRequestContext, type RouteConfig } from '@x402/core/server';
-import type { DeepReadonly, PaymentPayload } from '@x402/core/types';
+import { SettleError, type DeepReadonly, type PaymentPayload } from '@x402/core/types';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
 import { BUILDER_CODE, declareBuilderCodeExtension } from '@x402/extensions/builder-code';
 import { z } from 'zod';
@@ -191,14 +191,22 @@ export function authorizationWindowProblem(payment: Pick<SignedPayment, 'validAf
 export type SettledPayment = { asset: string; payer: string; nonce: string; txHash: string };
 
 /**
+ * A payment whose settlement did not go through: what finds its order, and why. `refused` is the facilitator saying no
+ * before it sent any transaction, so nothing moved. Anything else (a timeout, a network error, or a transaction it sent
+ * but did not see land) leaves it unknown whether the tokens moved.
+ */
+export type SettleFailure = { asset: string; payer: string; nonce: string; refused: boolean; reason: string };
+
+/**
  * The x402 server of the service, on Celo's facilitator unless a test gives it another one. `onSettled` runs after
- * each settlement that went through; if it throws, the payer still gets their answer and the reconciliation picks the
- * order up later.
+ * each settlement that went through, and `onSettleFailed` after each one that did not; if either throws, the payer still
+ * gets their answer and the reconciliation picks the order up later.
  */
 export function createResourceServer(
   settings: Pick<Env, 'X402_API_KEY'>,
   facilitator?: FacilitatorClient,
   onSettled?: (payment: SettledPayment) => Promise<unknown>,
+  onSettleFailed?: (failure: SettleFailure) => Promise<unknown>,
 ): x402ResourceServer {
   const key = settings.X402_API_KEY;
   const client =
@@ -217,6 +225,17 @@ export function createResourceServer(
       // The route refuses any other payment before it can be settled.
       if (payment === null) return;
       await onSettled({ asset: payment.asset, payer: payment.payer, nonce: payment.nonce, txHash: result.transaction });
+    });
+  }
+  if (onSettleFailed !== undefined) {
+    // Nothing is recovered here: the answer stays the failure x402 gives.
+    server.onSettleFailure(async ({ paymentPayload, error }) => {
+      const payment = readSignedPayment(paymentPayload);
+      if (payment === null) return;
+      // A SettleError is the facilitator's own answer; one that carries a transaction (settlement_pending) was sent.
+      const refused = error instanceof SettleError && !error.transaction;
+      // A SettleError's message is its errorReason, and its errorMessage when it has one.
+      await onSettleFailed({ asset: payment.asset, payer: payment.payer, nonce: payment.nonce, refused, reason: error.message });
     });
   }
   return server;

@@ -335,6 +335,40 @@ describe('POST /v1/videos with a payment', () => {
     expect(res.headers.get('Content-Location')).toBe(statusUrl);
   });
 
+  describe('a settlement that does not go through', () => {
+    const authorizationOf = (headers: PaymentHeaders) =>
+      (decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']).payload as { authorization: { from: string; nonce: string } }).authorization;
+    /** Pays at the given settlement outcome, and gives the payment's `[settle_failed]` log lines. */
+    const settleLogs = async (settlement: FakeFacilitator['settlement']) => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const headers = await pay();
+        facilitator.settlement = settlement;
+        await POST(post({ url: U }, headers));
+        return { ...authorizationOf(headers), lines: logged.mock.calls.filter((call) => call[0] === '[settle_failed]') };
+      } finally {
+        logged.mockRestore();
+      }
+    };
+
+    it("logs the facilitator's refusal with its reason", async () => {
+      const { from, nonce, lines } = await settleLogs('failure');
+      expect(lines).toEqual([['[settle_failed]', TOKENS.USDT.address, from, nonce, 'refused', 'insufficient_funds']]);
+    });
+
+    it.each([
+      ['a timeout', 'timeout', 'Facilitator settle request timed out after 90000ms'],
+      ['a transaction sent that was not seen to land', 'pending', 'settlement_pending'],
+    ] as const)('logs %s as no_answer, since the tokens may still move', async (_label, settlement, reason) => {
+      const { from, nonce, lines } = await settleLogs(settlement);
+      expect(lines).toEqual([['[settle_failed]', TOKENS.USDT.address, from, nonce, 'no_answer', reason]]);
+    });
+
+    it('logs nothing for a settlement that went through', async () => {
+      expect((await settleLogs('success')).lines).toEqual([]);
+    });
+  });
+
   it('answers the plain 402 to a payment the facilitator refuses, such as one sent again after it settled', async () => {
     const headers = await pay();
     facilitator.verification = 'invalid';
