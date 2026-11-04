@@ -42,6 +42,13 @@ const PROMO_PAYER_REASON =
   'The first-video price must be paid by the wallet that asked for it: name that wallet in the x-payer header, and sign the payment with it.';
 const PROMO_GONE_REASON = 'The first-video price is no longer available for this wallet. Ask for a new quote.';
 const AT_CAPACITY_REASON = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
+const PAYER_IS_PAY_TO_REASON = 'This wallet is the one the service is paid to, so it cannot pay for an order. Pay from another wallet. Nothing was charged.';
+/**
+ * Whether a wallet is the one the service is paid to, whatever the case of its hex. It cannot pay: its payment would move
+ * the tokens to itself, and the facilitator verifies one such and then fails to settle it.
+ */
+const isPayTo = (wallet: string | null, settings: Pick<Env, 'PAYTO_ADDRESS'>): boolean =>
+  wallet !== null && wallet.toLowerCase() === settings.PAYTO_ADDRESS.toLowerCase();
 const refuse = (status: number, error: string, reason: string, headers: Record<string, string> = {}): Response =>
   Response.json({ error, reason }, { status, headers: { ...NO_STORE, ...headers } });
 
@@ -129,6 +136,8 @@ const createOrder =
       const reason = 'The payment must be a USDT or USDC authorization on Celo for the price the quote names, to the address it names.';
       return NextResponse.json({ error: 'invalid_payment', reason }, { status: 400, headers: NO_STORE });
     }
+    // For a client that did not name its wallet in x-payer, which POST refuses earlier.
+    if (isPayTo(payment.payer, settings)) return NextResponse.json({ error: 'payer_is_pay_to', reason: PAYER_IS_PAY_TO_REASON }, { status: 400, headers: NO_STORE });
     const window = authorizationWindowProblem(payment, Date.now() / 1000);
     if (window !== null) return NextResponse.json({ error: 'invalid_payment', reason: window }, { status: 400, headers: NO_STORE });
     const body = await readBody(request);
@@ -231,6 +240,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   const body = await readBody(request);
   if (!body.ok) return refuse(400, 'invalid_request', body.reason);
   if (body.order.audio === 'voice') return refuse(400, 'voice_not_available_yet', 'Voice-over is not available yet. Ask for audio "music" or "none".');
+  // Before the capacity and the check, which costs: the page names the wallet in its quote, and shows this before it asks
+  // for the signature.
+  if (isPayTo(payerHint(request.headers.get(PAYER_HINT_HEADER)), settings)) return refuse(400, 'payer_is_pay_to', PAYER_IS_PAY_TO_REASON);
 
   const deps = await videosDeps();
   // Before the check and any payment: an order whose VM today's buy cap has no room for is never taken, nor charged.

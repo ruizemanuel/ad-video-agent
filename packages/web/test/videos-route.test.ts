@@ -27,7 +27,10 @@ vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_test' 
 
 const BASE = 'https://ad-video-agent.example.com';
 const U = 'https://tiendita.example/';
-const PAYTO = `0x${'1'.repeat(40)}`;
+// The service wallet is one the tests can sign with, set in lowercase: a wallet names itself checksummed, so a payment it
+// signs names it in another case.
+const PAYTO_KEY = generatePrivateKey();
+const PAYTO = privateKeyToAccount(PAYTO_KEY).address.toLowerCase();
 const THIN_HINT = 'Your site shows little of the product. Adding up to 3 public pages of the app as extraUrls makes a better video.';
 const fixture = (name: string): string => readFileSync(new URL(`../src/adapters/fake/pages/${name}`, import.meta.url), 'utf8');
 const thinHtml = fixture('thin.html');
@@ -501,6 +504,36 @@ describe('POST /v1/videos with a payment', () => {
   });
 });
 
+describe('POST /v1/videos from the wallet the service is paid to', () => {
+  const REASON = 'This wallet is the one the service is paid to, so it cannot pay for an order. Pay from another wallet. Nothing was charged.';
+  /** The service wallet as it names itself. */
+  const payTo = privateKeyToAccount(PAYTO_KEY).address;
+
+  it('refuses the quote of a request that names it in x-payer, before the site check', async () => {
+    const res = await POST(post({ url: 'https://never-checked.example/' }, { 'x-payer': payTo }));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('PAYMENT-REQUIRED')).toBeNull();
+    expect(await res.json()).toEqual({ error: 'payer_is_pay_to', reason: REASON });
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a payment it signed without naming it, makes no order and never settles it', async () => {
+    const headers = await pay({ url: U }, { key: PAYTO_KEY });
+    const res = await POST(post({ url: U }, headers));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Content-Location')).toBeNull();
+    expect(await res.json()).toEqual({ error: 'payer_is_pay_to', reason: REASON });
+    expect(await orderOf(headers)).toBeNull();
+    expect(facilitator.calls.settle).toBe(0);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('keeps the quote and the order of any other wallet', async () => {
+    expect((await POST(post({ url: U }, { 'x-payer': privateKeyToAccount(generatePrivateKey()).address }))).status).toBe(402);
+    expect((await POST(post({ url: U }, await pay()))).status).toBe(202);
+  });
+});
+
 describe("POST /v1/videos once today's VMs are spoken for", () => {
   // BUY_DAILY_CAP_USD is left at its default, 2 USD: room for 28 VMs at VM_MAX_ATOMIC (0.07 USD) each.
   const AT_CAPACITY = 'We have made all the videos we can for today. Try again after the time in Retry-After. Nothing was charged.';
@@ -649,6 +682,18 @@ describe('POST /v1/videos at the first-video price', () => {
     nonce: `0x${(++nonce).toString(16).padStart(64, '0')}`,
     validAfter: 0n,
     validBefore: 1_790_000_000n,
+  });
+
+  it('refuses a payment at the first-video price signed by the service wallet, without taking a slot', async () => {
+    const asker = newWallet();
+    const offered = await quote(asker.address);
+    expect(asked(offered)).toEqual(PROMO);
+    const headers = await payFor(offered, { key: PAYTO_KEY });
+    const res = await POST(post({ url: U }, { 'x-payer': asker.address, ...headers }));
+    expect(res.status).toBe(400);
+    expect(await json(res)).toMatchObject({ error: 'payer_is_pay_to' });
+    expect(await fresh.promoSlotsUsed()).toBe(0);
+    expect(facilitator.calls.settle).toBe(0);
   });
 
   it('makes a promo order when the eligible wallet pays 0.01 with x-payer', async () => {
