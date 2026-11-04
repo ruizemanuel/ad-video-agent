@@ -164,10 +164,16 @@ async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promis
 
 /**
  * Runs after each settlement that did not go through, before the payer gets the answer: the facilitator's reason goes to
- * the log, with whether it said no (`refused`, nothing moved) or left it unknown (`no_answer`).
+ * the log, with whether it said no (`refused`, nothing moved) or left it unknown (`no_answer`). A refused payment's
+ * order, while it still awaits its settlement, gets its payment step `failed`, so its page says at once that the payment
+ * did not go through. Its status stays: the reconciliation still starts it if the payment reaches the chain, and gives it
+ * up as unpaid once its authorization has expired. An unknown outcome leaves the order as it is: it may have been paid.
  */
-async function paymentSettleFailed(failure: SettleFailure): Promise<void> {
+async function paymentSettleFailed(failure: SettleFailure, deps: VideosDeps): Promise<void> {
   console.error('[settle_failed]', failure.asset, failure.payer, failure.nonce, failure.refused ? 'refused' : 'no_answer', failure.reason);
+  if (!failure.refused) return;
+  const order = await deps.store.findOrderByPayment(failure.asset, failure.payer, failure.nonce);
+  if (order?.status === 'awaiting_settlement') await deps.store.setStep(order.id, 'payment', 'failed');
 }
 
 type PaidHandler = (request: NextRequest) => Promise<NextResponse>;
@@ -182,7 +188,7 @@ function paidHandler(deps: VideosDeps, settings: Env): PaidHandler {
       settings,
       deps.facilitator,
       (payment) => paymentSettled(payment, deps),
-      (failure) => paymentSettleFailed(failure),
+      (failure) => paymentSettleFailed(failure, deps),
     );
     const routes = { [ROUTE]: routeConfig(settings, promoGate(settings, deps.store)) };
     paid = { deps, handler: withX402(createOrder(deps, settings), routes, server) };

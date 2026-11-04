@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatusJson } from '../src/payments/orders';
 import { ORDER_STATUSES, type StepName, type StepState } from '../src/ports';
 import { ORDER_PAGE } from '../src/site/copy';
-import { followStatus, isTerminal, phaseOf, POLL_MS, progressRows } from '../src/site/progress';
+import { followStatus, isTerminal, phaseOf, POLL_MS, progressRows, viewPhase } from '../src/site/progress';
 
 /** Every step of the status, in order; those not in `steps` are `pending`, and `refund` is there only when it is given. */
 function status(steps: Partial<Record<StepName, StepState>> = {}, over: Partial<StatusJson> = {}): StatusJson {
@@ -236,6 +236,18 @@ describe('the statuses of an order', () => {
       refund_failed: [true, 'refund'],
       expired: [true, 'expired'],
     });
+  });
+});
+
+describe('viewPhase', () => {
+  it('shows a payment the facilitator refused as not paid, while the order still awaits its settlement', () => {
+    expect(viewPhase(status({ payment: 'failed' }, { status: 'awaiting_settlement' }))).toBe('unpaid');
+  });
+
+  it('shows the making while the payment is being confirmed, and once it is paid', () => {
+    expect(viewPhase(status({}, { status: 'awaiting_settlement' }))).toBe('making');
+    // A refused payment that still settled later: its step is done, and the video is being made.
+    expect(viewPhase(status({ payment: 'done' }, { status: 'paid' }))).toBe('making');
   });
 });
 

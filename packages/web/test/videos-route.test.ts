@@ -14,6 +14,7 @@ import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
 import { settledWithoutOrderAlert } from '../src/maintenance/alerts';
+import { markPaidAndStart } from '../src/payments/orders';
 import { POST } from '../src/app/v1/videos/route';
 import { ModelCallFailed, ModelOutputInvalid, type NewOrder, type OrderStore } from '../src/ports';
 import { PROMO_PRICE_ATOMIC, TOKENS } from '../src/payments/x402';
@@ -314,7 +315,7 @@ describe('POST /v1/videos with a payment', () => {
     expect(res.status).toBe(402);
     expect(start).not.toHaveBeenCalled();
     const order = (await orderOf(headers))!;
-    expect(order).toMatchObject({ status: 'awaiting_settlement', settleTx: null, runId: null, steps: {} });
+    expect(order).toMatchObject({ status: 'awaiting_settlement', settleTx: null, runId: null, steps: { payment: 'failed' } });
     const statusUrl = `${BASE}/v1/videos/${order.id}`;
     expect(await res.json()).toMatchObject({ orderId: order.id, statusUrl, price: { amount: '5' } });
     expect(res.headers.get('Content-Location')).toBe(statusUrl);
@@ -338,18 +339,38 @@ describe('POST /v1/videos with a payment', () => {
   describe('a settlement that does not go through', () => {
     const authorizationOf = (headers: PaymentHeaders) =>
       (decodePaymentSignatureHeader(headers['PAYMENT-SIGNATURE']).payload as { authorization: { from: string; nonce: string } }).authorization;
-    /** Pays at the given settlement outcome, and gives the payment's `[settle_failed]` log lines. */
+    /** Pays at the given settlement outcome: the payment, its order once answered, and its `[settle_failed]` log lines. */
     const settleLogs = async (settlement: FakeFacilitator['settlement']) => {
       const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       try {
         const headers = await pay();
         facilitator.settlement = settlement;
         await POST(post({ url: U }, headers));
-        return { ...authorizationOf(headers), lines: logged.mock.calls.filter((call) => call[0] === '[settle_failed]') };
+        return { ...authorizationOf(headers), order: await orderOf(headers), lines: logged.mock.calls.filter((call) => call[0] === '[settle_failed]') };
       } finally {
         logged.mockRestore();
       }
     };
+
+    it('marks the payment step failed when the facilitator refused it, by the time the payer is answered', async () => {
+      const { order } = await settleLogs('failure');
+      expect(order?.status).toBe('awaiting_settlement');
+      expect(order?.steps).toEqual({ payment: 'failed' });
+    });
+
+    it.each(['timeout', 'pending'] as const)('leaves the payment step as it was after a %s, since the tokens may still move', async (settlement) => {
+      const { order } = await settleLogs(settlement);
+      expect(order?.status).toBe('awaiting_settlement');
+      expect(order?.steps).toEqual({});
+    });
+
+    it('still starts the order of a refused payment that settles later', async () => {
+      const { from, nonce } = await settleLogs('failure');
+      expect(await markPaidAndStart({ asset: TOKENS.USDT.address, payer: from, nonce, txHash: FAKE_SETTLE_TX }, { store })).toBe('started');
+      const order = await store.findOrderByPayment(TOKENS.USDT.address, from, nonce);
+      expect(order).toMatchObject({ status: 'paid', steps: { payment: 'done' } });
+      expect(start).toHaveBeenCalledTimes(1);
+    });
 
     it("logs the facilitator's refusal with its reason", async () => {
       const { from, nonce, lines } = await settleLogs('failure');

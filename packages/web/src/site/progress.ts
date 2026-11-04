@@ -47,6 +47,16 @@ const STATUSES: Record<OrderState, { phase: Phase; over: boolean }> = {
 export const isTerminal = (status: OrderState): boolean => STATUSES[status].over;
 export const phaseOf = (status: OrderState): Phase => STATUSES[status].phase;
 
+/**
+ * What the page shows of an order as its status says it. A payment the facilitator refused leaves the order awaiting
+ * its settlement until its authorization expires, with the payment step `failed`: the page says at once that it did not
+ * go through. The order is not over, so the page keeps asking: a payment that still settles turns it to the making.
+ */
+export function viewPhase(status: StatusJson): Phase {
+  const refused = status.status === 'awaiting_settlement' && status.steps.some((step) => step.name === 'payment' && step.state === 'failed');
+  return refused ? 'unpaid' : phaseOf(status.status);
+}
+
 /** What a row stands on: a step in the flow's words, where a skipped step counts as done. */
 type Seen = 'done' | 'running' | 'failed' | 'pending';
 

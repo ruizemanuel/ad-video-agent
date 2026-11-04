@@ -148,6 +148,23 @@ describe('the order page', () => {
     expect(dynamic).toBe('force-dynamic');
   });
 
+  it('says at once that a payment the facilitator refused did not go through, with no steps', () => {
+    const id = 'ord_abcdefgh2345678abcdefgh2';
+    const html = renderToStaticMarkup(
+      createElement(OrderView, {
+        initial: { id, status: 'awaiting_settlement', steps: [{ name: 'payment', state: 'failed' }], warnings: [] },
+        audio: 'music',
+        site: 'cobrame.example',
+        siteUrl: 'https://cobrame.example/',
+        shortId: 'abcdefgh',
+        link: `${BASE}/o/${id}`,
+      }),
+    );
+    expect(words(html)).toContain("The payment didn't go through. Nothing was charged.");
+    expect(words(html)).not.toContain('Making your video');
+    expect(rows(html)).toEqual([]);
+  });
+
   it('keeps protocol words out of every state', async () => {
     for (const state of ['running', 'delivered', 'refunded', 'unpaid', 'expired'] as SeedState[]) {
       const said = words(await renderPage(await seedOrder(dir, state))).toLowerCase();

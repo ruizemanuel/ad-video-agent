@@ -8,7 +8,7 @@ import type { StatusJson } from '../payments/orders';
 import { ORDER_PAGE } from './copy';
 import { DeliveredView } from './DeliveredView';
 import styles from './OrderView.module.css';
-import { followStatus, phaseOf, progressRows, type ProgressRow } from './progress';
+import { followStatus, progressRows, viewPhase, type ProgressRow } from './progress';
 
 export type OrderViewProps = {
   /** The order's status as the server read it. */
@@ -35,7 +35,7 @@ export function OrderView({ initial, audio, site, siteUrl, shortId, link }: Orde
   // From what the server read, once: it stops by itself at an end, so the answers it brings do not start it again.
   useEffect(() => followStatus(initial.status, (signal) => lookAtOrder(initial.id, signal), setStatus), [initial.id, initial.status]);
 
-  const phase = phaseOf(status.status);
+  const phase = viewPhase(status);
   // The delivery is a page of its own, wider than the column the rest of the states sit in.
   if (phase === 'delivered') {
     return (
