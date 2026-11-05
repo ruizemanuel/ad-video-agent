@@ -159,7 +159,8 @@ export const useInkRoom = (font: FontSpec, texts: readonly string[]): Room & { h
   }, [font, key]);
 };
 
-type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center' };
+/** `accentScale`: how much the accented words are scaled, each from its bottom center (1, the default: not at all). */
+type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center'; accentScale?: number };
 
 // The lines of a block are this far apart, in em, beyond their line height: what the room of one clip over the next used
 // to leave of their margins (they collapsed to the larger). The layout keeps it, whatever room the clips have.
@@ -168,24 +169,61 @@ const LINE_GAP = 0.14;
 /** How tall `count` lines set at `size` px are laid out at `lineHeight` (see TypeLines), the gaps between them included. */
 export const linesHeight = (count: number, size: number, lineHeight: number): number => (count * lineHeight + Math.max(0, count - 1) * LINE_GAP) * size;
 
+/** The words of a line in runs: each run the words in a row that are all accented, or all not. */
+const accentRuns = (line: TypeLine): { accent: boolean; text: string }[] =>
+  line.reduce<{ accent: boolean; text: string }[]>((runs, word) => {
+    const last = runs.at(-1);
+    const accented = word.accent === true;
+    if (last && last.accent === accented) last.text += ` ${word.text}`;
+    else runs.push({ accent: accented, text: word.text });
+    return runs;
+  }, []);
+
+/**
+ * A line with its accent scaled by `scale`, from its bottom: each accented run as one box (the space after it stays
+ * outside), so that a phrase scales as one; from its left corner when it starts a line set flush left, where the clip of
+ * the line would cut its first letter, and from its center otherwise.
+ */
+const ScaledAccent: FC<{ line: TypeLine; accent: string; scale: number; align: 'left' | 'center' }> = ({ line, accent, scale, align }) => {
+  const runs = accentRuns(line);
+  return (
+    <>
+      {runs.map((run, r) => (
+        <span key={r} style={run.accent ? { color: accent } : undefined}>
+          {run.accent ? (
+            <span style={{ display: 'inline-block', transform: `scale(${scale})`, transformOrigin: r === 0 && align === 'left' ? 'left bottom' : 'center bottom' }}>{run.text}</span>
+          ) : (
+            run.text
+          )}
+          {r < runs.length - 1 ? ' ' : ''}
+        </span>
+      ))}
+    </>
+  );
+};
+
 /**
  * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: hidden
  * under its clip). A clip has room for the ink of the lines of the block above and below its line (see useInkRoom), taken
  * back by negative margins, so that the room never moves the text.
  */
-export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [] }) => {
+export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [], accentScale = 1 }) => {
   const { above, below, hide } = useInkRoom(font, lines.map(lineText));
   return (
     <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align, display: 'flex', flexDirection: 'column', gap: `${LINE_GAP}em` }}>
       {lines.map((line, i) => (
         <div key={i} style={{ overflow: 'hidden', padding: `${above}em 0 ${below}em`, margin: `${-above}em 0 ${-below}em` }}>
           <div data-qa-line style={{ transform: `translateY(${((drop[i] ?? 0) * hide * 100) / font.lineHeight}%)` }}>
-            {line.map((word, j) => (
-              <span key={j} style={word.accent ? { color: accent } : undefined}>
-                {word.text}
-                {j < line.length - 1 ? ' ' : ''}
-              </span>
-            ))}
+            {accentScale === 1 ? (
+              line.map((word, j) => (
+                <span key={j} style={word.accent ? { color: accent } : undefined}>
+                  {word.text}
+                  {j < line.length - 1 ? ' ' : ''}
+                </span>
+              ))
+            ) : (
+              <ScaledAccent line={line} accent={accent} scale={accentScale} align={align} />
+            )}
           </div>
         </div>
       ))}

@@ -1,8 +1,7 @@
 // Where a card of a series sets its text, as plain math: the titles' size, the room over the subline, the height every
-// card of the series starts its text at, and the slow push in on it.
-import { safeWidth } from '@app/core';
+// card of the series starts its text at, the hit of its accent and the roll from the card before.
 import { describe, expect, it } from 'vitest';
-import { cardPush, cardWidth, seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
+import { accentHit, rollPlacement, seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
 import { lineText, toWords, type Measure } from '../src/video/type';
 
 describe('a card of a series', () => {
@@ -36,18 +35,28 @@ describe('a card of a series', () => {
     expect(seriesTop('9x16', [1500])).toBe(220);
   });
 
-  it('pushes in on its text over the scene, evenly, from 100 % to 106 %', () => {
-    expect(cardPush(0, 90)).toBe(1);
-    expect(cardPush(45, 90)).toBeCloseTo(1.03, 6);
-    expect(cardPush(90, 90)).toBeCloseTo(1.06, 6);
-    // Outside its frames, it holds.
-    expect(cardPush(-5, 90)).toBe(1);
-    expect(cardPush(120, 90)).toBeCloseTo(1.06, 6);
+  it('hits the accent of its title: 110 % on the hit, back to 100 % over 6 frames, evenly, and 100 % before it', () => {
+    expect(accentHit(-1)).toBe(1);
+    expect(accentHit(0)).toBeCloseTo(1.1, 6);
+    expect(accentHit(3)).toBeCloseTo(1.05, 6);
+    expect(accentHit(6)).toBe(1);
+    expect(accentHit(40)).toBe(1);
   });
 
-  it('sets its text in a column narrow enough to stay inside the safe zone at the end of the push', () => {
-    // 9x16: the safe zone is 860 px wide; 860 / 1.06 is 811.3.
-    expect(cardWidth('9x16')).toBe(811);
-    for (const format of ['9x16', '16x9', '4x5'] as const) expect(cardWidth(format) * 1.06).toBeLessThanOrEqual(safeWidth(format));
+  it("rolls the text before out and its title in, each the clip's whole height: the clip holds the taller block and the ink around it", () => {
+    expect(rollPlacement(0, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: 0, own: 450 });
+    expect(rollPlacement(0.5, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: -225, own: 225 });
+    expect(rollPlacement(1, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: -450, own: 0 });
+  });
+
+  it('never lets the text that leaves and the title that comes overlap, their ink included, at any point of the roll', () => {
+    const ink = { above: 20, below: 30 };
+    for (const heights of [{ own: 266, old: 400 }, { own: 400, old: 133 }]) {
+      for (let roll = 0; roll <= 1; roll += 0.05) {
+        const at = rollPlacement(roll, heights, ink);
+        // Each block's ink runs from its place to its height and the ink over and under it past that.
+        expect(at.old + heights.old + ink.above + ink.below, `roll ${roll.toFixed(2)}`).toBeLessThanOrEqual(at.own + 1e-9);
+      }
+    }
   });
 });

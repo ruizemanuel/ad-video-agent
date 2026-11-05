@@ -5,12 +5,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  beatFrame,
   CAPTION_GAP,
   CAPTION_LINE,
   checkStills,
   FORMATS,
   layoutScenes,
   sceneSurfaces,
+  settledFrame,
   stageLayout,
   theme,
   timedScenePath,
@@ -28,8 +30,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { capture, type CapturedSite } from '../../src/capture';
 import { resolveFont } from '../../src/capture/fonts';
 import { getServeUrl } from '../../src/render/bundle';
-import { runFfmpeg } from '../../src/render/ffmpeg';
+import { buildStillJpegArgs, runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
+import { readProbe } from '../../src/video/probe';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
 import { centeredSafeBox } from '../../src/video/pieces/common';
 import { FLASH_SCALE, flashMax } from '../../src/video/pieces/WordFlash';
@@ -352,6 +355,47 @@ async function areaOf(still: Still, hex: string, bottom: number, top = 0): Promi
     }
   }
   return left === Infinity ? undefined : { x: left * scale, y: first * scale, w: (right - left + 1) * scale, h: (last - first + 1) * scale };
+}
+
+/**
+ * Frames of the video of `scenes` in 9x16 that need not be key frames, taken as renderKeyframes takes its stills: each
+ * with the text the probe measured in it (every probed line, moving or not, clipped or not) and its picture.
+ */
+async function framesOf(scenes: Edl, on: SiteData, frames: readonly number[]): Promise<Still[]> {
+  const { openBrowser, renderStill, selectComposition } = await import('@remotion/renderer');
+  const serveUrl = await getServeUrl(dir);
+  const inputProps = { edl: scenes, site: on, format: '9x16', hook: 0, probe: true };
+  const work = mkdtempSync(join(tmpdir(), 'frames-'));
+  const browser = await openBrowser('chrome');
+  try {
+    const composition = await selectComposition({ serveUrl, id: 'ad-9x16', inputProps, puppeteerInstance: browser });
+    const timed = layoutScenes(scenes, 0).scenes;
+    const shots: Still[] = [];
+    for (const [n, frame] of frames.entries()) {
+      const [png, jpg] = [join(work, `${n}.png`), join(work, `${n}.jpg`)];
+      let text: ProbeItem[] | undefined;
+      await renderStill({
+        composition,
+        serveUrl,
+        output: png,
+        frame,
+        inputProps,
+        imageFormat: 'png',
+        puppeteerInstance: browser,
+        onBrowserLog: (log) => {
+          text = readProbe(log.text, frame) ?? text;
+        },
+      });
+      if (!text) throw new Error(`Frame ${frame} came out without its text measured.`);
+      await runFfmpeg(buildStillJpegArgs(png, jpg), 'make the picture of a frame');
+      const scene = timed.find((t) => frame >= t.from && frame < t.from + t.duration)!;
+      shots.push({ index: scene.index, role: scene.role, piece: scene.scene.piece, frame, path: timedScenePath(scenes, 0, scene), text, jpegBase64: readFileSync(jpg).toString('base64') });
+    }
+    return shots;
+  } finally {
+    await browser.close({ silent: true }).catch(() => {});
+    rmSync(work, { recursive: true, force: true });
+  }
 }
 
 let fixture: Awaited<ReturnType<typeof serveFixtureSite>>;
@@ -705,6 +749,42 @@ describe('the cards of a series', () => {
       const last = still.text.at(-1)!;
       expect(await areaOf(still, surface.accent, still.text[0]!.y), `${still.path}: over the title`).toBeUndefined();
       expect(await areaOf(still, surface.accent, height, last.y + last.h), `${still.path}: under the text`).toBeUndefined();
+    }
+  });
+
+  /** The card at `path` as the video lays it out. */
+  const cardAt = (path: string) => layoutScenes(cards, 0).scenes.find((t) => timedScenePath(cards, 0, t) === path)!;
+
+  it("hits the accent of the title on the beat after the title comes in: 110 %, settling to its size, as the words of the flash do", async () => {
+    const card = cardAt(CARDS[0]!);
+    const hit = card.from + beatFrame(card, 1, cards.bpm);
+    const { surface } = cardsOf(stills, site)[0]!;
+    const [before, on, settled] = await framesOf(cards, site, [hit - 1, hit, settledFrame(card)]);
+    // The title's first line is its accent alone, "0%": its band holds no other ink (here the accent is the text's color).
+    const line = settled!.text[0]!;
+    expect(line.text).toBe('0%');
+    const [w0, w1, w2] = await Promise.all([before!, on!, settled!].map(async (shot) => (await areaOf(shot, surface.accent, line.y + line.h, line.y))!.w));
+    expect(w1! / w2!, 'on the hit').toBeGreaterThan(1.06);
+    expect(Math.abs(w0! / w2! - 1), 'a frame before it').toBeLessThanOrEqual(0.02);
+    // An accent that starts its line grows from where it starts: the clip of the line would cut its first letter.
+    const [x1, x2] = await Promise.all([on!, settled!].map(async (shot) => (await areaOf(shot, surface.accent, line.y + line.h, line.y))!.x));
+    expect(x1!, 'where the accent starts on the hit').toBeGreaterThanOrEqual(x2! - 2);
+  });
+
+  it("rolls the text of the card before out through the top as the title comes in through the bottom, never overlapping", async () => {
+    const next = cardAt(CARDS[1]!);
+    const last = stills.find((s) => s.path === CARDS[0])!;
+    const before = new Set(last.text.map((t) => t.text));
+    const shots = await framesOf(cards, site, [next.from, next.from + 4, next.from + 8]);
+    // On the cut, the text before stands where its card left it.
+    const atCut = shots[0]!.text.filter((t) => before.has(t.text));
+    expect(atCut.map((t) => t.text)).toEqual(last.text.map((t) => t.text));
+    atCut.forEach((t, i) => expect(t.y, t.text).toBeCloseTo(last.text[i]!.y, 0));
+    for (const shot of shots.slice(1)) {
+      const [leaving, coming] = [shot.text.filter((t) => before.has(t.text)), shot.text.filter((t) => !before.has(t.text))];
+      expect(leaving.length * coming.length, `frame ${shot.frame}: both texts are there`).toBeGreaterThan(0);
+      const bottom = Math.max(...leaving.map((t) => t.y + t.h));
+      expect(bottom, `frame ${shot.frame}: the text that leaves ends over the title that comes`).toBeLessThanOrEqual(Math.min(...coming.map((t) => t.y)) + 1);
     }
   });
 
