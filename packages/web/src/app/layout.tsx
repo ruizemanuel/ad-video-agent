@@ -6,6 +6,7 @@ import { IBM_Plex_Mono, IBM_Plex_Sans, Instrument_Serif } from 'next/font/google
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { BRAND, NAV } from '../site/copy';
+import { PageViews } from '../site/PageViews';
 import './globals.css';
 
 const serif = Instrument_Serif({ weight: '400', subsets: ['latin'], variable: '--font-serif' });
@@ -38,6 +39,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
         {children}
+        {/* Only in a build: in development the package records nothing, and would load its debug script from Vercel. */}
+        {process.env.NODE_ENV === 'production' && <PageViews />}
       </body>
     </html>
   );
