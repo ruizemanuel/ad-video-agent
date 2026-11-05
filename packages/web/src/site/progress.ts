@@ -28,20 +28,20 @@ export type Phase = 'making' | 'refund' | 'unpaid' | 'expired' | 'delivered';
 
 /**
  * What the page does with each status of an order: what it shows, and whether the order is over (it will not change
- * again, so the page stops asking and the status is the last word on the steps). The one list of them, a record over
- * every status: one added to the service does not compile until it is placed here. (`refunding` is not over: its
- * refund is still on its way.)
+ * again, so the page stops asking and the status is the last word on the steps), and whether its payment went through.
+ * The one list of them, a record over every status: one added to the service does not compile until it is placed here.
+ * (`refunding` is not over: its refund is still on its way.)
  */
-const STATUSES: Record<OrderState, { phase: Phase; over: boolean }> = {
-  awaiting_settlement: { phase: 'making', over: false },
-  paid: { phase: 'making', over: false },
-  running: { phase: 'making', over: false },
-  delivered: { phase: 'delivered', over: true },
-  unpaid: { phase: 'unpaid', over: true },
-  refunding: { phase: 'refund', over: false },
-  refunded: { phase: 'refund', over: true },
-  refund_failed: { phase: 'refund', over: true },
-  expired: { phase: 'expired', over: true },
+const STATUSES: Record<OrderState, { phase: Phase; over: boolean; paid: boolean }> = {
+  awaiting_settlement: { phase: 'making', over: false, paid: false },
+  paid: { phase: 'making', over: false, paid: true },
+  running: { phase: 'making', over: false, paid: true },
+  delivered: { phase: 'delivered', over: true, paid: true },
+  unpaid: { phase: 'unpaid', over: true, paid: false },
+  refunding: { phase: 'refund', over: false, paid: true },
+  refunded: { phase: 'refund', over: true, paid: true },
+  refund_failed: { phase: 'refund', over: true, paid: true },
+  expired: { phase: 'expired', over: true, paid: false },
 };
 
 export const isTerminal = (status: OrderState): boolean => STATUSES[status].over;
@@ -90,6 +90,15 @@ function musicRow(status: StatusJson): Row {
 }
 
 /**
+ * What the payment row stands on. An order past its settlement was paid, whatever its step says: a payment the
+ * facilitator refused may settle all the same, and the order turns `paid` a moment before its step turns `done` (or
+ * that write fails).
+ */
+function paymentSeen(status: StatusJson): Seen {
+  return STATUSES[status.status].paid ? 'done' : seen(status, 'payment');
+}
+
+/**
  * What the refund step stands on. An order that is over says how its refund ended, whatever the step says: the flow and
  * the reconciliation move the order's status and its step in two writes, or the step not at all.
  */
@@ -106,7 +115,7 @@ function refundSeen(status: StatusJson): Seen {
 export function progressRows(status: StatusJson, audio: 'music' | 'none'): ProgressRow[] {
   const row = (key: Exclude<RowKey, 'music'>, state: Seen): Row => ({ key, words: ORDER_PAGE.steps[key], seen: state });
   const rows: Row[] = [
-    row('payment', seen(status, 'payment')),
+    row('payment', paymentSeen(status)),
     row('capture', folded(status, 'vm', 'capture')),
     row('script', seen(status, 'script')),
     ...(audio === 'music' ? [musicRow(status)] : []),

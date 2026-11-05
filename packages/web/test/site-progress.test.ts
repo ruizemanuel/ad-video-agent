@@ -17,7 +17,7 @@ const labels = (rows: ReturnType<typeof progressRows>) => rows.map(({ label }) =
 describe('progressRows', () => {
   it('tells what was done in the past, the step being done as it goes, and the rest as the action to come', () => {
     // Seven rows from nine steps: the VM and the delivery have none of their own.
-    expect(labels(progressRows(status(), 'music'))).toEqual([
+    expect(labels(progressRows(status({}, { status: 'awaiting_settlement' }), 'music'))).toEqual([
       'Confirming your payment…',
       'Reading your page',
       'Writing the script in your site’s own words',
@@ -61,6 +61,22 @@ describe('progressRows', () => {
     expect(states(rows)).toEqual(['now', 'todo', 'todo', 'todo', 'todo', 'todo', 'todo']);
   });
 
+  it('shows the payment as got once the order is paid, even while its step still says it was refused', () => {
+    // A refused payment that settles anyway: the order turns `paid` a moment before its step turns `done`, or that write
+    // fails. Whoever paid never sees their payment in red.
+    const unsettled = ['awaiting_settlement', 'unpaid', 'expired'];
+    for (const order of ORDER_STATUSES.filter((s) => !unsettled.includes(s))) {
+      const rows = progressRows(status({ payment: 'failed' }, { status: order }), 'music');
+      expect(rows[0], order).toEqual({ key: 'payment', label: 'I got your payment', state: 'done' });
+    }
+    // The video is being made: the next step is the one being done, and nothing is red.
+    expect(states(progressRows(status({ payment: 'failed' }, { status: 'paid' }), 'music'))).toEqual(['done', 'now', 'todo', 'todo', 'todo', 'todo', 'todo']);
+    // Until it settles, a refused payment is still refused.
+    for (const order of unsettled) {
+      expect(progressRows(status({ payment: 'failed' }, { status: order as StatusJson['status'] }), 'music')[0]?.state, order).toBe('failed');
+    }
+  });
+
   it('counts the VM as part of the capture, and the delivery as part of the final video', () => {
     // The VM being set up is the first part of reading the page; once it is up and the capture runs, that is still the row.
     expect(progressRows(status({ payment: 'done', vm: 'running' }), 'music')[1]).toEqual({ key: 'capture', label: 'Reading your page…', state: 'now' });
@@ -102,7 +118,7 @@ describe('progressRows', () => {
   });
 
   it('marks the first pending step as now when none is running', () => {
-    expect(states(progressRows(status(), 'music'))[0]).toBe('now');
+    expect(states(progressRows(status({}, { status: 'awaiting_settlement' }), 'music'))[0]).toBe('now');
     expect(states(progressRows(status({ payment: 'done', vm: 'done', capture: 'done' }), 'music'))).toEqual(['done', 'done', 'now', 'todo', 'todo', 'todo', 'todo']);
   });
 
@@ -248,6 +264,9 @@ describe('viewPhase', () => {
     expect(viewPhase(status({}, { status: 'awaiting_settlement' }))).toBe('making');
     // A refused payment that still settled later: its step is done, and the video is being made.
     expect(viewPhase(status({ payment: 'done' }, { status: 'paid' }))).toBe('making');
+    // And one whose step has not caught up with its status yet.
+    expect(viewPhase(status({ payment: 'failed' }, { status: 'paid' }))).toBe('making');
+    expect(viewPhase(status({ payment: 'failed' }, { status: 'running' }))).toBe('making');
   });
 });
 
