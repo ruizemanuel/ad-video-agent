@@ -8,6 +8,7 @@ import { FakeAlerts } from '../../src/adapters/fake/alerts';
 import { FakeLlm } from '../../src/adapters/fake/llm';
 import { FakeMusic } from '../../src/adapters/fake/music';
 import { refundFailedAlert } from '../../src/maintenance/alerts';
+import type { ReviewNote } from '../../src/ports';
 import { renderPaths } from '../../src/vm/tasks';
 import { vmTokenHash } from '../../src/vm/token';
 import { orderWorkflow } from '../../src/workflows/order';
@@ -85,6 +86,9 @@ function answerByModel(tracks: Partial<Record<MusicModel, Uint8Array>>): void {
 const text = async (path: string): Promise<string> => new TextDecoder().decode(await fakes.blob.get(path));
 const kinds = async (orderId: string) => (await tasks(fakes.store, orderId)).map((t) => `${t.kind}:${t.round}`);
 const rentals = () => fakes.buy.vmRentals.length;
+const notes = (orderId: string): Promise<ReviewNote[]> => fakes.store.reviewNotes(orderId);
+/** What each review and correction of the order came to, as `kind:round:outcome`, in the order they were noted. */
+const noteLines = async (orderId: string) => (await notes(orderId)).map((n) => `${n.kind}:${n.round}:${n.outcome}`);
 
 /** Runs the order up to the point the VM has captured the site and made the first key frames. */
 async function captureAndPreview(orderId: string) {
@@ -311,6 +315,10 @@ describe('an order that goes through', () => {
     expect(render.edl).toEqual(retimeForBpm(corrected, render.edl.bpm));
     expect(await text(`orders/${id}/out/claims.md`)).toBe(claimsMarkdown(corrected, siteShop));
     expect((await fakes.store.getOrder(id))?.summary?.claims).toEqual(claimItems(corrected, siteShop));
+
+    // What each review and the correction came to, kept on the order.
+    expect(await noteLines(id)).toEqual(['review:0:blocked', 'correction:0:fixed', 'review:1:passed']);
+    expect((await notes(id))[0]?.problems).toEqual([{ where: 'all', rule: 'visual', detail: expect.stringContaining('logo-swap') }]);
   });
 
   it('renders without music, and says so, when a correction makes the video outlast the track: music never refunds', async () => {
@@ -348,6 +356,18 @@ describe('an order that goes through', () => {
     await actAsVm(run, id, 'render', 0, null, RENDERED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
     expect(warn).toHaveBeenCalledWith('[review_warning]', id, 'hooks[0][0]: The headline sits close to the top edge.');
+    expect(await notes(id)).toEqual([
+      { kind: 'review', round: 0, outcome: 'passed', why: null, problems: [], warnings: ['hooks[0][0]: The headline sits close to the top edge.'], patched: [] },
+    ]);
+  });
+
+  it('delivers the order all the same when its review notes cannot be written, and logs only ids', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(fakes.store, 'addReviewNote').mockRejectedValue(new Error('relation "review_notes" does not exist'));
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'render', 0, null, RENDERED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
+    expect(warn.mock.calls.filter(([tag]) => tag === '[review_note_failed]')).toEqual([['[review_note_failed]', id, 'review', 0, 'Error']]);
   });
 
   it('goes on with the VM once the chain says the uncertain VM payment settled', async () => {
@@ -535,6 +555,7 @@ describe('an order that is refunded', () => {
     expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
     expect(await kinds(id)).toEqual(['capture:0', 'keyframes:0', 'keyframes:1', 'keyframes:2', 'shutdown:0']);
     expect((await fakes.store.getOrder(id))?.steps.review).toBe('failed');
+    expect(await noteLines(id)).toEqual(['review:0:blocked', 'correction:0:fixed', 'review:1:blocked', 'correction:1:fixed', 'review:2:blocked']);
   });
 
   it('logs why each correction could not be used, in ids and rules only, and keeps the step output to the status', async () => {
@@ -561,6 +582,12 @@ describe('an order that is refunded', () => {
       expect(why).not.toContain('"');
     }
     expect(await stepOutput(run.runId, 'correctForReview')).toEqual({ status: 'unusable' });
+
+    // The note of each says what the log line says, and what failed in full.
+    expect(await noteLines(id)).toEqual(['review:0:blocked', 'correction:0:unusable', 'correction:0:unusable']);
+    const corrections = (await notes(id)).filter((n) => n.kind === 'correction');
+    expect(corrections.map((n) => n.why)).toEqual(lines.map(([, , why]) => why));
+    for (const n of corrections) expect(n.problems).toEqual(validateEdl(bad, siteShop));
   });
 
   it('logs a correction whose step failed for good, by the name of the error alone', async () => {
@@ -577,6 +604,8 @@ describe('an order that is refunded', () => {
       ['[correction_unusable]', id, 'step-failed:Error'],
       ['[correction_unusable]', id, 'step-failed:Error'],
     ]);
+    const failed: ReviewNote = { kind: 'correction', round: 0, outcome: 'unusable', why: 'step-failed:Error', problems: [], warnings: [], patched: [] };
+    expect((await notes(id)).slice(1)).toEqual([failed, failed]);
   });
 
   it('does not try a correction the order cannot afford, and refunds', async () => {
@@ -590,6 +619,7 @@ describe('an order that is refunded', () => {
     expect(fakes.llm.calls).toMatchObject({ review: 1, patchEdl: 0 });
     expect(warn).toHaveBeenCalledWith('[review_over_budget]', silent);
     expect(await kinds(silent)).toEqual(['capture:0', 'keyframes:0', 'shutdown:0']);
+    expect(await noteLines(silent)).toEqual(['review:0:blocked', 'correction:0:over-budget']);
   });
 
   it('refunds when the key frames file is not what the VM writes, without asking the corrector', async () => {
@@ -600,6 +630,9 @@ describe('an order that is refunded', () => {
     expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
     expect(fakes.llm.calls).toMatchObject({ review: 0, patchEdl: 0 });
     expect(error).toHaveBeenCalledWith('[review_failed]', id, 0, 'keyframes-invalid');
+    expect(await notes(id)).toEqual([
+      { kind: 'review', round: 0, outcome: 'failed', why: 'keyframes-invalid', problems: [{ where: 'edl', rule: 'visual', detail: expect.stringContaining('not valid') }], warnings: [], patched: [] },
+    ]);
   });
 
   it('refunds when the VM never reports the key frames', async () => {

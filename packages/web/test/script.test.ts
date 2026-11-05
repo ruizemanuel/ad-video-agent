@@ -309,9 +309,9 @@ describe('correctEdl', () => {
     expect(llm.lastPatchInput).toEqual({ edl: edlShop, problems: [cut], site: siteShop() });
   });
 
-  it('gives back the fixed edit list once the code checks and the judge pass it, judging every item of it', async () => {
+  it('gives back the fixed edit list and the scenes the fix put in once the code checks and the judge pass it, judging every item of it', async () => {
     patchTo(reworded, 'body[1]');
-    expect(await correctEdl(input)).toEqual({ ok: true, edl: reworded });
+    expect(await correctEdl(input)).toEqual({ ok: true, edl: reworded, patched: [{ path: 'body[1]', scene: reworded.body[1] }] });
     expect(llm.lastJudgeInput).toEqual(judgeItems(reworded));
   });
 

@@ -38,7 +38,8 @@ export type ScriptResult = { ok: true; edl: Edl } | { ok: false; reason: 'valida
  */
 export type Unusable = { ok: false; reason: 'patch-invalid' | 'patch-path' | 'checks' | 'judge'; problems: Problem[]; patched: ScenePatch[] };
 
-export type Corrected = { ok: true; edl: Edl } | Unusable;
+/** A fix that can be used: the edit list with it, and the scenes it put in. */
+export type Corrected = { ok: true; edl: Edl; patched: ScenePatch[] } | Unusable;
 
 // A judge item is named `${scenePath}:${claimId}` or `${scenePath}:framing:${k}` (judgeItems).
 const sceneOf = (itemId: string): { path: string; rest: string } => {
@@ -198,9 +199,9 @@ export async function runScript({
 /**
  * One correction outside the script's own rounds, for the problems the visual review found in the key frames: the
  * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on every
- * item, since nothing it said before is at hand). When the fix cannot be used, says why (see Unusable). Every call is
- * recorded on the order, and any other failure of a model goes up: a call that failed, or a judge's answer that does
- * not fit (the corrector's own is `patch-invalid`).
+ * item, since nothing it said before is at hand), with the scenes it put in. When the fix cannot be used, says why (see
+ * Unusable). Every call is recorded on the order, and any other failure of a model goes up: a call that failed, or a
+ * judge's answer that does not fit (the corrector's own is `patch-invalid`).
  */
 export async function correctEdl({
   orderId,
@@ -220,7 +221,7 @@ export async function correctEdl({
   if (!fix.ok) return { ok: false, reason: fix.reason, problems: [], patched: [] };
   const found = await problemsOf(calls, fix.edl, site, new Verdicts());
   if (found.problems.length > 0) return { ok: false, reason: found.by, problems: found.problems, patched: fix.patches };
-  return { ok: true, edl: fix.edl };
+  return { ok: true, edl: fix.edl, patched: fix.patches };
 }
 
 /**

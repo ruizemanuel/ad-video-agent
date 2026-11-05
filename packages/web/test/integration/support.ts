@@ -54,6 +54,9 @@ export async function fakeService(settings: Record<string, string> = {}): Promis
     PUBLIC_BASE_URL: 'https://ad-video-agent.test',
     GITHUB_REPO: 'ruizemanuel/ad-video-agent',
     VM_CODE_REF: '0123456789abcdef0123456789abcdef01234567',
+    // One store for the whole file, so every VM its tests rent counts toward the day's buy spend: at the default cap of 2
+    // (some 28 VMs), the tests of a file that grows would run out of VMs. No test here is about that cap.
+    BUY_DAILY_CAP_USD: '10',
     ...settings,
   };
   for (const [name, value] of Object.entries(values)) vi.stubEnv(name, value);

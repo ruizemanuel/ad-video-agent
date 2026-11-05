@@ -24,6 +24,7 @@ import {
   type KeyframesInput,
   type Problem,
   type RenderInput,
+  type ScenePatch,
   type SiteData,
   type VmTaskKind,
 } from '@app/core';
@@ -36,7 +37,7 @@ import { payForVm, resolveVmPayment, vmPaymentKey, type PayResult } from '../pay
 import { canAfford, EST } from '../pipeline/budget';
 import { failedCandidate, generateCandidate, musicRequest, pickTrack, type Candidate, type ChosenTrack } from '../pipeline/music';
 import { runReview, type ReviewResult } from '../pipeline/review';
-import { correctEdl, failedCallSummary, runScript, unusableSummary, type ScriptResult } from '../pipeline/script';
+import { correctEdl, failedCallSummary, runScript, unusableSummary, type Corrected, type ScriptResult } from '../pipeline/script';
 import {
   ModelCallFailed,
   ModelOutputInvalid,
@@ -48,6 +49,7 @@ import {
   type LlmPort,
   type OrderRequest,
   type OrderStore,
+  type ReviewNote,
   type SettlementVerdict,
   type StepName,
   type StepState,
@@ -329,7 +331,7 @@ async function makeMusic(orderId: string, audio: OrderRequest['audio'], edl: Edl
  * The key frames of each round through the review. What blocks goes to the corrector, at most twice and while the order's
  * cap allows a whole round (the corrector, the judge and the review after it); a fix that cannot be used spends its round
  * and leaves the same problems. Each usable fix is rendered again as key frames of a new round. The edit list that passes
- * is the one rendered.
+ * is the one rendered. Each review and each correction leaves a note on the order (ReviewNote), which the flow never reads.
  */
 async function review(orderId: string, edl: Edl, first: unknown): Promise<{ ok: true; edl: Edl } | Failed> {
   let current = edl;
@@ -356,7 +358,7 @@ async function review(orderId: string, edl: Edl, first: unknown): Promise<{ ok: 
       corrections += 1;
       let correction: Correction;
       try {
-        correction = await correctForReview(orderId, current, blocking);
+        correction = await correctForReview(orderId, current, blocking, round);
       } catch {
         correction = { status: 'unusable' };
       }
@@ -643,14 +645,16 @@ async function warnOnce(store: Pick<OrderStore, 'getOrder' | 'addWarning'>, orde
 /**
  * The review of one round of key frames: what blocks, or a failure (the order cannot afford the review, the key frames
  * file is not what the VM writes, a model failed). The remarks that do not block are logged, never shown to the client.
+ * What it came to is noted on the order, last of all.
  */
 async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promise<{ ok: true; blocking: Problem[] } | { ok: false }> {
   'use step';
   const { store, blob, llm } = await getAdapters();
   await store.setStep(orderId, 'review', 'running');
-  const failed = async (why: string): Promise<{ ok: false }> => {
+  const failed = async (why: string, problems: Problem[] = []): Promise<{ ok: false }> => {
     console.error('[review_failed]', orderId, round, why);
     await store.setStep(orderId, 'review', 'failed');
+    await keepNote(store, orderId, { kind: 'review', round, outcome: 'failed', why, problems, warnings: [], patched: [] });
     return { ok: false };
   };
   if (!canAfford(await store.orderCost(orderId), EST.review, env().SPEND_CAP_PER_ORDER_USD)) return await failed('over-budget');
@@ -667,8 +671,10 @@ async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promis
   for (const warning of result.warnings) console.warn('[review_warning]', orderId, warning);
   // A problem at `edl` is the key frames file itself (not what the VM writes, or a frame of a scene the video does not
   // have): a failure of the VM, which no correction of the edit list can fix.
-  if (result.blocking.some((problem) => problem.where === 'edl')) return await failed('keyframes-invalid');
+  if (result.blocking.some((problem) => problem.where === 'edl')) return await failed('keyframes-invalid', result.blocking);
   if (result.blocking.length === 0) await store.setStep(orderId, 'review', 'done');
+  const outcome = result.blocking.length === 0 ? 'passed' : 'blocked';
+  await keepNote(store, orderId, { kind: 'review', round, outcome, why: null, problems: result.blocking, warnings: result.warnings, patched: [] });
   return { ok: true, blocking: result.blocking };
 }
 reviewKeyframes.maxRetries = 1;
@@ -680,30 +686,43 @@ type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable' } | { sta
  * blocked on, checked as the script is (code checks and the judge), or why there is none: the round would pass the
  * order's cap, or the fix cannot be used. Why it cannot be used is logged, one line with ids and rules only (see
  * unusableSummary and failedCallSummary). A model that may answer later (429, 5xx, no status) is asked again on the step's
- * next try; on its last (`lastTry`), the correction cannot be used either, and says so. Anything else goes up.
+ * next try; on its last (`lastTry`), the correction cannot be used either, and says so. Anything else goes up. What the
+ * correction of round `round` came to is noted on the order, with what failed in full; one that goes up is not.
  */
 export async function correctOnce(
-  { orderId, edl, problems, lastTry }: { orderId: string; edl: Edl; problems: Problem[]; lastTry: boolean },
-  { store, blob, llm, spendCap }: { store: Pick<OrderStore, 'addCost' | 'orderCost'>; blob: Pick<BlobPort, 'get'>; llm: Pick<LlmPort, 'patchEdl' | 'judge'>; spendCap: number },
+  { orderId, edl, problems, round, lastTry }: { orderId: string; edl: Edl; problems: Problem[]; round: number; lastTry: boolean },
+  {
+    store,
+    blob,
+    llm,
+    spendCap,
+  }: { store: Pick<OrderStore, 'addCost' | 'orderCost' | 'addReviewNote'>; blob: Pick<BlobPort, 'get'>; llm: Pick<LlmPort, 'patchEdl' | 'judge'>; spendCap: number },
 ): Promise<Correction> {
+  const note = (outcome: 'fixed' | 'unusable' | 'over-budget', why: string | null, failed: Problem[] = [], patched: ScenePatch[] = []): Promise<void> =>
+    keepNote(store, orderId, { kind: 'correction', round, outcome, why, problems: failed, warnings: [], patched });
   if (!canAfford(await store.orderCost(orderId), EST.patch + EST.judge + EST.review, spendCap)) {
     console.warn('[review_over_budget]', orderId);
+    await note('over-budget', null);
     return { status: 'over-budget' };
   }
-  const unusable = (why: string): Correction => {
+  const unusable = async (why: string, failed: Problem[] = [], patched: ScenePatch[] = []): Promise<Correction> => {
     console.warn('[correction_unusable]', orderId, why);
+    await note('unusable', why, failed, patched);
     return { status: 'unusable' };
   };
   const capture = await readCapture(blob, orderId);
-  if (capture === undefined) return unusable('capture-unreadable');
+  if (capture === undefined) return await unusable('capture-unreadable');
+  let corrected: Corrected;
   try {
-    const corrected = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
-    return corrected.ok ? { status: 'fixed', edl: corrected.edl } : unusable(unusableSummary(corrected, capture.site));
+    corrected = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
   } catch (error) {
     if (!lastTry) retryLaterIfBusy(error);
-    if (isModelFailure(error)) return unusable(failedCallSummary(error));
+    if (isModelFailure(error)) return await unusable(failedCallSummary(error));
     throw error;
   }
+  if (!corrected.ok) return await unusable(unusableSummary(corrected, capture.site), corrected.problems, corrected.patched);
+  await note('fixed', null, [], corrected.patched);
+  return { status: 'fixed', edl: corrected.edl };
 }
 
 /** The name of what was thrown, when it is a plain identifier (`TypeError`, `AI_APICallError`): never its message. */
@@ -713,18 +732,37 @@ const errorName = (error: unknown): string => {
 };
 
 /**
- * The corrector's fix for what the review blocked on, or why there is none (see correctOnce); the step's output says no
- * more than `unusable`. A step that fails for good (on its last try, or with an error not to be tried again) leaves the
- * correction unusable too, as the review loop takes it: it says so first, by the error's name alone.
+ * Keeps a note on the order for whoever looks into it later. A note never holds up the order: one that cannot be written
+ * is logged by its kind, its round and the error's name alone, and the step goes on.
  */
-async function correctForReview(orderId: string, edl: Edl, problems: Problem[]): Promise<Correction> {
+async function keepNote(store: Pick<OrderStore, 'addReviewNote'>, orderId: string, note: ReviewNote): Promise<void> {
+  try {
+    await store.addReviewNote(orderId, note);
+  } catch (error) {
+    console.warn('[review_note_failed]', orderId, note.kind, note.round, errorName(error));
+  }
+}
+
+/**
+ * The corrector's fix for what the review of round `round` blocked on, or why there is none (see correctOnce); the step's
+ * output says no more than `unusable`. A step that fails for good (on its last try, or with an error not to be tried
+ * again) leaves the correction unusable too, as the review loop takes it: it says so first, by the error's name alone,
+ * and notes it on the order when it has the store to.
+ */
+async function correctForReview(orderId: string, edl: Edl, problems: Problem[], round: number): Promise<Correction> {
   'use step';
   const lastTry = getStepMetadata().attempt > correctForReview.maxRetries;
+  let store: OrderStore | undefined;
   try {
-    const { store, blob, llm } = await getAdapters();
-    return await correctOnce({ orderId, edl, problems, lastTry }, { store, blob, llm, spendCap: env().SPEND_CAP_PER_ORDER_USD });
+    const adapters = await getAdapters();
+    store = adapters.store;
+    return await correctOnce({ orderId, edl, problems, round, lastTry }, { store, blob: adapters.blob, llm: adapters.llm, spendCap: env().SPEND_CAP_PER_ORDER_USD });
   } catch (error) {
-    if (lastTry || FatalError.is(error)) console.warn('[correction_unusable]', orderId, `step-failed:${errorName(error)}`);
+    if (lastTry || FatalError.is(error)) {
+      const why = `step-failed:${errorName(error)}`;
+      console.warn('[correction_unusable]', orderId, why);
+      if (store !== undefined) await keepNote(store, orderId, { kind: 'correction', round, outcome: 'unusable', why, problems: [], warnings: [], patched: [] });
+    }
     throw error;
   }
 }
