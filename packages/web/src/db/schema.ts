@@ -1,6 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm';
 import { boolean, customType, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, type AnyPgColumn } from 'drizzle-orm/pg-core';
-import type { VmTaskKind } from '@app/core';
+import type { Problem, ScenePatch, VmTaskKind } from '@app/core';
 import {
   VIDEO_STATUSES,
   type CostKind,
@@ -13,6 +13,7 @@ import {
   type PaymentStatus,
   type PrecheckResult,
   type RefundStatus,
+  type ReviewNote,
   type Steps,
   type VmTaskStatus,
 } from '../ports';
@@ -183,6 +184,32 @@ export const refunds = pgTable(
     // What the cron lists: the refunds that stopped moving.
     index('refunds_updated_idx').on(t.updatedAt),
   ],
+);
+
+/**
+ * What each review of an order's key frames and each correction of what it blocked on came to (ReviewNote), one row
+ * each, only ever added: for whoever looks into an order, never shown to the client. The cleanup deletes them with the
+ * order's files: they quote the site and the models.
+ */
+export const reviewNotes = pgTable(
+  'review_notes',
+  {
+    /** The order in which notes were added. */
+    id: serial('id').primaryKey(),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => orders.id),
+    kind: text('kind').$type<ReviewNote['kind']>().notNull(),
+    round: integer('round').notNull(),
+    outcome: text('outcome').$type<ReviewNote['outcome']>().notNull(),
+    why: text('why'),
+    problems: jsonb('problems').$type<Problem[]>().notNull(),
+    warnings: jsonb('warnings').$type<string[]>().notNull(),
+    patched: jsonb('patched').$type<ScenePatch[]>().notNull(),
+    createdAt: createdAt(),
+  },
+  // An order's notes, in the order they were added.
+  (t) => [index('review_notes_order_idx').on(t.orderId, t.id)],
 );
 
 export const prechecks = pgTable('prechecks', {

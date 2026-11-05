@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, eq, getTableColumns, gt, gte, inArray, is, isNull, lt, lte, ne, or, SQL, sql, type AnyColumn } from 'drizzle-orm';
 import type { Db } from '../../db/client';
-import { costs, feedback, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, vmTasks } from '../../db/schema';
+import { costs, feedback, holdsPromoSlot, holdsVideo, orders, payments, prechecks, refunds, reviewNotes, vmTasks } from '../../db/schema';
 import {
   statusesBefore,
   type CostKind,
@@ -23,6 +23,7 @@ import {
   type RefundPatch,
   type RefundRecord,
   type RefundStatus,
+  type ReviewNote,
   type StepName,
   type StepState,
   type VmTask,
@@ -432,6 +433,34 @@ export class DrizzleStore implements OrderStore {
       .insert(prechecks)
       .values({ key, result: r, createdAt: now })
       .onConflictDoUpdate({ target: prechecks.key, set: { result: r, createdAt: now } });
+  }
+
+  async addReviewNote(orderId: string, note: ReviewNote): Promise<void> {
+    const { kind, round, outcome, why, problems, warnings, patched } = note;
+    await this.db.insert(reviewNotes).values({ orderId, kind, round, outcome, why, problems, warnings, patched, createdAt: new Date() });
+  }
+
+  // By id, the order they were added in: notes added in the same moment have the same time.
+  async reviewNotes(orderId: string): Promise<ReviewNote[]> {
+    const rows = await this.db
+      .select({
+        kind: reviewNotes.kind,
+        round: reviewNotes.round,
+        outcome: reviewNotes.outcome,
+        why: reviewNotes.why,
+        problems: reviewNotes.problems,
+        warnings: reviewNotes.warnings,
+        patched: reviewNotes.patched,
+      })
+      .from(reviewNotes)
+      .where(eq(reviewNotes.orderId, orderId))
+      .orderBy(asc(reviewNotes.id));
+    // Each row was written from a ReviewNote, whose kind goes with its outcome.
+    return rows as ReviewNote[];
+  }
+
+  async deleteReviewNotes(orderId: string): Promise<void> {
+    await this.db.delete(reviewNotes).where(eq(reviewNotes.orderId, orderId));
   }
 
   ordersAwaitingSettlement(olderThan: Date, limit: number): Promise<Order[]> {

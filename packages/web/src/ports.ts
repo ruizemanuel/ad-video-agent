@@ -1,7 +1,7 @@
 // What the service needs from the outside, and nothing else. Each port has a real adapter and a double, so the
 // flow and the routes run the same code in production and in the tests. This file holds the OrderStore (orders and
-// their first-video promo slots, the client's answer to "did you post it?", VM tasks, payment intents, costs, refunds
-// and pre-checks), the BlobPort (the private files), the LlmPort (the models, as far as the tasks so far use them),
+// their first-video promo slots, the client's answer to "did you post it?", VM tasks, payment intents, costs, refunds,
+// pre-checks and what each review and correction came to), the BlobPort (the private files), the LlmPort (the models, as far as the tasks so far use them),
 // the BuyPort (renting the VM, following it, and what the chain says about a payment), the MusicPort (Lyria, 3.5 and
 // 3 Pro) and the RefundPort (the refunds' wallet on Celo).
 import type {
@@ -222,6 +222,23 @@ export type PrecheckResult =
   | { ok: true; thin: boolean | null; demoLinks: string[] }
   | { ok: false; code: 'invalid_url' | 'unreachable' | 'blocked' | 'login_wall' | 'inadmissible'; reason: string };
 
+/**
+ * What one review of a round of key frames, or one correction of what it blocked on, came to: kept on the order for
+ * whoever looks into it, never shown to the client and never read by the flow.
+ */
+export type ReviewNote = {
+  /** The round of key frames reviewed, or the round whose review the correction is for. */
+  round: number;
+  /** The text of the log line of a review that failed or a correction that cannot be used; null otherwise. */
+  why: string | null;
+  /** A review: what blocks. A correction: what the code checks or the judge found in the fix. */
+  problems: Problem[];
+  /** A review's remarks that do not block, as `<scene path>: <remark>`; none for a correction. */
+  warnings: string[];
+  /** The scenes a correction put in; none for a review. */
+  patched: ScenePatch[];
+} & ({ kind: 'review'; outcome: 'passed' | 'blocked' | 'failed' } | { kind: 'correction'; outcome: 'fixed' | 'unusable' | 'over-budget' });
+
 /** Where a list of paid orders, by payment and then id, goes on from: the payment time and the id of its last order. */
 export type OrderCursor = { paidAt: Date; id: string };
 
@@ -318,6 +335,16 @@ export interface OrderStore {
 
   getPrecheck(key: string, maxAgeMs: number): Promise<PrecheckResult | null>;
   putPrecheck(key: string, r: PrecheckResult): Promise<void>;
+
+  /**
+   * Keeps the note after the order's others. Notes are only ever added, never replaced or merged: the same one added
+   * twice (a step tried again) is kept twice. It throws for an order that does not exist.
+   */
+  addReviewNote(orderId: string, note: ReviewNote): Promise<void>;
+  /** The order's notes, in the order they were added: none for an order with none, or one that does not exist. */
+  reviewNotes(orderId: string): Promise<ReviewNote[]>;
+  /** The cleanup's: deletes every note of the order, with its files. */
+  deleteReviewNotes(orderId: string): Promise<void>;
 
   // What the cron looks for. Each list is the oldest first, and `limit` long at most: a pass never takes more than its share.
 

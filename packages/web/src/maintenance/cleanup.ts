@@ -1,11 +1,12 @@
-// The cleanup, run by the cron once a day: an order is kept for 30 days from when it was made. Then its files are
-// deleted and it expires (the status shows `expired` and the delivery links stop working).
+// The cleanup, run by the cron once a day: an order is kept for 30 days from when it was made. Then its files and its
+// review notes (which quote the site and the models) are deleted and it expires (the status shows `expired` and the
+// delivery links stop working).
 import { ORDER_DAYS, type BlobPort, type OrderStore } from '../ports';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type CleanupDeps = {
-  store: Pick<OrderStore, 'ordersToExpire' | 'transition'>;
+  store: Pick<OrderStore, 'ordersToExpire' | 'transition' | 'deleteReviewNotes'>;
   blob: Pick<BlobPort, 'deletePrefix'>;
 };
 
@@ -17,9 +18,10 @@ export async function cleanup(deps: CleanupDeps, now: Date): Promise<CleanupResu
   const expired: string[] = [];
   for (const order of await store.ordersToExpire(new Date(now.getTime() - ORDER_DAYS * DAY_MS))) {
     try {
-      // The files first: an order that expired with its files still there would never come up again. If this fails,
-      // the order stays as it is and the next run tries again; the others are not held up.
+      // The files and the notes first: an order that expired with them still there would never come up again. If either
+      // fails, the order stays as it is and the next run tries again; the others are not held up.
       await blob.deletePrefix(`orders/${order.id}/`);
+      await store.deleteReviewNotes(order.id);
       if (await store.transition(order.id, 'expired')) expired.push(order.id);
     } catch (error) {
       console.error('[cleanup_error]', order.id, error instanceof Error ? error.message : String(error));

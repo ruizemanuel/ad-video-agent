@@ -30,7 +30,7 @@ import {
 import { runStatus, type RunStatus } from '../src/payments/orders';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../src/payments/refunds';
 import { TOKENS } from '../src/payments/x402';
-import type { AlertPort, Order } from '../src/ports';
+import type { AlertPort, Order, ReviewNote } from '../src/ports';
 import { orderWorkflow } from '../src/workflows/order';
 import { config } from '../vercel';
 
@@ -937,8 +937,12 @@ describe('reconcile: refund failures', () => {
 });
 
 describe('cleanup', () => {
-  it('expires orders older than 30 days and deletes their blobs', async () => {
+  // What a review of the order came to: it quotes the site and the models, so it goes with the files.
+  const note: ReviewNote = { kind: 'review', round: 0, outcome: 'passed', why: null, problems: [], warnings: [], patched: [] };
+
+  it('expires orders older than 30 days and deletes their blobs and their review notes', async () => {
     const old = await delivered();
+    await store.addReviewNote(old.id, note);
     const deleteSpy = vi.spyOn(blob, 'deletePrefix');
 
     expect(await cleanup({ store, blob }, after(31 * DAY))).toEqual({ expired: [old.id] });
@@ -946,14 +950,17 @@ describe('cleanup', () => {
     expect(await statusOf(old)).toBe('expired');
     await expect(blob.get(`orders/${old.id}/out/hook-a-9x16.mp4`)).rejects.toThrow('does not exist');
     await expect(blob.get(`orders/${old.id}/capture.json`)).rejects.toThrow('does not exist');
+    expect(await store.reviewNotes(old.id)).toEqual([]);
   });
 
   it('keeps an order younger than 30 days with its files', async () => {
     const recent = await delivered();
+    await store.addReviewNote(recent.id, note);
 
     expect(await cleanup({ store, blob }, after(29 * DAY))).toEqual({ expired: [] });
     expect(await statusOf(recent)).toBe('delivered');
     expect(await blob.get(`orders/${recent.id}/out/hook-a-9x16.mp4`)).toBeInstanceOf(Uint8Array);
+    expect(await store.reviewNotes(recent.id)).toEqual([note]);
   });
 
   it('expires an unpaid order too', async () => {
@@ -997,6 +1004,26 @@ describe('cleanup', () => {
     expect(logged).toHaveBeenCalledWith('[cleanup_error]', stuck.id, 'blob store unavailable');
     // Still delivered, so the next run deletes its files again and then expires it.
     expect(await statusOf(stuck)).toBe('delivered');
+  });
+
+  it('keeps the order for the next run when its review notes could not be deleted, and goes on with the others', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stuck = await delivered();
+    const fine = await delivered();
+    await store.addReviewNote(stuck.id, note);
+    await store.addReviewNote(fine.id, note);
+    const real = store.deleteReviewNotes.bind(store);
+    vi.spyOn(store, 'deleteReviewNotes').mockImplementation(async (orderId) => {
+      if (orderId === stuck.id) throw new Error('database unavailable');
+      return real(orderId);
+    });
+
+    expect(await cleanup({ store, blob }, after(31 * DAY))).toEqual({ expired: [fine.id] });
+    expect(logged).toHaveBeenCalledWith('[cleanup_error]', stuck.id, 'database unavailable');
+    // Still delivered, with its notes: the next run deletes them again and then expires it.
+    expect(await statusOf(stuck)).toBe('delivered');
+    expect(await store.reviewNotes(stuck.id)).toEqual([note]);
+    expect(await store.reviewNotes(fine.id)).toEqual([]);
   });
 });
 

@@ -3,7 +3,7 @@
 // Postgres store does (test/store-contract.ts runs both), but it is only as safe as one process: a mutex in
 // memory per directory keeps the read-then-write operations atomic, and nothing guards against a second process.
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import {
   canTransition,
@@ -24,13 +24,14 @@ import {
   type RefundPatch,
   type RefundRecord,
   type RefundStatus,
+  type ReviewNote,
   type StepName,
   type StepState,
   type VmTask,
 } from '../../ports';
 import { atomicToUsd, defined, holdsPromoSlot, holdsVideo, keptFeedback, lowestFreeSlot, newOrderId, roundUsd } from '../store-common';
 
-type Collection = 'orders' | 'tasks' | 'payments' | 'costs' | 'refunds' | 'prechecks' | 'feedback';
+type Collection = 'orders' | 'tasks' | 'payments' | 'costs' | 'refunds' | 'prechecks' | 'feedback' | 'review_notes';
 
 type Timestamps = { createdAt: Date; updatedAt: Date };
 type StoredPayment = PaymentRecord & Timestamps;
@@ -39,6 +40,7 @@ type StoredRefund = RefundRecord & Timestamps;
 type StoredTask = VmTask & { seq: number };
 type StoredCost = { orderId: string; item: string; usd: number; kind: CostKind; createdAt: Date };
 type StoredPrecheck = { result: PrecheckResult; createdAt: Date };
+type StoredReviewNote = { id: string; seq: number; orderId: string; note: ReviewNote; createdAt: Date };
 
 // JSON has neither bigint nor Date. They travel as `{ $bigint }` and `{ $date }`.
 const encode = (value: unknown): string =>
@@ -126,6 +128,10 @@ export class FileStore implements OrderStore {
     const temporary = `${target}.${randomUUID()}.tmp`;
     await writeFile(temporary, encode(value));
     await rename(temporary, target);
+  }
+
+  private async remove(collection: Collection, key: string): Promise<void> {
+    await rm(this.file(collection, key), { force: true });
   }
 
   private async all<T>(collection: Collection): Promise<T[]> {
@@ -526,6 +532,31 @@ export class FileStore implements OrderStore {
   putPrecheck(key: string, r: PrecheckResult): Promise<void> {
     const stored: StoredPrecheck = { result: r, createdAt: new Date() };
     return this.locked(() => this.write('prechecks', key, stored));
+  }
+
+  // Review notes: one file each, and `seq` the order they were added in, as Postgres's serial id.
+
+  addReviewNote(orderId: string, note: ReviewNote): Promise<void> {
+    return this.locked(async () => {
+      await this.requireOrder(orderId);
+      const seq = (await this.all<StoredReviewNote>('review_notes')).reduce((highest, other) => Math.max(highest, other.seq), 0) + 1;
+      const stored: StoredReviewNote = { id: randomUUID(), seq, orderId, note, createdAt: new Date() };
+      await this.write('review_notes', stored.id, stored);
+    });
+  }
+
+  reviewNotes(orderId: string): Promise<ReviewNote[]> {
+    return this.locked(async () => (await this.notesOf(orderId)).map((stored) => stored.note));
+  }
+
+  deleteReviewNotes(orderId: string): Promise<void> {
+    return this.locked(async () => {
+      for (const stored of await this.notesOf(orderId)) await this.remove('review_notes', stored.id);
+    });
+  }
+
+  private async notesOf(orderId: string): Promise<StoredReviewNote[]> {
+    return (await this.all<StoredReviewNote>('review_notes')).filter((stored) => stored.orderId === orderId).sort((a, b) => a.seq - b.seq);
   }
 
   // What the cron looks for.

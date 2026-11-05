@@ -1,6 +1,7 @@
 // One suite for every OrderStore: the Postgres one and its file-backed twin must answer alike.
-import { beforeEach, describe, expect, it } from 'vitest';
-import type { NewOrder, Order, OrderStatus, OrderStore, PrecheckResult, StepName } from '../src/ports';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NewOrder, Order, OrderStatus, OrderStore, PrecheckResult, ReviewNote, StepName } from '../src/ports';
+import { edlShop } from './support/shop';
 
 const USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e';
 const USDC = '0xcebA9300f2b948710d2653dD7B07f33A8B32118C';
@@ -518,6 +519,74 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
       it('refuses feedback for an order that does not exist', async () => {
         await expect(s.setFeedback('ord_doesnotexist', { answer: 'as_is', postUrl: null, mayShow: false })).rejects.toThrow();
         expect(await s.getFeedback('ord_doesnotexist')).toBeNull();
+      });
+    });
+
+    describe('review notes', () => {
+      const blocked: ReviewNote = {
+        kind: 'review',
+        round: 0,
+        outcome: 'blocked',
+        why: null,
+        problems: [{ where: 'hooks[0][0]', rule: 'visual', detail: 'visual review: a letter is cut by an edge or a mask: the "é" of "Vendé" is sliced off flat' }],
+        warnings: ['hooks[0][0]: The logo sits apart from the word.'],
+        patched: [],
+      };
+      const unusable: ReviewNote = {
+        kind: 'correction',
+        round: 0,
+        outcome: 'unusable',
+        why: 'judge body[1]:not-equivalent | patched body[1]:KineticHeadline',
+        problems: [{ where: 'body[1]', rule: 'not-equivalent', detail: 'claim c3: "0% de comisión." against its quote "Sin comisiones": The line says more than the quote.' }],
+        warnings: [],
+        patched: [{ path: 'body[1]', scene: edlShop().body[1]! }],
+      };
+      const passed: ReviewNote = { kind: 'review', round: 1, outcome: 'passed', why: null, problems: [], warnings: [], patched: [] };
+
+      it('keeps the notes of an order as they were given, in the order they were added', async () => {
+        const order = await create();
+        // With the clock stopped every note has the same time: the order they come back in is the order they were added in.
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+        try {
+          for (const note of [blocked, unusable, passed]) await s.addReviewNote(order.id, note);
+        } finally {
+          vi.useRealTimers();
+        }
+        expect(await s.reviewNotes(order.id)).toEqual([blocked, unusable, passed]);
+      });
+
+      it('keeps a note added twice as two: notes are only ever added', async () => {
+        const order = await create();
+        await s.addReviewNote(order.id, unusable);
+        await s.addReviewNote(order.id, unusable);
+        expect(await s.reviewNotes(order.id)).toEqual([unusable, unusable]);
+      });
+
+      it('keeps the notes of each order apart, and has none for an order with none', async () => {
+        const a = await create(),
+          b = await create(),
+          none = await create();
+        await s.addReviewNote(a.id, blocked);
+        await s.addReviewNote(b.id, passed);
+        expect(await s.reviewNotes(a.id)).toEqual([blocked]);
+        expect(await s.reviewNotes(b.id)).toEqual([passed]);
+        expect(await s.reviewNotes(none.id)).toEqual([]);
+      });
+
+      it('deletes the notes of one order, and only its', async () => {
+        const a = await create(),
+          b = await create();
+        await s.addReviewNote(a.id, blocked);
+        await s.addReviewNote(a.id, unusable);
+        await s.addReviewNote(b.id, passed);
+        await s.deleteReviewNotes(a.id);
+        expect(await s.reviewNotes(a.id)).toEqual([]);
+        expect(await s.reviewNotes(b.id)).toEqual([passed]);
+      });
+
+      it('refuses a note for an order that does not exist', async () => {
+        await expect(s.addReviewNote('ord_doesnotexist', passed)).rejects.toThrow();
+        expect(await s.reviewNotes('ord_doesnotexist')).toEqual([]);
       });
     });
 

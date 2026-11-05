@@ -50,6 +50,13 @@
       "when": 1792715652488,
       "tag": "0006_zippy_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793896658884,
+      "tag": "0007_gigantic_wildside",
+      "breakpoints": true
     }
   ]
 }

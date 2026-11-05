@@ -25,7 +25,7 @@ if ((held?.orders ?? 0) > 0) {
   throw new Error(`The database at PROMO_TEST_DATABASE_URL holds ${held?.orders} orders: this test empties its tables, so it runs only on a branch with none.`);
 }
 
-const empty = () => db.execute(sql`truncate table orders, vm_tasks, payments, costs, refunds, prechecks, feedback restart identity cascade`);
+const empty = () => db.execute(sql`truncate table orders, vm_tasks, payments, costs, refunds, prechecks, feedback, review_notes restart identity cascade`);
 afterAll(empty);
 
 describeStoreContract('DrizzleStore on Neon', async () => {
