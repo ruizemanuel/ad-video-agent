@@ -20,7 +20,7 @@ import styles from './OrderForm.module.css';
 import { chooseToken, PaymentNotConfirmed, payOrder } from './pay';
 import { normalizeUrl, requestOffer, requestQuote, type OrderInput, type Quote } from './quote';
 import { browserWallets, connectWallet, onCelo, switchToCelo, tokenBalances, walletSigner, WalletProviders } from './wallet';
-import { BRIEF_MAX, fieldsFromQuery, isPhone, metaMaskLink, type Fields } from './wallet-app';
+import { BRIEF_MAX, fieldsFromQuery, isMiniPay, isPhone, metaMaskLink, type Fields } from './wallet-app';
 
 const OFFER_KEY = ['offer'];
 
@@ -239,6 +239,11 @@ function Form({ price, promoSlots }: Props) {
       }
 
       stage = 'connect';
+      // MiniPay would connect and then never answer the signature: it is asked for nothing, and the form offers MetaMask.
+      if (isMiniPay((window as { ethereum?: unknown }).ethereum)) {
+        setNotice({ ...stopped(ORDER_FORM.errors.miniPay), walletApp: true });
+        return false;
+      }
       // More than one wallet: the person chooses, at every press, so that none takes over for being connected before.
       const wallets = browserWallets(config);
       let connector: Connector | undefined;

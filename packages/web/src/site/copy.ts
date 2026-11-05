@@ -127,6 +127,8 @@ export const ORDER_FORM = {
      * there, filled in (`openInMetaMask`).
      */
     noWalletPhone: 'This browser has no wallet. Open this page in your wallet’s app to pay.',
+    /** MiniPay cannot sign the payment: the form offers to open in MetaMask instead (`openInMetaMask`). */
+    miniPay: 'You can’t pay from MiniPay yet. Open this page in MetaMask to pay. Nothing was charged.',
     openInMetaMask: 'Open in MetaMask',
     walletBusy: 'Your wallet has a request open. Finish it there, then try again. Nothing was charged.',
     /** The service turned the payment down and gave no reason of its own: it took nothing. */

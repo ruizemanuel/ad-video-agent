@@ -2,7 +2,7 @@
 // with what the person typed, in MetaMask's own browser. The fields travel in the link's query, and the form reads them
 // back when it opens.
 import { describe, expect, it } from 'vitest';
-import { EMPTY_FIELDS, fieldsFromQuery, isPhone, metaMaskLink, type Fields } from '../src/site/wallet-app';
+import { EMPTY_FIELDS, fieldsFromQuery, isMiniPay, isPhone, metaMaskLink, type Fields } from '../src/site/wallet-app';
 
 const FIELDS: Fields = {
   url: 'cobrame.app',
@@ -69,5 +69,18 @@ describe('whether the page runs on a phone', () => {
   it('knows a computer', () => {
     expect(isPhone(desktop)).toBe(false);
     expect(isPhone({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15', maxTouchPoints: 0 })).toBe(false);
+  });
+});
+
+describe('isMiniPay', () => {
+  it('knows MiniPay by the flag its wallet carries', () => {
+    expect(isMiniPay({ isMiniPay: true, request: () => undefined })).toBe(true);
+  });
+
+  it('takes nothing else for it: another wallet, a flag that is not true, no wallet at all', () => {
+    expect(isMiniPay({ isMetaMask: true, request: () => undefined })).toBe(false);
+    expect(isMiniPay({ isMiniPay: 'true' })).toBe(false);
+    expect(isMiniPay(undefined)).toBe(false);
+    expect(isMiniPay(null)).toBe(false);
   });
 });

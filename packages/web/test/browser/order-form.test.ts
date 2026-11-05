@@ -329,6 +329,27 @@ describe('the order form', () => {
     }
   });
 
+  it('says MiniPay can’t pay yet and offers MetaMask, asking MiniPay for nothing', async () => {
+    // MiniPay signs no typed data: a signature asked of it never comes back, and the form would wait on it for good.
+    const { browser, page, wallet, blockedRequests } = await openForm(app, { balances: { USDT: PLENTY } }, { miniPay: true });
+    try {
+      const before = (await storedOrders(app.fakeDir)).length;
+      await fill(page, { url: 'minipay.tiendita.example' });
+      await page.click(BUTTON);
+      await waitForText(page, 'You can’t pay from MiniPay yet. Open this page in MetaMask to pay. Nothing was charged.');
+
+      const host = new URL(app.url).host;
+      const link = await page.$eval(`${FORM} a[href^="https://link.metamask.io/"]`, (anchor) => ({ href: (anchor as HTMLAnchorElement).href, text: anchor.textContent }));
+      expect(link).toEqual({ href: `https://link.metamask.io/dapp/${host}/?url=minipay.tiendita.example#order`, text: 'Open in MetaMask' });
+      expect([wallet.connected(), wallet.signatureRequests()]).toEqual([false, 0]);
+      expect(await storedOrders(app.fakeDir)).toHaveLength(before);
+      expect(await buttonState(page)).toEqual({ disabled: false, text: 'Connect wallet and pay 0.05 USDT' });
+      expect(blockedRequests()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
   it.each<[string, AppAnswer]>([
     ['a 500 with no body', { status: 500, contentType: 'text/plain', body: '' }],
     ['no answer at all', { unanswered: true }],

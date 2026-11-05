@@ -194,6 +194,8 @@ export type BrowserOptions = {
   second?: WalletOptions & { name: string };
   /** The page as a phone opens it: an iPhone's screen, touch and user agent. */
   phone?: boolean;
+  /** The page as MiniPay's own browser opens it: a phone, whose wallet says `isMiniPay`. */
+  miniPay?: boolean;
 };
 
 export type LaunchedPage = {
@@ -271,13 +273,14 @@ export async function launchPage(app: Pick<App, 'url' | 'fakeDir'>, options: Wal
   });
   try {
     const page = await browser.newPage();
-    if (browserOptions.phone === true) await page.emulate(KnownDevices['iPhone 15']);
+    if (browserOptions.phone === true || browserOptions.miniPay === true) await page.emulate(KnownDevices['iPhone 15']);
     const { wallet, answer } = stubWallet(options);
     // Celo's node answers for every wallet in the browser.
     const holders = [{ address: wallet.address, balances: options.balances }];
     if (browserOptions.noWallet !== true) {
       await page.exposeFunction(WALLET_BINDING, answer);
-      await page.evaluateOnNewDocument(inPageWallet, WALLET_BINDING, walletInfo());
+      const flags: Record<string, true> = browserOptions.miniPay === true ? { isMiniPay: true } : {};
+      await page.evaluateOnNewDocument(inPageWallet, WALLET_BINDING, browserOptions.miniPay === true ? walletInfo('MiniPay', 'com.opera.minipay') : walletInfo(), true, flags);
     }
     let second: StubWallet | undefined;
     if (browserOptions.second !== undefined) {

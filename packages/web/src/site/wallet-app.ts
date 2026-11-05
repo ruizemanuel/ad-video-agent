@@ -50,6 +50,14 @@ export function fieldsFromQuery(search: string): Fields {
   };
 }
 
+/**
+ * Whether the page runs in MiniPay's own browser: its wallet says so on window.ethereum (`ethereum`). MiniPay signs no
+ * typed data, so it cannot sign the payment: a signature asked of it never comes back.
+ */
+export function isMiniPay(ethereum: unknown): boolean {
+  return typeof ethereum === 'object' && ethereum !== null && (ethereum as { isMiniPay?: unknown }).isMiniPay === true;
+}
+
 /** What the page reads of the browser to tell a phone. */
 type Device = { userAgent: string; maxTouchPoints: number; userAgentData?: { mobile: boolean } };
 

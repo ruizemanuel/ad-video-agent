@@ -202,9 +202,15 @@ export function stubWallet(options: WalletOptions = {}): { wallet: StubWallet; a
  * here. Each request goes to `binding`, the function the test exposed, and comes back as its result, or as an error with
  * an EIP-1193 code; the events that come with it are emitted before the request resolves. It is announced by EIP-6963
  * (and again on each `eip6963:requestProvider`), and set as window.ethereum unless `windowEthereum` is false: of two
- * wallets, as of two extensions, only one holds it.
+ * wallets, as of two extensions, only one holds it. `flags` are what a wallet says of itself on its provider, as
+ * MiniPay's `isMiniPay`.
  */
-export function inPageWallet(binding: string, info: { uuid: string; name: string; rdns: string; icon: string }, windowEthereum = true): void {
+export function inPageWallet(
+  binding: string,
+  info: { uuid: string; name: string; rdns: string; icon: string },
+  windowEthereum = true,
+  flags: Record<string, true> = {},
+): void {
   type Answer = { result: unknown; events?: { event: string; data: unknown }[] } | { error: { code: number; message: string } };
   const page = window as unknown as Record<string, unknown>;
   const listeners = new Map<string, Set<(data: unknown) => void>>();
@@ -226,6 +232,7 @@ export function inPageWallet(binding: string, info: { uuid: string; name: string
       return provider;
     },
   };
+  Object.assign(provider, flags);
   if (windowEthereum) page.ethereum = provider;
   const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }));
   window.addEventListener('eip6963:requestProvider', announce);
