@@ -432,7 +432,7 @@ describe('how long a text stays on screen', () => {
           close(room),
         );
         expect(validateEdl(flashed, siteShop()), `${bpm} bpm, word flash`).toEqual([]);
-        // A series of two numbered cards, a title and a subline at the limits, for as long as the table says: when no length
+        // A series of two cards, a title and a subline at the limits, for as long as the table says: when no length
         // reads a card with its subline (a dash), the series does not go in this band.
         if (need[cardSubline] !== undefined) {
           const card: Scene = { piece: 'PointCard', beats: at(need, cardSubline), lines: [sample(title.chars, title.words), sample(subline.chars, subline.words)] };

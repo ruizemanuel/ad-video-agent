@@ -8,7 +8,7 @@ import { linesHeight, measureWith, RevealLines, useAd, useSurface, type PiecePro
 const SUBLINE_GAP_SHARE = 0.65;
 // How far the card pushes in on its text by the end of its scene: once the text is in, the card would otherwise stand
 // still for most of it.
-const CARD_PUSH = 1.03;
+const CARD_PUSH = 1.06;
 
 /** The scale of the card's text at `frame` of its scene of `duration` frames: from 1 to CARD_PUSH, evenly, held outside it. */
 export const cardPush = (frame: number, duration: number): number => 1 + (CARD_PUSH - 1) * Math.min(1, Math.max(0, frame / duration));

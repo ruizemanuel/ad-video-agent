@@ -1,6 +1,6 @@
 // The director's instructions: the prompt of the quality test, with three hooks of different kinds (the first, the one
 // delivered, on type), every piece the renderer has (the type pieces, the UI scenes and the caption that changes on a
-// beat, TypeIn, WordCycle, the series of numbered cards, the word flash and the two-step EndCard), the rhythm in beats
+// beat, TypeIn, WordCycle, the series of cards, the word flash and the two-step EndCard), the rhythm in beats
 // and the limits validateEdl checks, how long a text stays on screen among them. The corrector works under the same
 // rules, so it reads the same sections.
 import { BANNED_PHRASES, CAPTION_DELAY, FLASH_READING, FPS, MIN_SWAP_BEATS, READING_RULE, REVEAL_FRAMES, TYPED_BY, WIPE_FRAMES, type SiteData } from '@app/core';
