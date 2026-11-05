@@ -13,7 +13,7 @@ import { FAKE_SETTLE_TX, FakeFacilitator } from '../src/adapters/fake/facilitato
 import { FakeLlm } from '../src/adapters/fake/llm';
 import { FileStore } from '../src/adapters/fake/store';
 import { setVideosDeps } from '../src/app/v1/videos/deps';
-import { settledWithoutOrderAlert } from '../src/maintenance/alerts';
+import { settledWithoutOrderAlert, settleFailedAlert } from '../src/maintenance/alerts';
 import { markPaidAndStart } from '../src/payments/orders';
 import { POST } from '../src/app/v1/videos/route';
 import { ModelCallFailed, ModelOutputInvalid, type NewOrder, type OrderStore } from '../src/ports';
@@ -88,6 +88,7 @@ beforeEach(() => {
   facilitator.settlement = 'success';
   facilitator.calls.verify = 0;
   facilitator.calls.settle = 0;
+  alerts.sent.length = 0;
 });
 
 describe('POST /v1/videos without a payment', () => {
@@ -391,6 +392,21 @@ describe('POST /v1/videos with a payment', () => {
 
     it('logs nothing for a settlement that went through', async () => {
       expect((await settleLogs('success')).lines).toEqual([]);
+    });
+
+    it.each([
+      ['refused', 'failure', true, 'invalid_exact_evm_insufficient_balance'],
+      ['in doubt', 'timeout', false, 'Facilitator settle request timed out after 90000ms'],
+    ] as const)('sends a silent alert for a settlement %s, so its reason outlives the logs', async (_label, settlement, refused, reason) => {
+      const { from, nonce, order } = await settleLogs(settlement);
+      expect(alerts.sent.filter((alert) => alert.title === 'Settlement failed')).toEqual([
+        settleFailedAlert(order!.id, { asset: TOKENS.USDT.address, payer: from, nonce, refused, reason }),
+      ]);
+    });
+
+    it('sends no such alert for a settlement that went through', async () => {
+      await settleLogs('success');
+      expect(alerts.sent.filter((alert) => alert.title === 'Settlement failed')).toEqual([]);
     });
   });
 

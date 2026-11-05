@@ -11,7 +11,7 @@ import { decodePaymentRequiredHeader, decodePaymentSignatureHeader } from '@x402
 import { withX402 } from '@x402/next';
 import { NextResponse, type NextRequest } from 'next/server';
 import { env, type Env } from '../../../env';
-import { settledWithoutOrderAlert } from '../../../maintenance/alerts';
+import { settledWithoutOrderAlert, settleFailedAlert } from '../../../maintenance/alerts';
 import { markPaidAndStart, serviceBase } from '../../../payments/orders';
 import { hasVmCapacity, secondsToNextUtcDay } from '../../../payments/vm-payment';
 import {
@@ -177,12 +177,13 @@ async function paymentSettled(payment: SettledPayment, deps: VideosDeps): Promis
  * order, while it still awaits its settlement, gets its payment step `failed`, so its page says at once that the payment
  * did not go through. Its status stays: the reconciliation still starts it if the payment reaches the chain, and gives it
  * up as unpaid once its authorization has expired. An unknown outcome leaves the order as it is: it may have been paid.
+ * Either way a silent alert says so, since the log is kept an hour.
  */
 async function paymentSettleFailed(failure: SettleFailure, deps: VideosDeps): Promise<void> {
   console.error('[settle_failed]', failure.asset, failure.payer, failure.nonce, failure.refused ? 'refused' : 'no_answer', failure.reason);
-  if (!failure.refused) return;
   const order = await deps.store.findOrderByPayment(failure.asset, failure.payer, failure.nonce);
-  if (order?.status === 'awaiting_settlement') await deps.store.setStep(order.id, 'payment', 'failed');
+  if (failure.refused && order?.status === 'awaiting_settlement') await deps.store.setStep(order.id, 'payment', 'failed');
+  await deps.alerts.send(settleFailedAlert(order?.id ?? null, failure));
 }
 
 type PaidHandler = (request: NextRequest) => Promise<NextResponse>;

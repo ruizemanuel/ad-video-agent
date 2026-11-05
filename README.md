@@ -153,6 +153,7 @@ Vercel keeps the logs for an hour on this plan, so what needs a person also goes
 - **Refund not paid** (rings): an order was handed to a person as `refund_failed`. It says why and what to do; sent once, when the order gets there.
 - **Payment with no order** (rings): a payment settled with no order to run. It names the token, the payer and the transaction: pay it back by hand.
 - **Run lost, refunded** (silent): the reconciliation refunded an order whose run was lost or never started.
+- **Settlement failed** (silent): a payment's settlement did not go through, as logged by `[settle_failed]` (see [Operations](#operations)). It says whether the facilitator refused it (nothing moved) or the outcome is unknown, with the first line of the facilitator's reason, so the reasons it gives outlive the logs.
 - **Daily summary**, on the reconciliation's pass at 12:03 UTC, sent even when nothing is open: how many refunds are not paid, how many runs past two hours still say they are running, and what the refund and spend wallets hold, with a warning when the refund wallet cannot pay one refund at the full price (and its gas) in a token, or the spend wallet one machine. It rings when something needs a look (a wallet that cannot be read included), and is silent otherwise. A morning with no summary means that the clock, the route or the alerts are down.
 
 An alert names an order by the start of its id only (`ord_` and six characters), enough to find it in the store: ntfy.sh keeps a topic's messages for a while, and whoever knows the topic's name can read them.

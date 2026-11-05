@@ -4,7 +4,7 @@
 import { formatUnits } from 'viem';
 import type { RunStatus } from '../payments/orders';
 import { TOKENS, tokenSymbol, type TokenSymbol } from '../payments/tokens';
-import type { SettledPayment } from '../payments/x402';
+import type { SettledPayment, SettleFailure } from '../payments/x402';
 import type { Alert } from '../ports';
 
 /** The start of an order id: `ord_` and six of its characters. */
@@ -36,6 +36,31 @@ export function settledWithoutOrderAlert(payment: SettledPayment): Alert {
   const token = tokenSymbol(payment.asset) ?? payment.asset;
   const message = `A payment in ${token} from ${shortAddress(payment.payer)} settled with no order to run (tx ${payment.txHash}). Pay it back by hand.`;
   return { title: 'Payment with no order', message, priority: 'high' };
+}
+
+/** How much of a facilitator's reason an alert carries: a line, and no more than this. */
+const REASON_CHARS = 200;
+
+/**
+ * A payment whose settlement did not go through, without ringing: its reason outlives the logs (kept an hour), and says
+ * which reasons the facilitator gives. Only the reason's first line goes, cut to REASON_CHARS: what follows it (a viem
+ * error's) can quote the call's arguments.
+ */
+export function settleFailedAlert(orderId: string | null, failure: SettleFailure): Alert {
+  const line = failure.reason.split('\n')[0]?.trim() ?? '';
+  const reason = line.length > REASON_CHARS ? `${line.slice(0, REASON_CHARS)}…` : line;
+  const who =
+    orderId === null
+      ? `A payment in ${tokenSymbol(failure.asset) ?? failure.asset} from ${shortAddress(failure.payer)}, with no order`
+      : shortOrderId(orderId);
+  const what = failure.refused
+    ? `the facilitator refused the payment (${reason}), so nothing moved.${orderId === null ? '' : ' Its page says it did not go through.'}`
+    : `the settlement ended in doubt (${reason}), so the tokens may have moved. ${
+        orderId === null
+          ? 'Look it up on the chain: if it settled, pay it back by hand.'
+          : 'The reconciliation starts the order if they did, and gives it up as unpaid if not.'
+      }`;
+  return { title: 'Settlement failed', message: `${who}: ${what}`, priority: 'low' };
 }
 
 /** An order the reconciliation refunded because its run was lost, or never started: nothing to do but find out why. */
