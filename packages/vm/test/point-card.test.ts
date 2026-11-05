@@ -1,30 +1,10 @@
-// What a numbered card draws besides its text, as plain math: the number, its size, and how far the series' bar is filled.
-import type { SurfaceColors } from '@app/core';
+// Where a card of a series sets its text, as plain math: the titles' size, the room over the subline, and the height every
+// card of the series starts its text at.
 import { describe, expect, it } from 'vitest';
-import { numberGap, numberSize, numberStyle, pointLabel, seriesBar, seriesTitles } from '../src/video/pieces/PointCard';
+import { seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
 import { lineText, toWords, type Measure } from '../src/video/type';
 
-// A dark background with an accent of its own.
-const surface: SurfaceColors = { bg: '#16201b', fg: '#ffffff', muted: '#f4f6f2', accent: '#c8743f', button: { bg: '#2e6a50', fg: '#ffffff' } };
-
-describe('a numbered card', () => {
-  it('numbers its card in two digits', () => {
-    expect(pointLabel(1)).toBe('01');
-    expect(pointLabel(3)).toBe('03');
-  });
-
-  it('sets the number at 2.4 times the headline size, or at 30 % of the height of the safe zone where that is less', () => {
-    expect(numberSize('9x16')).toBe(360);
-    expect(numberSize('16x9')).toBe(288);
-    expect(numberSize('4x5')).toBe(307);
-  });
-
-  it("leaves 20 % of the number's size between the number and the text under it", () => {
-    expect(numberGap('9x16')).toBe(72);
-    expect(numberGap('16x9')).toBe(58);
-    expect(numberGap('4x5')).toBe(61);
-  });
-
+describe('a card of a series', () => {
   it('sets the titles of a series on two lines as large as the headline where one line would be set smaller', () => {
     // A stand-in for the browser's measure: every character is 0.6 em wide.
     const perChar: Measure = (text) => text.length * 0.6;
@@ -38,16 +18,20 @@ describe('a numbered card', () => {
     expect(set.size).toBe(150);
   });
 
-  it("outlines the number in the accent, filled with the background over the stroke so the font's inner contours do not show", () => {
-    // 1.2 % of 360 px is 4 px of outline: the stroke is twice that, its inner half under the fill.
-    expect(numberStyle(360, surface)).toEqual({ color: surface.bg, WebkitTextStroke: `8px ${surface.accent}`, paintOrder: 'stroke fill' });
-    // Never thinner than 3 px of outline.
-    expect(numberStyle(200, surface)).toEqual({ color: surface.bg, WebkitTextStroke: `6px ${surface.accent}`, paintOrder: 'stroke fill' });
+  it("leaves 65 % of the title's size over the subline: the room the rule and its two gaps took", () => {
+    expect(sublineGap(150)).toBe(98);
+    expect(sublineGap(128)).toBe(83);
   });
 
-  it('fills the bar of the series up to the card on screen, and that card over its scene', () => {
-    expect(seriesBar(2, 3, 45, 90)).toEqual([1, 0.5, 0]);
-    expect(seriesBar(1, 2, 0, 90)).toEqual([0, 0]);
-    expect(seriesBar(3, 3, 120, 90)).toEqual([1, 1, 1]);
+  it('starts the text of every card where the tallest block of the series stands centered in the safe zone', () => {
+    // 9x16: the safe zone runs from 220 px for 1280 px. A block of 351 px is centered from 220 + 464.5, rounded.
+    expect(seriesTop('9x16', [351, 200])).toBe(685);
+    expect(seriesTop('9x16', [200, 351])).toBe(685);
+    // 4x5: from 80 px for 1110 px.
+    expect(seriesTop('4x5', [300])).toBe(485);
+  });
+
+  it('starts a block taller than the safe zone at its top', () => {
+    expect(seriesTop('9x16', [1500])).toBe(220);
   });
 });

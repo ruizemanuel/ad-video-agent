@@ -487,7 +487,7 @@ describe('validateEdl: structure', () => {
       expect(problemsOf(series(1, j))).toEqual(
         structureAt(
           `body[${j}]`,
-          'a PointCard needs another next to it: 2 or 3 in a row make a numbered series; make this one a KineticHeadline or a ClaimStack',
+          'a PointCard needs another next to it: 2 or 3 in a row make a series; make this one a KineticHeadline or a ClaimStack',
         ),
       ));
     it('rejects a fourth card in a row, at that card', () =>

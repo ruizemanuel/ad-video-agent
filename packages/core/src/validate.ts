@@ -53,7 +53,7 @@ const CYCLE_WORDS = { min: 2, max: 3 };
 // A WordFlash shows the site's main line a word or a short phrase at a time, each on a beat of its own.
 const FLASH_LINES = { min: 2, max: 5 };
 const VIDEO_SECONDS = { min: 15, max: 30 };
-// The numbered card is for two or three points of a site: a series of PointCards is two or three in a row.
+// The card is for two or three points of a site: a series of PointCards is two or three in a row.
 const SERIES_CARDS = { min: 2, max: 3 };
 
 type Report = (where: string, rule: Problem['rule'], detail: string) => void;
@@ -371,12 +371,12 @@ const checkScene = (path: string, scene: Scene, site: SiteData, report: Report):
   checkAtBeat(path, scene, report);
 };
 
-// The numbered cards: a series is two or three PointCards in a row in the body (see pointSeries), and the renderer numbers
-// each card by its place in it, so a lone card has nothing to count with and a fourth is one too many. A hook is 1-2 scenes
-// and cannot hold a series: a card there is refused for that alone, not also as a lone one. Neither the title nor its length
-// is checked here: that is for the director's prompt, and each new refusal can cost a correction round. The fixes named
-// are only those a patch can make, which replaces the scene at a path (see applyPatches): another piece for this card,
-// never a card added or dropped.
+// The cards: a series is two or three PointCards in a row in the body (see pointSeries), which the renderer sets as one
+// set (its titles at one size, its text at one height), so a lone card has nothing to match and a fourth is one too many.
+// A hook is 1-2 scenes and cannot hold a series: a card there is refused for that alone, not also as a lone one. Neither the
+// title nor its length is checked here: that is for the director's prompt, and each new refusal can cost a correction
+// round. The fixes named are only those a patch can make, which replaces the scene at a path (see applyPatches): another
+// piece for this card, never a card added or dropped.
 const checkSeries = (edl: Edl, report: Report): void => {
   edl.hooks.forEach((hook, i) =>
     hook.forEach((scene, j) => {
@@ -390,7 +390,7 @@ const checkSeries = (edl: Edl, report: Report): void => {
       report(
         `body[${j}]`,
         'structure',
-        `a PointCard needs another next to it: ${SERIES_CARDS.min} or ${SERIES_CARDS.max} in a row make a numbered series; make this one a KineticHeadline or a ClaimStack`,
+        `a PointCard needs another next to it: ${SERIES_CARDS.min} or ${SERIES_CARDS.max} in a row make a series; make this one a KineticHeadline or a ClaimStack`,
       );
     else if (place.at > SERIES_CARDS.max)
       report(`body[${j}]`, 'structure', `a series has ${SERIES_CARDS.max} PointCards at most, and this is card ${place.at} of ${place.of} in a row: make it another piece`);

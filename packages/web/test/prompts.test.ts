@@ -244,9 +244,11 @@ describe('how long a text stays on screen', () => {
   it.each(systems)('tells %s a second caption needs a scene of 7 beats or more', (_, system) =>
     expect(flat(system)).toContain('A second caption needs a scene of 7 beats or more'));
 
-  it.each(systems)('describes the numbered card and its series to %s', (_, system) => {
+  it.each(systems)('describes the card and its series to %s', (_, system) => {
     const rules = flat(system);
-    expect(rules).toContain('**PointCard**: one point of the site on a card that fills the frame');
+    expect(rules).toContain('**PointCard**: one point of the site on a card that fills the frame with only its text');
+    // The card draws no number, rule or bar any more: the director must not count on them.
+    expect(rules).not.toMatch(/outlined number|numbers the cards|under a rule|bar that marks/);
     expect(rules).toContain('Two or three `PointCard`s in a row in the body make a series');
     expect(rules).toContain('a lone `PointCard`, more than 3 in a row, or one in a hook are rejected');
     // The subline is drawn in one color: an accent there is lost.

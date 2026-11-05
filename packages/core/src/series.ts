@@ -1,5 +1,5 @@
-// The numbered cards of a video: two or three PointCards in a row are one series, numbered 01 to n by the renderer, not
-// by the director, so the numbers always follow the cards as they are cut.
+// The cards of a video: two or three PointCards in a row are one series, which the renderer sets as one set (its titles
+// at one size, its text at one height), whatever the director cuts.
 import type { Scene } from './edl';
 
 /** Where a PointCard stands in its series: card `at` (from 1) of `of`, the series starting at index `first` of the list. */

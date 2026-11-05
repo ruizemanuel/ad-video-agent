@@ -32,7 +32,6 @@ import { runFfmpeg } from '../../src/render/ffmpeg';
 import { renderKeyframes } from '../../src/render/keyframes';
 import { averageInk, brandName, CHIP_PAD, closeLogoBox, fitLogo, inkReads } from '../../src/video/logo';
 import { centeredSafeBox } from '../../src/video/pieces/common';
-import { BAR_GAP, barHeight, numberGap, numberSize } from '../../src/video/pieces/PointCard';
 import { FLASH_SCALE, flashMax } from '../../src/video/pieces/WordFlash';
 import { serveFixtureSite } from './support/fixture-site';
 import { pngPixels } from './support/png';
@@ -187,7 +186,7 @@ function makeNewPiecesEdl(site: SiteData): Edl {
 }
 
 /**
- * An edit list of the fixture site with a series of three numbered cards in its body, the second without a subline,
+ * An edit list of the fixture site with a series of three cards in its body, the second without a subline,
  * between the price the hook films (as in makeFixtureEdl) and a scroll to it, there so that the video lasts 15 s or more.
  */
 function makeCardsEdl(site: SiteData): Edl {
@@ -282,7 +281,7 @@ function makeFlashEdl(site: SiteData): Edl {
   };
 }
 
-/** The paths of the three numbered cards of makeCardsEdl. */
+/** The paths of the three cards of makeCardsEdl. */
 const CARDS = ['body[0]', 'body[1]', 'body[2]'];
 
 /** The texts the probe measured in the stills of a scene. */
@@ -461,14 +460,16 @@ describe('the other formats', () => {
     expect(checkStills(stills, edl, site, format).filter((c) => !c.pass)).toEqual([]);
   });
 
-  it.each(['16x9', '4x5'] as Format[])('renders the cards in %s, the stills pass the code checks, and each title is under its number', async (format) => {
+  it.each(['16x9', '4x5'] as Format[])('renders the cards in %s, the stills pass the code checks, and every card starts its text at one height in the safe zone', async (format) => {
     const cards = makeCardsEdl(site);
     const stills = await renderKeyframes({ edl: cards, site, runDir: dir, format, hook: 0 });
     expect(checkStills(stills, cards, site, format).filter((c) => !c.pass)).toEqual([]);
-    for (const path of CARDS) expect(stills.find((s) => s.path === path)!.text[0]!.y, path).toBeGreaterThanOrEqual(FORMATS[format].safe.top + numberSize(format));
+    const tops = CARDS.map((path) => stills.find((s) => s.path === path)!.text[0]!.y);
+    expect(Math.max(...tops) - Math.min(...tops), `the tops of the titles: ${tops.join(', ')}`).toBeLessThanOrEqual(1);
+    for (const top of tops) expect(top).toBeGreaterThanOrEqual(FORMATS[format].safe.top);
   });
 
-  it.each(['16x9', '4x5'] as Format[])('keeps a series with a title of two lines and a full subline clear of its bar in %s', async (format) => {
+  it.each(['16x9', '4x5'] as Format[])('keeps a series with a title of two lines and a full subline inside the safe zone in %s', async (format) => {
     const cards = makeLongCardsEdl(site);
     expect(validateEdl(cards, site)).toEqual([]);
     const stills = await renderKeyframes({ edl: cards, site, runDir: dir, format, hook: 0 });
@@ -477,11 +478,11 @@ describe('the other formats', () => {
     const title = long.text.filter((t) => t.fontSize === long.text[0]!.fontSize).map((t) => t.text);
     expect(title, 'the lines of the long title').toHaveLength(2);
     expect(title.join(' ')).toBe('Your money goes straight to your account');
-    // The text of every card ends above the bar, with at least the room its segments leave between them.
+    // The text of every card ends inside the safe zone.
     const { height, safe } = FORMATS[format];
     for (const path of CARDS) {
       const last = stills.find((s) => s.path === path)!.text.at(-1)!;
-      expect(last.y + last.h, path).toBeLessThanOrEqual(height - safe.bottom - barHeight(format) - BAR_GAP);
+      expect(last.y + last.h, path).toBeLessThanOrEqual(height - safe.bottom);
     }
   });
 
@@ -645,7 +646,7 @@ describe('the new pieces and the rhythm', () => {
   });
 });
 
-describe('the numbered cards', () => {
+describe('the cards of a series', () => {
   let cards: Edl;
   let stills: Still[];
   beforeAll(async () => {
@@ -686,46 +687,33 @@ describe('the numbered cards', () => {
     expect(Math.max(...tops) - Math.min(...tops), `the tops of the titles: ${tops.join(', ')}`).toBeLessThanOrEqual(1);
   });
 
-  it('sets the title of every card right under its number, not in the middle of the room', () => {
-    const under = FORMATS['9x16'].safe.top + numberSize('9x16');
-    for (const path of CARDS) {
-      const top = stills.find((s) => s.path === path)!.text[0]!.y;
-      expect(top, path).toBeGreaterThanOrEqual(under);
-      expect(top, path).toBeLessThanOrEqual(under + 2 * numberGap('9x16'));
-    }
+  it('centers the block of the tallest card in the safe zone, as the words of the flash, and starts every card there', () => {
+    const { safe, height } = FORMATS['9x16'];
+    const blocks = CARDS.map((path) => {
+      const { text } = stills.find((s) => s.path === path)!;
+      return { top: text[0]!.y, bottom: text.at(-1)!.y + text.at(-1)!.h };
+    });
+    const tallest = blocks.reduce((a, b) => (b.bottom - b.top > a.bottom - a.top ? b : a));
+    // The probe measures each line's content box, a little inside the line box the layout centers.
+    const center = (tallest.top + tallest.bottom) / 2;
+    expect(Math.abs(center - (safe.top + (height - safe.top - safe.bottom) / 2)), `the center of the tallest block: ${center}`).toBeLessThanOrEqual(30);
   });
 
-  it("draws the card's number at the top of the safe zone and its bar at the bottom, inside it", async () => {
-    const { width, height, safe } = FORMATS['9x16'];
+  it('draws nothing in the accent over the title or under the text: the card is only its text', async () => {
+    const { height } = FORMATS['9x16'];
     for (const { still, surface } of cardsOf(stills, site)) {
-      const title = still.text[0]!;
-      // Over the title, only the number is in the accent.
-      const number = await areaOf(still, surface.accent, title.y);
-      expect(number, `${still.path}: the number`).toBeDefined();
-      expect(number!.x).toBeGreaterThanOrEqual(safe.left - 1);
-      expect(number!.y).toBeGreaterThanOrEqual(safe.top - 1);
-      expect(number!.x + number!.w).toBeLessThanOrEqual(width - safe.right + 1);
-      expect(number!.y + number!.h).toBeLessThanOrEqual(title.y);
-      // Under the last line of text (the subline, or the title and then its rule on a card without one), down to the foot of
-      // the frame: the bar, which ends on the foot of the safe zone.
-      const text = still.text.at(-1)!;
-      const bar = await areaOf(still, surface.accent, height, text.y + text.h);
-      expect(bar, `${still.path}: the bar`).toBeDefined();
-      expect(bar!.y + bar!.h).toBeLessThanOrEqual(height - safe.bottom + 1);
-      expect(bar!.y + bar!.h).toBeGreaterThan(height - safe.bottom - 12);
+      const last = still.text.at(-1)!;
+      expect(await areaOf(still, surface.accent, still.text[0]!.y), `${still.path}: over the title`).toBeUndefined();
+      expect(await areaOf(still, surface.accent, height, last.y + last.h), `${still.path}: under the text`).toBeUndefined();
     }
   });
 
-  it('keeps the number and the title inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {
+  it('keeps the title inside the safe zone in a font whose glyphs stand taller than 1.3 em', async () => {
     // Set as the capture sets celo.org's heading font, whose content box starts above the line's own.
     const tall: SiteData = { ...site, brand: { ...site.brand, fonts: [{ ...serif, weight: '400', letterSpacingEm: -0.01, lineHeight: 1.13 }] } };
     const shown = await renderKeyframes({ edl: cards, site: tall, runDir: dir, format: '9x16', hook: 0 });
     expect(checkStills(shown, cards, tall, '9x16').filter((c) => !c.pass)).toEqual([]);
-    for (const { still, surface } of cardsOf(shown, tall)) {
-      const number = await areaOf(still, surface.accent, still.text[0]!.y);
-      expect(number, `${still.path}: the number`).toBeDefined();
-      expect(number!.y).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
-    }
+    for (const { still } of cardsOf(shown, tall)) expect(still.text[0]!.y, still.path).toBeGreaterThanOrEqual(FORMATS['9x16'].safe.top - 1);
   });
 });
 

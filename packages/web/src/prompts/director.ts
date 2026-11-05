@@ -156,9 +156,8 @@ export const PIECE_RULES = `# Pieces (the renderer only has these)
   whose time the two captions share (see the table: \`atBeat\` at half the scene, rounded up).
 - **ClaimStack**: 2 or 3 short lines (at most 22 characters each) that land one per beat and stack
   up. Give it at least 2 beats per line, and the beats the table gives.
-- **PointCard**: one point of the site on a card that fills the frame: a big outlined number (the
-  renderer numbers the cards 01, 02, 03), \`lines[0]\` as the title and an optional \`lines[1]\` under a
-  rule as its subline, with a bar that marks the card's place in the series. Two or three
+- **PointCard**: one point of the site on a card that fills the frame with only its text:
+  \`lines[0]\` as the title and an optional \`lines[1]\` under it as its subline. Two or three
   \`PointCard\`s in a row in the body make a series; a lone \`PointCard\`, more than 3 in a row, or one
   in a hook are rejected. The title is a claim with its quote, at most 22 characters (never more
   than 44, which the card sets on two lines); the subline, a claim or a framing line, at most 32

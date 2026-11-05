@@ -166,7 +166,7 @@ const AdInner: FC<Omit<AdProps, 'edl' | 'site'> & { edl: Edl; site: SiteData }> 
   const { scenes } = useMemo(() => layoutScenes(edl, hook), [edl, hook]);
   // The backgrounds of each scene of this version (see videoSurfaces): its hook changes which ones the type scenes of the body take.
   const runs = useMemo(() => videoSurfaces(scenes, theme.surfaces), [scenes, theme]);
-  // The series of numbered cards each PointCard belongs to (see pointSeries), with every card of it.
+  // The series of cards each PointCard belongs to (see pointSeries), with every card of it.
   const series = useMemo(() => {
     const list = scenes.map((t) => t.scene);
     return pointSeries(list).map((place): CardSeries | undefined => place && { at: place.at, of: place.of, cards: list.slice(place.first, place.first + place.of) });
