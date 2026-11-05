@@ -25,6 +25,11 @@ const blob = new FileBlob(dir);
 const CAP = 2.5;
 // What the visual review blocked on.
 const cut: Problem[] = [{ where: 'body[1]', rule: 'visual', detail: 'visual review: a letter is cut by an edge or a mask' }];
+// A fix that rewords the line of body[1], so the judge is asked about it: an item a fix leaves as it was is not.
+const reworded: Edl = (() => {
+  const scene = scenePaths(edlShop).find((p) => p.path === 'body[1]')!.scene;
+  return applyPatches(edlShop, [{ path: 'body[1]', scene: { ...scene, lines: [{ text: '0% de comisión en tus ventas.', kind: 'claim', claimId: 'c3' }] } }], []);
+})();
 
 let id: string;
 let llm: FakeLlm;
@@ -88,6 +93,7 @@ describe('correctOnce', () => {
   });
 
   it('asks again later for a model that may answer then, while the step has a try left, and logs and notes nothing yet', async () => {
+    llm.fixed = reworded;
     llm.judge = async () => {
       throw new ModelCallFailed('judge', 'AI_APICallError', 529);
     };
@@ -97,6 +103,7 @@ describe('correctOnce', () => {
   });
 
   it('says the correction cannot be used when the model is still busy on the step\'s last try', async () => {
+    llm.fixed = reworded;
     llm.judge = async () => {
       throw new ModelCallFailed('judge', 'AI_APICallError', 529);
     };
@@ -116,7 +123,7 @@ describe('correctOnce', () => {
     };
     expect(await correct(false)).toEqual({ status: 'unusable' });
     llm = new FakeLlm();
-    llm.fixed = edlShop;
+    llm.fixed = reworded;
     llm.judge = async () => {
       throw new ModelOutputInvalid('The judge model did not answer with a valid judge.', 0.01);
     };

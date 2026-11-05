@@ -1,9 +1,9 @@
 // The script step: the director writes the edit list, and nothing it says goes on unless the site backs it. Each round
 // the code checks run first (quotes, numbers, framing, filler, structure); when they find nothing, the judge reads
 // every claim against its quote and every framing line, with its scene, for a fact about the product. The judge reads
-// each text once: what it said stands while the text is the same. Whatever fails goes to the corrector, scene by scene,
-// for at most two rounds and only while the order's spending cap allows. Every model call is recorded on the order as
-// it is made.
+// each text once: what it said stands while the text is the same, in the script and in each correction the visual
+// review asks for. Whatever fails goes to the corrector, scene by scene, for at most two rounds and only while the
+// order's spending cap allows. Every model call is recorded on the order as it is made.
 import {
   applyPatches,
   judgeItems,
@@ -83,6 +83,12 @@ class Verdicts {
   /** The items there is no verdict on yet. */
   unread(items: Items): Items {
     return { claims: items.claims.filter((i) => !this.said.has(claimKey(i))), framing: items.framing.filter((i) => !this.said.has(framingKey(i))) };
+  }
+
+  /** Counts the items as passed: those of an edit list the judge passed whole. */
+  pass(items: Items): void {
+    for (const item of items.claims) this.said.set(claimKey(item), PASSED);
+    for (const item of items.framing) this.said.set(framingKey(item), PASSED);
   }
 
   /** Keeps what the judge said about the items it was asked about. */
@@ -198,9 +204,11 @@ export async function runScript({
 
 /**
  * One correction outside the script's own rounds, for the problems the visual review found in the key frames: the
- * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on every
- * item, since nothing it said before is at hand), with the scenes it put in. When the fix cannot be used, says why (see
- * Unusable). Every call is recorded on the order, and any other failure of a model goes up: a call that failed, or a
+ * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on the items
+ * the fix changed), with the scenes it put in. The edit list it is given passed the judge whole (the script's, or a fix
+ * that passed), so what the judge said of each of its items stands while the item reads the same: asked again, the judge
+ * turns down items it passed, and the fix would fail on what it never touched. When the fix cannot be used, says why
+ * (see Unusable). Every call is recorded on the order, and any other failure of a model goes up: a call that failed, or a
  * judge's answer that does not fit (the corrector's own is `patch-invalid`).
  */
 export async function correctEdl({
@@ -219,7 +227,9 @@ export async function correctEdl({
   const calls: Calls = { orderId, ...deps };
   const fix = await patched(calls, edl, problems, site);
   if (!fix.ok) return { ok: false, reason: fix.reason, problems: [], patched: [] };
-  const found = await problemsOf(calls, fix.edl, site, new Verdicts());
+  const verdicts = new Verdicts();
+  verdicts.pass(judgeItems(edl));
+  const found = await problemsOf(calls, fix.edl, site, verdicts);
   if (found.problems.length > 0) return { ok: false, reason: found.by, problems: found.problems, patched: fix.patches };
   return { ok: true, edl: fix.edl, patched: fix.patches };
 }

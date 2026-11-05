@@ -309,10 +309,43 @@ describe('correctEdl', () => {
     expect(llm.lastPatchInput).toEqual({ edl: edlShop, problems: [cut], site: siteShop() });
   });
 
-  it('gives back the fixed edit list and the scenes the fix put in once the code checks and the judge pass it, judging every item of it', async () => {
+  it('gives back the fixed edit list and the scenes the fix put in once the code checks and the judge pass it', async () => {
     patchTo(reworded, 'body[1]');
     expect(await correctEdl(input)).toEqual({ ok: true, edl: reworded, patched: [{ path: 'body[1]', scene: reworded.body[1] }] });
-    expect(llm.lastJudgeInput).toEqual(judgeItems(reworded));
+  });
+
+  // The edit list it is given passed the judge whole (the script's, or a fix that passed): what the judge said of each
+  // item stands while the item reads the same, as in the script. Asked again, the judge turns down items it passed.
+  describe('the judge is asked only about what the fix changed', () => {
+    it('asks about the items the fix changed, and nothing else', async () => {
+      patchTo(reworded, 'body[1]');
+      await correctEdl(input);
+      expect(llm.lastJudgeInput).toEqual({ claims: judgeItems(reworded).claims.filter((i) => i.id === 'body[1]:c3'), framing: [] });
+    });
+
+    it('does not fail the fix on an item it left as it was, whatever the judge would say of it now', async () => {
+      patchTo(reworded, 'body[1]');
+      llm.framingVerdicts = { 'hooks[0][0]:framing:0': true };
+      llm.claimVerdicts = { 'cta:c7': false };
+      expect(await correctEdl(input)).toEqual({ ok: true, edl: reworded, patched: [{ path: 'body[1]', scene: reworded.body[1] }] });
+    });
+
+    it('reads a framing line again when the fix changed the rest of its scene', async () => {
+      const withFraming = withScene(edlShop, 'body[1]', (scene) => ({ ...scene, lines: [{ text: 'Nadie más te da', kind: 'framing' }, ...scene.lines] }));
+      const changed = withScene(withFraming, 'body[1]', (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 1 ? { ...line, text: '0% de comisión al vender.' } : line)) }));
+      patchTo(changed, 'body[1]');
+      await correctEdl({ ...input, edl: withFraming });
+      expect(llm.lastJudgeInput).toEqual({
+        claims: judgeItems(changed).claims.filter((i) => i.id === 'body[1]:c3'),
+        framing: judgeItems(changed).framing.filter((i) => i.id === 'body[1]:framing:0'),
+      });
+    });
+
+    it('does not ask the judge when the fix leaves every item as it was', async () => {
+      patchTo(edlShop, 'body[1]');
+      expect(await correctEdl(input)).toEqual({ ok: true, edl: edlShop, patched: [{ path: 'body[1]', scene: edlShop.body[1] }] });
+      expect(llm.calls.judge).toBe(0);
+    });
   });
 
   it('records the corrector and the judge on the order', async () => {

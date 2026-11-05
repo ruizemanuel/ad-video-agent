@@ -305,9 +305,10 @@ describe('an order that goes through', () => {
     await actAsVm(run, id, 'render', 0, null, RENDERED);
     expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
 
-    // The problem with the whole ad went to the corrector, and its fix was judged before it was used.
+    // The problem with the whole ad went to the corrector, and what its fix changed was judged before it was used: the
+    // rest passed in the script.
     expect(fakes.llm.lastPatchInput?.problems).toEqual([{ where: 'all', rule: 'visual', detail: expect.stringContaining('logo-swap') }]);
-    expect(fakes.llm.lastJudgeInput).toEqual(judgeItems(corrected));
+    expect(fakes.llm.lastJudgeInput).toEqual({ claims: judgeItems(corrected).claims.filter((i) => i.id === 'body[1]:c3'), framing: [] });
     const queued = await tasks(fakes.store, id);
     expect(queued.map((t) => `${t.kind}:${t.round}`)).toEqual(['capture:0', 'keyframes:0', 'keyframes:1', 'render:0', 'shutdown:0']);
     expect(queued[2]?.input).toEqual({ edl: corrected, hook: 0, format: '9x16', round: 1 });
