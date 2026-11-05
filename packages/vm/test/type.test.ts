@@ -289,3 +289,14 @@ describe('the call to action pill', () => {
     expect(pillSize('Create your online shop for free today', column, '9x16', perChar)).toBe(TYPE['9x16'].min);
   });
 });
+
+describe('layoutLines with room to grow', () => {
+  it('sets a line small enough that it still fits the width once it has grown by what grow gives, in em', () => {
+    // A stand-in for the browser's measure: every character is 0.6 em wide. "ab cd" is 3 em.
+    const perChar: Measure = (text) => text.length * 0.6;
+    const line = [toWords({ text: 'ab cd', kind: 'claim' })];
+    // 600 × 0.98 / 3 = 196; with 0.3 em more, 588 / 3.3 = 178.2.
+    expect(layoutLines(line, { width: 600, max: 400, min: 10, maxLines: 1, measure: perChar }).size).toBe(196);
+    expect(layoutLines(line, { width: 600, max: 400, min: 10, maxLines: 1, measure: perChar, grow: () => 0.3 }).size).toBe(178);
+  });
+});

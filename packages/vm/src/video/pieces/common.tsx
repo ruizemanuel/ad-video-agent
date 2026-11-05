@@ -159,7 +159,7 @@ export const useInkRoom = (font: FontSpec, texts: readonly string[]): Room & { h
   }, [font, key]);
 };
 
-/** `accentScale`: how much the accented words are scaled, each from its bottom center (1, the default: not at all). */
+/** `accentScale`: how much the accented words are scaled on a hit, as runs (see ScaledAccent); 1, the default: not at all. */
 type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center'; accentScale?: number };
 
 // The lines of a block are this far apart, in em, beyond their line height: what the room of one clip over the next used
@@ -180,21 +180,47 @@ const accentRuns = (line: TypeLine): { accent: boolean; text: string }[] =>
   }, []);
 
 /**
- * A line with its accent scaled by `scale`, from its bottom: each accented run as one box (the space after it stays
- * outside), so that a phrase scales as one; from its left corner when it starts a line set flush left, where the clip of
- * the line would cut its first letter, and from its center otherwise.
+ * Where each run of a line stands on an accent's hit, in px from its place at rest: every accented run grows by `scale` from
+ * its left, and what follows it moves as far, so that nothing overlaps; a centered line, which grows about its center,
+ * moves back half its growth first. `widths`: each run's in px.
  */
-const ScaledAccent: FC<{ line: TypeLine; accent: string; scale: number; align: 'left' | 'center' }> = ({ line, accent, scale, align }) => {
+export const accentShifts = (widths: readonly number[], accents: readonly boolean[], scale: number, align: 'left' | 'center'): number[] => {
+  const grows = widths.map((w, i) => (accents[i] ? (scale - 1) * w : 0));
+  let shift = align === 'center' ? -grows.reduce((sum, g) => sum + g, 0) / 2 : 0;
+  return grows.map((g) => {
+    const at = shift;
+    shift += g;
+    return at;
+  });
+};
+
+/**
+ * A line on its accent's hit: each run in a box of its own (the space after it stays outside), the accented ones scaled
+ * by `scale` from their bottom left, and every run moved by accentShifts. A phrase scales as one, and the line has the
+ * room for it (see seriesTitles' growth).
+ */
+const ScaledAccent: FC<{ line: TypeLine; accent: string; scale: number; align: 'left' | 'center'; font: FontSpec; size: number }> = ({ line, accent, scale, align, font, size }) => {
   const runs = accentRuns(line);
+  const measure = measureWith(font);
+  const shifts = accentShifts(
+    runs.map((run) => measure(run.text) * size),
+    runs.map((run) => run.accent),
+    scale,
+    align,
+  );
   return (
     <>
       {runs.map((run, r) => (
         <span key={r} style={run.accent ? { color: accent } : undefined}>
-          {run.accent ? (
-            <span style={{ display: 'inline-block', transform: `scale(${scale})`, transformOrigin: r === 0 && align === 'left' ? 'left bottom' : 'center bottom' }}>{run.text}</span>
-          ) : (
-            run.text
-          )}
+          <span
+            style={{
+              display: 'inline-block',
+              transform: `translateX(${shifts[r] ?? 0}px)${run.accent ? ` scale(${scale})` : ''}`,
+              transformOrigin: 'left bottom',
+            }}
+          >
+            {run.text}
+          </span>
           {r < runs.length - 1 ? ' ' : ''}
         </span>
       ))}
@@ -208,7 +234,9 @@ const ScaledAccent: FC<{ line: TypeLine; accent: string; scale: number; align: '
  * back by negative margins, so that the room never moves the text.
  */
 export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [], accentScale = 1 }) => {
-  const { above, below, hide } = useInkRoom(font, lines.map(lineText));
+  const { above: room, below, hide } = useInkRoom(font, lines.map(lineText));
+  // On a hit the accent grows up from its bottom: the clip grows up as far (its padding and margin cancel: nothing moves).
+  const above = room + Math.max(0, accentScale - 1);
   return (
     <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align, display: 'flex', flexDirection: 'column', gap: `${LINE_GAP}em` }}>
       {lines.map((line, i) => (
@@ -222,7 +250,7 @@ export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines
                 </span>
               ))
             ) : (
-              <ScaledAccent line={line} accent={accent} scale={accentScale} align={align} />
+              <ScaledAccent line={line} accent={accent} scale={accentScale} align={align} font={font} size={size} />
             )}
           </div>
         </div>

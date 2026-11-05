@@ -1,6 +1,7 @@
 // Where a card of a series sets its text, as plain math: the titles' size, the room over the subline, the height every
 // card of the series starts its text at, the hit of its accent and the roll from the card before.
 import { describe, expect, it } from 'vitest';
+import { accentShifts } from '../src/video/pieces/common';
 import { accentHit, rollPlacement, seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
 import { lineText, toWords, type Measure } from '../src/video/type';
 
@@ -47,6 +48,25 @@ describe('a card of a series', () => {
     expect(rollPlacement(0, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: 0, own: 450 });
     expect(rollPlacement(0.5, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: -225, own: 225 });
     expect(rollPlacement(1, { own: 266, old: 400 }, { above: 20, below: 30 })).toEqual({ clip: 450, old: -450, own: 0 });
+  });
+
+  it("makes room in its title for its accent's hit: a line is set to fit once its accent has grown to 110 %", () => {
+    const perChar: Measure = (text) => text.length * 0.6;
+    // One word of 14 characters, 8.4 em, which no break can shorten: 860 × 0.98 / 8.4 = 100.3 in 9x16. All of it accented,
+    // it takes 8.4 × 1.1 = 9.24 em on its hit: 91.2.
+    const word = (accent?: string) => [[toWords({ text: 'Transferencias', kind: 'claim', ...(accent && { accent }) })]];
+    expect(seriesTitles(word(), '9x16', perChar).size).toBe(100);
+    expect(seriesTitles(word('Transferencias'), '9x16', perChar).size).toBe(91);
+  });
+
+  it('moves what follows the accent by what the accent grows on its hit, so that nothing overlaps', () => {
+    const px = (shifts: number[]) => shifts.map((v) => Math.round(v * 100) / 100);
+    // Flush left: the accent grows to its right; what follows it moves as far.
+    expect(px(accentShifts([100, 50], [true, false], 1.1, 'left'))).toEqual([0, 10]);
+    expect(px(accentShifts([50, 100, 30], [false, true, false], 1.1, 'left'))).toEqual([0, 0, 10]);
+    // Centered: the line grows about its center, so all of it moves back half the growth first.
+    expect(px(accentShifts([50, 100, 30], [false, true, false], 1.1, 'center'))).toEqual([-5, -5, 5]);
+    expect(px(accentShifts([100, 50], [true, false], 1, 'left'))).toEqual([0, 0]);
   });
 
   it('never lets the text that leaves and the title that comes overlap, their ink included, at any point of the roll', () => {

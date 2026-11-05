@@ -117,13 +117,18 @@ type Fit = {
   box?: { height: number; lineHeight: number };
   /** The share of `max` under which the widest line is split (SPLIT_BELOW unless given). */
   splitBelow?: number;
+  /** How much wider than its text a line gets at its widest moment, in em (a card's accent on its hit): the line fits then. */
+  grow?: (line: TypeLine) => number;
 };
 
-/** The largest size, up to `max` scaled by the line count, at which every line fits `width` and the block its `box`; not floored. */
-const fittedSize = (texts: readonly string[], { width, max, measure, box }: Fit): number =>
+/**
+ * The largest size, up to `max` scaled by the line count, at which every line fits `width` and the block its `box`; not
+ * floored. `widths`: each line's width in em, when it is not the measure of its text alone.
+ */
+const fittedSize = (texts: readonly string[], { width, max, measure, box }: Fit, widths?: readonly number[]): number =>
   Math.min(
     max * lineScale(texts.length),
-    ...(measure ? texts.map((t) => (width * FILL) / measure(t)) : []),
+    ...(widths ?? (measure ? texts.map(measure) : [])).map((w) => (width * FILL) / w),
     ...(box ? [box.height / (texts.length * box.lineHeight + Math.max(0, GLYPH_EM - box.lineHeight))] : []),
   );
 
@@ -147,8 +152,8 @@ export const layoutLines = (input: readonly TypeLine[], fit: Fit & { measure: Me
   let lines = input.filter((line) => line.length > 0);
   for (;;) {
     const texts = lines.map(lineText);
-    const size = fittedSize(texts, fit);
-    const widths = texts.map(fit.measure);
+    const widths = lines.map((line, i) => fit.measure(texts[i] ?? '') + (fit.grow?.(line) ?? 0));
+    const size = fittedSize(texts, fit, widths);
     const widest = lines[widths.indexOf(Math.max(...widths))];
     if (!widest || size >= fit.max * (fit.splitBelow ?? SPLIT_BELOW) || lines.length >= fit.maxLines || widest.length < 2) return { lines, size: settle(size, fit.min) };
     let best = 1;

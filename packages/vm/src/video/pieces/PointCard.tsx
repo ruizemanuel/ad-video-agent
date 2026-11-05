@@ -44,9 +44,15 @@ export const seriesTop = (format: Format, heights: readonly number[]): number =>
 /**
  * The titles of a series as its cards set them (see layoutSeries): as large as the format's headline, and each on two lines
  * wherever one line would be set smaller (splitBelow: 1), except a single word; then all at the smallest size any takes.
+ * Each line is set to fit with its accent at ACCENT_HIT, as on its hit (see accentShifts).
  */
-export const seriesTitles = (texts: readonly (readonly TypeLine[])[], format: Format, measure: Measure): { lines: TypeLine[][]; size: number } =>
-  layoutSeries(texts, { width: safeWidth(format), max: TYPE[format].headline, min: TYPE[format].min, maxLines: 2, splitBelow: 1, measure });
+export const seriesTitles = (texts: readonly (readonly TypeLine[])[], format: Format, measure: Measure): { lines: TypeLine[][]; size: number } => {
+  const grow = (line: TypeLine): number => {
+    const accented = line.filter((word) => word.accent).map((word) => word.text);
+    return accented.length ? (ACCENT_HIT - 1) * measure(accented.join(' ')) : 0;
+  };
+  return layoutSeries(texts, { width: safeWidth(format), max: TYPE[format].headline, min: TYPE[format].min, maxLines: 2, splitBelow: 1, measure, grow });
+};
 
 type Block = { lines: TypeLine[]; size: number };
 type CardText = { title: Block; subline: Block | null };
@@ -62,9 +68,11 @@ const RollIn: FC<{ title: Block; before: CardText; roll: number; leaving: boolea
   const surface = useSurface();
   const align = TYPE[format].align;
   const room = useInkRoom(theme.display, [...title.lines, ...before.title.lines].map(lineText));
-  const ink = { above: room.above * title.size, below: room.below * title.size };
-  const own = linesHeight(title.lines.length, title.size, theme.display.lineHeight);
   const sub = before.subline;
+  // The text before ends with its subline when it has one, in the body font: the room under the blocks is the larger.
+  const subRoom = useInkRoom(theme.body, sub ? sub.lines.map(lineText) : []);
+  const ink = { above: room.above * title.size, below: Math.max(room.below * title.size, sub ? subRoom.below * sub.size : 0) };
+  const own = linesHeight(title.lines.length, title.size, theme.display.lineHeight);
   const old =
     linesHeight(before.title.lines.length, before.title.size, theme.display.lineHeight) +
     (sub ? sublineGap(before.title.size) + linesHeight(sub.lines.length, sub.size, theme.body.lineHeight) : 0);
@@ -155,7 +163,7 @@ export const PointCard: FC<PieceProps> = ({ scene, timed, series }) => {
         {before ? (
           <RollIn title={title} before={before} roll={1 - revealDrop(frame, starts.title, fps)} leaving={frame < starts.title + REVEAL_FRAMES} accentScale={hit} />
         ) : (
-          // As wide as the column, so that the accent's hit is not cut at the end of its line.
+          // As wide as the column: the line has room for its accent's hit (see seriesTitles).
           <div style={{ alignSelf: 'stretch' }}>
             <RevealLines lines={title.lines} size={title.size} font={theme.display} color={surface.fg} accent={surface.accent} starts={title.lines.map(() => starts.title)} align={type.align} accentScale={hit} />
           </div>
