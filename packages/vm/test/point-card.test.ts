@@ -1,7 +1,8 @@
-// Where a card of a series sets its text, as plain math: the titles' size, the room over the subline, and the height every
-// card of the series starts its text at.
+// Where a card of a series sets its text, as plain math: the titles' size, the room over the subline, the height every
+// card of the series starts its text at, and the slow push in on it.
+import { safeWidth } from '@app/core';
 import { describe, expect, it } from 'vitest';
-import { seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
+import { cardPush, cardWidth, seriesTitles, seriesTop, sublineGap } from '../src/video/pieces/PointCard';
 import { lineText, toWords, type Measure } from '../src/video/type';
 
 describe('a card of a series', () => {
@@ -33,5 +34,20 @@ describe('a card of a series', () => {
 
   it('starts a block taller than the safe zone at its top', () => {
     expect(seriesTop('9x16', [1500])).toBe(220);
+  });
+
+  it('pushes in on its text over the scene, evenly, from 100 % to 103 %', () => {
+    expect(cardPush(0, 90)).toBe(1);
+    expect(cardPush(45, 90)).toBeCloseTo(1.015, 6);
+    expect(cardPush(90, 90)).toBeCloseTo(1.03, 6);
+    // Before its first frame and past its last (the wipe out), it holds.
+    expect(cardPush(-5, 90)).toBe(1);
+    expect(cardPush(120, 90)).toBeCloseTo(1.03, 6);
+  });
+
+  it('sets its text in a column narrow enough to stay inside the safe zone at the end of the push', () => {
+    // 9x16: the safe zone is 860 px wide; 860 / 1.03 is 834.95.
+    expect(cardWidth('9x16')).toBe(834);
+    for (const format of ['9x16', '16x9', '4x5'] as const) expect(cardWidth(format) * 1.03).toBeLessThanOrEqual(safeWidth(format));
   });
 });
