@@ -2,15 +2,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodePaymentRequiredHeader } from '@x402/core/http';
-import { x402HTTPResourceServer, type HTTPAdapter } from '@x402/core/server';
-import type { PaymentRequirements } from '@x402/core/types';
+import { FacilitatorTimeoutError, x402HTTPResourceServer, type HTTPAdapter } from '@x402/core/server';
+import { SettleError, type PaymentRequirements } from '@x402/core/types';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { start } from 'workflow/api';
 import { FakeFacilitator } from '../src/adapters/fake/facilitator';
 import { FileStore } from '../src/adapters/fake/store';
 import type { NewOrder } from '../src/ports';
 import { markPaidAndStart, startRun } from '../src/payments/orders';
-import { createResourceServer, formatPrice, PROMO_PRICE_ATOMIC, promoGate, routeConfig, TOKENS, type PromoGate } from '../src/payments/x402';
+import { createResourceServer, formatPrice, PROMO_PRICE_ATOMIC, promoGate, refusedBeforeSending, routeConfig, TOKENS, type PromoGate } from '../src/payments/x402';
 import { orderWorkflow } from '../src/workflows/order';
 
 vi.mock('workflow/api', () => ({ start: vi.fn(async () => ({ runId: 'wrun_unit' })) }));
@@ -180,6 +180,48 @@ describe('the first-video price', () => {
     } finally {
       logged.mockRestore();
     }
+  });
+});
+
+describe('refusedBeforeSending', () => {
+  const answer = (errorReason: string | undefined, transaction = '') =>
+    new SettleError(500, { success: false, ...(errorReason !== undefined && { errorReason }), transaction, network: 'eip155:42220' });
+
+  it.each([
+    'invalid_exact_evm_insufficient_balance',
+    'invalid_exact_evm_signature',
+    'invalid_exact_evm_recipient_mismatch',
+    'invalid_exact_evm_payload_authorization_value_mismatch',
+    'invalid_exact_evm_payload_authorization_valid_after',
+    'invalid_exact_evm_token_name_mismatch',
+  ])('takes %s with no transaction as a no before anything was sent', (reason) => {
+    expect(refusedBeforeSending(answer(reason))).toBe(true);
+  });
+
+  it.each([
+    // What it answers for a send that failed, which may still have reached the chain.
+    ['invalid_exact_evm_transaction_failed', ''],
+    // A retry after a transaction was sent, once that transaction has landed.
+    ['invalid_exact_evm_nonce_already_used', ''],
+    // An authorization that expired between a send and its retry may still have landed in time.
+    ['invalid_exact_evm_payload_authorization_valid_before', ''],
+    // A simulation whose cause could not be read: on a retry, that can be a used authorization.
+    ['invalid_exact_evm_transaction_simulation_failed', ''],
+    ['invalid_transaction_state', ''],
+    ['settlement_pending', `0x${'ab'.repeat(32)}`],
+    ['settlement_pending', ''],
+    // A transaction was sent, whatever the reason says.
+    ['invalid_exact_evm_insufficient_balance', `0x${'ab'.repeat(32)}`],
+    // A reason this version does not know, and none at all.
+    ['some_new_reason', ''],
+    [undefined, ''],
+  ])('takes %s (transaction "%s") as unknown', (reason, transaction) => {
+    expect(refusedBeforeSending(answer(reason, transaction))).toBe(false);
+  });
+
+  it('takes a timeout or any other error as unknown', () => {
+    expect(refusedBeforeSending(new FacilitatorTimeoutError('settle', 90_000))).toBe(false);
+    expect(refusedBeforeSending(new Error('invalid_exact_evm_insufficient_balance'))).toBe(false);
   });
 });
 

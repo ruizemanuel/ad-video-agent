@@ -361,7 +361,7 @@ describe('POST /v1/videos with a payment', () => {
       expect(order?.steps).toEqual({ payment: 'failed' });
     });
 
-    it.each(['timeout', 'pending'] as const)('leaves the payment step as it was after a %s, since the tokens may still move', async (settlement) => {
+    it.each(['timeout', 'pending', 'pending_then_used'] as const)('leaves the payment step as it was after a %s, since the tokens may still move', async (settlement) => {
       const { order } = await settleLogs(settlement);
       expect(order?.status).toBe('awaiting_settlement');
       expect(order?.steps).toEqual({});
@@ -377,12 +377,13 @@ describe('POST /v1/videos with a payment', () => {
 
     it("logs the facilitator's refusal with its reason", async () => {
       const { from, nonce, lines } = await settleLogs('failure');
-      expect(lines).toEqual([['[settle_failed]', TOKENS.USDT.address, from, nonce, 'refused', 'insufficient_funds']]);
+      expect(lines).toEqual([['[settle_failed]', TOKENS.USDT.address, from, nonce, 'refused', 'invalid_exact_evm_insufficient_balance']]);
     });
 
     it.each([
       ['a timeout', 'timeout', 'Facilitator settle request timed out after 90000ms'],
       ['a transaction sent that was not seen to land', 'pending', 'settlement_pending'],
+      ['a retry that finds the authorization used, after a transaction was sent', 'pending_then_used', 'invalid_exact_evm_nonce_already_used'],
     ] as const)('logs %s as no_answer, since the tokens may still move', async (_label, settlement, reason) => {
       const { from, nonce, lines } = await settleLogs(settlement);
       expect(lines).toEqual([['[settle_failed]', TOKENS.USDT.address, from, nonce, 'no_answer', reason]]);

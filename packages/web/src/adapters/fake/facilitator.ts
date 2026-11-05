@@ -18,10 +18,14 @@ export class FakeFacilitator implements FacilitatorClient {
   /** What the next verifications answer. `invalid` is what a reused or forged payment gets from the real one. */
   verification: 'valid' | 'invalid' = 'valid';
   /**
-   * What the next settlements do. `pending` is what the real one answers when it sent the transaction but did not see it
-   * land: the tokens may still move.
+   * What the next settlements do. `failure` is the real one's answer for a payer without the funds, before it sends
+   * anything. `pending` is its answer when it sent the transaction but did not see it land: the tokens may still move.
+   * `pending_then_used` answers `pending` to a payment the first time, and to the retry that x402 then makes, what an
+   * instance of the real one that did not keep the transaction answers once it has landed: the authorization is used.
    */
-  settlement: 'success' | 'failure' | 'timeout' | 'pending' = 'success';
+  settlement: 'success' | 'failure' | 'timeout' | 'pending' | 'pending_then_used' = 'success';
+  /** The payments (by authorization nonce) that `pending_then_used` has answered `pending` to. */
+  private readonly sentPending = new Set<string>();
 
   async verify(payload: PaymentPayload): Promise<VerifyResponse> {
     this.calls.verify += 1;
@@ -34,8 +38,15 @@ export class FakeFacilitator implements FacilitatorClient {
     this.calls.settle += 1;
     const payer = payerOf(payload);
     if (this.settlement === 'timeout') throw new FacilitatorTimeoutError('settle', 90_000);
-    if (this.settlement === 'failure') return { success: false, errorReason: 'insufficient_funds', transaction: '', network: requirements.network, payer };
-    if (this.settlement === 'pending') return { success: false, errorReason: 'settlement_pending', transaction: FAKE_SETTLE_TX, network: requirements.network, payer };
+    const failed = (errorReason: string, transaction = ''): SettleResponse => ({ success: false, errorReason, transaction, network: requirements.network, payer });
+    if (this.settlement === 'failure') return failed('invalid_exact_evm_insufficient_balance');
+    if (this.settlement === 'pending') return failed('settlement_pending', FAKE_SETTLE_TX);
+    if (this.settlement === 'pending_then_used') {
+      const nonce = (payload.payload as { authorization?: { nonce?: string } }).authorization?.nonce ?? '';
+      if (this.sentPending.delete(nonce)) return failed('invalid_exact_evm_nonce_already_used');
+      this.sentPending.add(nonce);
+      return failed('settlement_pending', FAKE_SETTLE_TX);
+    }
     return { success: true, transaction: FAKE_SETTLE_TX, network: requirements.network, payer };
   }
 

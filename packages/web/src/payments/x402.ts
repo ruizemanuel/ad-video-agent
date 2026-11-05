@@ -192,10 +192,43 @@ export type SettledPayment = { asset: string; payer: string; nonce: string; txHa
 
 /**
  * A payment whose settlement did not go through: what finds its order, and why. `refused` is the facilitator saying no
- * before it sent any transaction, so nothing moved. Anything else (a timeout, a network error, or a transaction it sent
- * but did not see land) leaves it unknown whether the tokens moved.
+ * before it sent any transaction, so nothing moved (see `refusedBeforeSending`). Anything else leaves it unknown whether
+ * the tokens moved.
  */
 export type SettleFailure = { asset: string; payer: string; nonce: string; refused: boolean; reason: string };
+
+/**
+ * The reasons the exact EVM scheme of @x402/evm 2.28.0 settles with only before it sends anything, and that a retry of
+ * the same payment gives again: the authorization is unspent. Left out, because they can come after a transaction was
+ * sent: a send that failed (`transaction_failed`, which may still have reached the chain), and what x402's one retry of
+ * a `settlement_pending` answer gets from an instance that did not keep the transaction: a used authorization, a
+ * simulation whose cause could not be read, or one that expired meanwhile (`valid_before`).
+ */
+const UNSENT_REASONS: ReadonlySet<string> = new Set([
+  'invalid_exact_evm_scheme',
+  'invalid_exact_evm_network_mismatch',
+  'invalid_exact_evm_missing_eip712_domain',
+  'invalid_exact_evm_recipient_mismatch',
+  'invalid_exact_evm_signature',
+  'invalid_exact_evm_failed_to_parse_signature',
+  'invalid_exact_evm_payload_authorization_valid_after',
+  'invalid_exact_evm_authorization_value',
+  'invalid_exact_evm_payload_authorization_value_mismatch',
+  'invalid_exact_evm_token_name_mismatch',
+  'invalid_exact_evm_token_version_mismatch',
+  'invalid_exact_evm_eip3009_not_supported',
+  'invalid_exact_evm_insufficient_balance',
+  'asset_not_deployed_contract',
+  'unsupported_payload_type',
+]);
+
+/**
+ * Whether a settlement failed with the facilitator's own no, given with no transaction and for one of UNSENT_REASONS.
+ * Any other failure (a timeout, a network error, a transaction sent, a reason this version does not know) is unknown.
+ */
+export function refusedBeforeSending(error: unknown): boolean {
+  return error instanceof SettleError && !error.transaction && error.errorReason !== undefined && UNSENT_REASONS.has(error.errorReason);
+}
 
 /**
  * The x402 server of the service, on Celo's facilitator unless a test gives it another one. `onSettled` runs after
@@ -232,10 +265,8 @@ export function createResourceServer(
     server.onSettleFailure(async ({ paymentPayload, error }) => {
       const payment = readSignedPayment(paymentPayload);
       if (payment === null) return;
-      // A SettleError is the facilitator's own answer; one that carries a transaction (settlement_pending) was sent.
-      const refused = error instanceof SettleError && !error.transaction;
       // A SettleError's message is its errorReason, and its errorMessage when it has one.
-      await onSettleFailed({ asset: payment.asset, payer: payment.payer, nonce: payment.nonce, refused, reason: error.message });
+      await onSettleFailed({ asset: payment.asset, payer: payment.payer, nonce: payment.nonce, refused: refusedBeforeSending(error), reason: error.message });
     });
   }
   return server;
