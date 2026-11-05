@@ -9,9 +9,11 @@ import { CLIPS_PREFIX, type ClipsMessage, type Rect } from './clips';
 
 const rectOf = ({ left, top, width, height }: DOMRect): Rect => ({ x: left, y: top, w: width, h: height });
 
+/** The mask of a line: the nearest ancestor that clips it from above and below (`hidden`, or `clip` on that axis alone). */
 const clipOf = (el: Element): Rect | null => {
   for (let node = el.parentElement; node; node = node.parentElement) {
-    if (getComputedStyle(node).overflow === 'hidden') return rectOf(node.getBoundingClientRect());
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === 'hidden' || overflowY === 'clip') return rectOf(node.getBoundingClientRect());
   }
   return null;
 };

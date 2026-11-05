@@ -162,6 +162,14 @@ export const useInkRoom = (font: FontSpec, texts: readonly string[]): Room & { h
 /** `accentScale`: how much the accented words are scaled on a hit, as runs (see ScaledAccent); 1, the default: not at all. */
 type LinesProps = { lines: TypeLine[]; size: number; font: FontSpec; color: string; accent: string; align?: 'left' | 'center'; accentScale?: number };
 
+/**
+ * The style of a mask that text moves through up or down (a line revealed, a card's roll, a word of a cycle): it clips
+ * from above and below, and never at the sides. `clip` keeps the other axis visible, where `hidden` would make it scroll
+ * and cut too: the ink a glyph has past the box of its line (the last one of a word set with a tracking below 0, the é of
+ * "Vendé" in cobrame's font) is drawn whole.
+ */
+export const VERTICAL_MASK = { overflowX: 'visible', overflowY: 'clip' } as const;
+
 // The lines of a block are this far apart, in em, beyond their line height: what the room of one clip over the next used
 // to leave of their margins (they collapsed to the larger). The layout keeps it, whatever room the clips have.
 const LINE_GAP = 0.14;
@@ -231,7 +239,8 @@ const ScaledAccent: FC<{ line: TypeLine; accent: string; scale: number; align: '
 /**
  * Lines of type, each a probed `[data-qa-line]` in a clip of its own, line i lowered by `drop[i]` (0: in place, 1: hidden
  * under its clip). A clip has room for the ink of the lines of the block above and below its line (see useInkRoom), taken
- * back by negative margins, so that the room never moves the text.
+ * back by negative margins, so that the room never moves the text. It clips from above and below only (VERTICAL_MASK):
+ * the line moves up and down, and a tracking below 0 leaves the end of the last glyph's ink past the line's own box.
  */
 export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines, size, font, color, accent, align = 'left', drop = [], accentScale = 1 }) => {
   const { above: room, below, hide } = useInkRoom(font, lines.map(lineText));
@@ -240,7 +249,7 @@ export const TypeLines: FC<LinesProps & { drop?: readonly number[] }> = ({ lines
   return (
     <div style={{ ...fontStyle(font), fontSize: size, color, whiteSpace: 'nowrap', textAlign: align, display: 'flex', flexDirection: 'column', gap: `${LINE_GAP}em` }}>
       {lines.map((line, i) => (
-        <div key={i} style={{ overflow: 'hidden', padding: `${above}em 0 ${below}em`, margin: `${-above}em 0 ${-below}em` }}>
+        <div key={i} style={{ ...VERTICAL_MASK, padding: `${above}em 0 ${below}em`, margin: `${-above}em 0 ${-below}em` }}>
           <div data-qa-line style={{ transform: `translateY(${((drop[i] ?? 0) * hide * 100) / font.lineHeight}%)` }}>
             {accentScale === 1 ? (
               line.map((word, j) => (

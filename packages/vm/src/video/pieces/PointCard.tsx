@@ -2,7 +2,7 @@ import { useMemo, type FC } from 'react';
 import { AbsoluteFill, Easing, useCurrentFrame, useVideoConfig } from 'remotion';
 import { FORMATS, pointLineStart, REVEAL_FRAMES, safeWidth, TYPE, type Format } from '@app/core';
 import { layoutSeries, lineText, toWords, type Measure, type TypeLine } from '../type';
-import { linesHeight, measureWith, progress, RevealLines, revealDrop, TypeLines, useAd, useInkRoom, useSurface, type PieceProps } from './common';
+import { linesHeight, measureWith, progress, RevealLines, revealDrop, TypeLines, useAd, useInkRoom, useSurface, VERTICAL_MASK, type PieceProps } from './common';
 import { FLASH_PUNCH } from './WordFlash';
 
 // The room over the subline, as a share of the title's size: what the rule that stood between them and its two gaps took.
@@ -80,7 +80,7 @@ const RollIn: FC<{ title: Block; before: CardText; roll: number; leaving: boolea
   const rest = { position: 'absolute' as const, left: 0, right: 0, top: ink.above };
   return (
     <div style={{ position: 'relative', alignSelf: 'stretch', height: own }}>
-      <div style={{ position: 'absolute', left: 0, right: 0, top: -ink.above, height: at.clip, overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: -ink.above, height: at.clip, ...VERTICAL_MASK }}>
         {leaving && (
           <div style={{ ...rest, transform: `translateY(${at.old}px)` }}>
             <TypeLines lines={before.title.lines} size={before.title.size} font={theme.display} color={surface.fg} accent={surface.accent} align={align} />

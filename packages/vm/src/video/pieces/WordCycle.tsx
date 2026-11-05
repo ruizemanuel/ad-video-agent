@@ -2,7 +2,7 @@ import { useMemo, type FC } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { safeWidth, TYPE, WORD_ROLL, wordEnterFrame } from '@app/core';
 import { layoutLines, lineSources, toWords, type Measure } from '../type';
-import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, useSurface, type PieceProps } from './common';
+import { fontStyle, measureWith, progress, RevealLines, safeBox, useAd, useInkRoom, useSurface, VERTICAL_MASK, type PieceProps } from './common';
 
 // How far a word travels through the mask, as a share of its line: past its own line, descenders included.
 const TRAVEL = 1.35;
@@ -53,7 +53,7 @@ export const WordCycle: FC<PieceProps> = ({ scene, timed }) => {
             // element: a height of the line alone held the room too, and the clip came up short of the line's own foot).
             boxSizing: 'border-box',
             height: `${box}em`,
-            overflow: 'hidden',
+            ...VERTICAL_MASK,
             // The room above is under the prefix's line, never over it, so that the word rolling out stays off its glyphs. A word
             // whose ink rises more than 0.14 em above its line (an accented capital in a tight font) sits that much lower.
             padding: `${room.above}em 0 ${room.below}em`,

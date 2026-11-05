@@ -11,6 +11,7 @@ import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
 import {
   beatsToFrames,
+  flashEnterFrame,
   FORMATS,
   layoutScenes,
   sceneSurfaces,
@@ -172,7 +173,7 @@ function inkRows(shot: Shot, rect: Rect, ink: Pixel): { first: number; last: num
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wordcycle-run-'));
   work = mkdtempSync(join(tmpdir(), 'wordcycle-work-'));
-  for (const family of ['Inter', 'Oswald']) fonts[family] = await resolveFont(family, 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
+  for (const family of ['Inter', 'Oswald', 'Plus Jakarta Sans']) fonts[family] = await resolveFont(family, 'display', { fontFaceSrcs: [], stylesheets: [] }, { outDir: dir });
   [timed, headline] = layoutScenes(edl, 0).scenes as [TimedScene, TimedScene];
   serveUrl = await bundle({ entryPoint: join(import.meta.dirname, 'support', 'wordcycle-entry.tsx'), publicDir: dir });
   browser = await openBrowser('chrome');
@@ -346,6 +347,41 @@ describe('the clips of a WordCycle and of the lines of a headline', () => {
       // The precondition: the clips do have more room above their lines than the least they leave, or this proves nothing.
       lines.forEach(({ box, clip }, i) => expect((box.y - clip!.y) / size, `room above line ${i}, in em`).toBeGreaterThan(ROOM.above + 0.02));
       expectLinesSet(lines.map((line) => line.box), lineHeight);
+    });
+  });
+
+  // A word of a WordFlash is alone on its line, so its clip is as wide as its box. A tracking below 0 takes as much off
+  // the box after the last glyph, which leaves the end of that glyph's ink past the box: cobrame's display font as the
+  // capture sets it (Plus Jakarta Sans 800, -0.035 em) cut the é of "Vendé" flat on 3/11 and 5/11.
+  describe('a word of a WordFlash set with a tracking below 0', () => {
+    const word = 'Vendé';
+    const flash: Edl = { ...edl, hooks: [[{ piece: 'WordFlash', beats: 6, lines: [word, 'lo tuyo.'].map((text) => ({ text, kind: 'framing' as const })) }]] };
+    const site = (): SiteData => siteOf([{ ...fonts['Plus Jakarta Sans']!, weight: '800', letterSpacingEm: -0.035, lineHeight: 0.96 }]);
+
+    it('draws its last glyph whole: its ink goes on past the box and fades out, never stopping as a wall at its edge', async () => {
+      const scene = layoutScenes(flash, 0).scenes[0] as TimedScene;
+      // At rest: its punch is over, and the next word has not come in yet.
+      const shot = await shoot(site(), flashEnterFrame(1, scene, BPM) - 1, flash);
+      const { box } = lineOf(shot, word);
+      const size = box.h / 0.96;
+      const right = box.x + box.w;
+      // The background, sampled a quarter em to the right of the word, on its middle row.
+      const at0 = (Math.round(box.y + box.h / 2) * shot.width + Math.round(right + 0.25 * size)) * 3;
+      const [r0 = 0, g0 = 0, b0 = 0] = [shot.rgb[at0], shot.rgb[at0 + 1], shot.rgb[at0 + 2]];
+      const off = (r: number, g: number, b: number): number => Math.abs(r - r0) + Math.abs(g - g0) + Math.abs(b - b0);
+      // Any ink, an antialiased edge included; and ink the glyph covers wholly.
+      const anyInk: Pixel = (r, g, b) => off(r, g, b) > 24;
+      const solid: Pixel = (r, g, b) => off(r, g, b) > 100;
+      const rowsIn = (x: number, pixel: Pixel): number => inkRows(shot, { x, y: box.y, w: 1, h: box.h }, pixel)?.count ?? 0;
+      // The columns from a little inside the box to a fifth of an em past it.
+      const columns = Array.from({ length: Math.ceil(0.3 * size) }, (_, i) => Math.floor(right - 0.1 * size) + i);
+      const last = columns.filter((x) => rowsIn(x, anyInk) > 0).at(-1)!;
+      const tallest = Math.max(...columns.map((x) => rowsIn(x, solid)));
+      // The setup is the one that cut it: the glyph's ink reaches past the box (by about a pixel and a half here).
+      expect(last, `the last column of ink, by a box that ends at x=${right.toFixed(1)}`).toBeGreaterThan(Math.floor(right));
+      // A clip at the box stops the ink as a wall: a last column as solid as the glyph's side (30 rows of 46 here). The
+      // round side of a whole glyph thins out to a few antialiased pixels.
+      expect(rowsIn(last, solid), `solid rows in the last column of ink, x=${last}, of ${tallest} in the tallest`).toBeLessThan(tallest / 3);
     });
   });
 });
