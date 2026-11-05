@@ -608,6 +608,20 @@ describe('an order that is refunded', () => {
     expect((await notes(id)).slice(1)).toEqual([failed, failed]);
   });
 
+  it('notes a review whose step failed for good, by the name of the error alone, and refunds', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fakes.llm.review = async () => {
+      throw new Error('The reviewer is down: "Precio secreto"');
+    };
+    const run = await captureAndPreview(id);
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
+    // The step is tried twice, and says why on its last try only.
+    expect(fakes.llm.calls.review).toBe(2);
+    expect(error.mock.calls.filter(([tag]) => tag === '[review_failed]')).toEqual([['[review_failed]', id, 0, 'step-failed:Error']]);
+    expect(await notes(id)).toEqual([{ kind: 'review', round: 0, outcome: 'failed', why: 'step-failed:Error', problems: [], warnings: [], patched: [] }]);
+    expect((await fakes.store.getOrder(id))?.steps.review).toBe('failed');
+  });
+
   it('does not try a correction the order cannot afford, and refunds', async () => {
     const silent = await paidOrder(fakes.store, { audio: 'none' });
     // With the VM, the director, the judge and the first review, a round of corrections no longer fits under the cap.

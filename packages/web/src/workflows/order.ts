@@ -29,7 +29,7 @@ import {
   type VmTaskKind,
 } from '@app/core';
 import { createHook, FatalError, getStepMetadata, getWorkflowMetadata, RetryableError, sleep } from 'workflow';
-import { getAdapters } from '../adapters';
+import { getAdapters, type Adapters } from '../adapters';
 import { env } from '../env';
 import { refundFailedAlert } from '../maintenance/alerts';
 import { broadcastRefund, confirmRefund, prepareRefund } from '../payments/refunds';
@@ -642,14 +642,14 @@ async function warnOnce(store: Pick<OrderStore, 'getOrder' | 'addWarning'>, orde
   if (!(await store.getOrder(orderId))?.warnings.includes(warning)) await store.addWarning(orderId, warning);
 }
 
+type Reviewed = { ok: true; blocking: Problem[] } | { ok: false };
+
 /**
- * The review of one round of key frames: what blocks, or a failure (the order cannot afford the review, the key frames
- * file is not what the VM writes, a model failed). The remarks that do not block are logged, never shown to the client.
- * What it came to is noted on the order, last of all.
+ * The work of the review step (see reviewKeyframes), with what it needs: what blocks, or a failure (the order cannot
+ * afford the review, the key frames file is not what the VM writes, a model failed). The remarks that do not block are
+ * logged, never shown to the client. What it came to is noted on the order, last of all.
  */
-async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promise<{ ok: true; blocking: Problem[] } | { ok: false }> {
-  'use step';
-  const { store, blob, llm } = await getAdapters();
+async function reviewOnce(orderId: string, edl: Edl, round: number, { store, blob, llm }: Pick<Adapters, 'store' | 'blob' | 'llm'>): Promise<Reviewed> {
   await store.setStep(orderId, 'review', 'running');
   const failed = async (why: string, problems: Problem[] = []): Promise<{ ok: false }> => {
     console.error('[review_failed]', orderId, round, why);
@@ -676,6 +676,29 @@ async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promis
   const outcome = result.blocking.length === 0 ? 'passed' : 'blocked';
   await keepNote(store, orderId, { kind: 'review', round, outcome, why: null, problems: result.blocking, warnings: result.warnings, patched: [] });
   return { ok: true, blocking: result.blocking };
+}
+
+/**
+ * The review of one round of key frames (see reviewOnce). A step that fails for good (on its last try, or with an error
+ * not to be tried again) leaves the review failed, as the review loop takes it: it says so first, by the error's name
+ * alone, and notes it on the order when it has the store to.
+ */
+async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promise<Reviewed> {
+  'use step';
+  const lastTry = getStepMetadata().attempt > reviewKeyframes.maxRetries;
+  let store: OrderStore | undefined;
+  try {
+    const adapters = await getAdapters();
+    store = adapters.store;
+    return await reviewOnce(orderId, edl, round, adapters);
+  } catch (error) {
+    if (lastTry || FatalError.is(error)) {
+      const why = `step-failed:${errorName(error)}`;
+      console.error('[review_failed]', orderId, round, why);
+      if (store !== undefined) await keepNote(store, orderId, { kind: 'review', round, outcome: 'failed', why, problems: [], warnings: [], patched: [] });
+    }
+    throw error;
+  }
 }
 reviewKeyframes.maxRetries = 1;
 
