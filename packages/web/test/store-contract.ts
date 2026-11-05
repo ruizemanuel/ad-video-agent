@@ -545,10 +545,15 @@ export function describeStoreContract(name: string, make: () => Promise<OrderSto
 
       it('keeps the notes of an order as they were given, in the order they were added', async () => {
         const order = await create();
-        // With the clock stopped every note has the same time: the order they come back in is the order they were added in.
-        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+        // The clock goes back a second before each add: the order they come back in is the order they were added in, never
+        // the order of their times (Postgres keeps rows of the same time in the order they were written, so a tie proves nothing).
+        const now = Date.now();
+        vi.useFakeTimers({ toFake: ['Date'], now });
         try {
-          for (const note of [blocked, unusable, passed]) await s.addReviewNote(order.id, note);
+          for (const [k, note] of [blocked, unusable, passed].entries()) {
+            vi.setSystemTime(now - k * 1000);
+            await s.addReviewNote(order.id, note);
+          }
         } finally {
           vi.useRealTimers();
         }
