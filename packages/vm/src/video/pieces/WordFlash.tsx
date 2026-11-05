@@ -73,7 +73,7 @@ export const flashWords = (
 // display font, each as large as it fits, up to twice the headline (see flashWords). A line comes in whole on its beat (see
 // flashBeats), with a short punch of scale and no entrance that would hold up its reading, and replaces the one before.
 // Each line is set on its own background (`wordSurfaces`; the scene's, until the Ad gives them), and a flash that opens the
-// video carries the brand over its first line only.
+// video carries the brand over its first line only, centered over it.
 export const WordFlash: FC<PieceProps> = ({ scene, timed, showLogo, wordSurfaces }) => {
   const { theme, format, edl } = useAd();
   const surface = useSurface();
@@ -91,7 +91,7 @@ export const WordFlash: FC<PieceProps> = ({ scene, timed, showLogo, wordSurfaces
     <AbsoluteFill style={{ background: on.bg }}>
       {showLogo && k === 0 && (
         <SurfaceCtx.Provider value={colors[0] ?? surface}>
-          <OpeningBrand />
+          <OpeningBrand align="center" />
         </SurfaceCtx.Provider>
       )}
       <div style={{ ...centeredSafeBox(format), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

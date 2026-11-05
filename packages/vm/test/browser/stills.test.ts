@@ -822,6 +822,12 @@ describe('the word flash', () => {
     for (const texts of rest) expect(texts).not.toContain('Tiendita');
   });
 
+  it('centers the brand over the first word, on the center line of the frame', () => {
+    // The word is centered: a brand in the corner over it reads as apart from it (the visual review said so on 5/11).
+    const name = opening()[0]!.text.find((t) => t.text === brandName(site))!;
+    expect(offCenter(name, '9x16'), 'the brand name').toBeLessThanOrEqual(2);
+  });
+
   it('sets each word as large as it fits the column, centered on the frame', () => {
     // The width a line of the flash may take: the centered column, room left for the punch of scale, less the share of it a
     // line may not fill (2 %, see type.ts).

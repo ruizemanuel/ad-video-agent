@@ -335,23 +335,22 @@ export const BrandMark: FC<{ box: Size; name: { max: number; width: number }; al
   );
 };
 
-/** The brand over the scene that opens the video, as KineticHeadline has it: at the top of the safe zone, aligned as its type. */
-export const OpeningBrand: FC = () => {
+/**
+ * The brand over the scene that opens the video, at the top of the safe zone: aligned as the format's type (as
+ * KineticHeadline has it), or centered over a centered scene (a WordFlash), on the frame's center line as centeredSafeBox
+ * has it.
+ */
+export const OpeningBrand: FC<{ align?: 'left' | 'center' }> = ({ align }) => {
   const { format } = useAd();
   const type = TYPE[format];
   const { safe } = FORMATS[format];
+  const set = align ?? type.align;
+  const centered = centeredSafeBox(format);
+  const sides = set === 'center' ? { left: centered.left, right: FORMATS[format].width - centered.left - centered.width } : { left: safe.left, right: safe.right };
+  const width = set === 'center' ? centered.width : safeWidth(format);
   return (
-    <div
-      style={{
-        position: 'absolute',
-        left: safe.left,
-        right: safe.right,
-        top: safe.top,
-        display: 'flex',
-        justifyContent: type.align === 'center' ? 'center' : 'flex-start',
-      }}
-    >
-      <BrandMark box={{ width: safeWidth(format), height: type.logo }} name={{ max: Math.round(type.logo * 0.75), width: safeWidth(format) }} align={type.align} />
+    <div style={{ position: 'absolute', ...sides, top: safe.top, display: 'flex', justifyContent: set === 'center' ? 'center' : 'flex-start' }}>
+      <BrandMark box={{ width, height: type.logo }} name={{ max: Math.round(type.logo * 0.75), width }} align={set} />
     </div>
   );
 };
