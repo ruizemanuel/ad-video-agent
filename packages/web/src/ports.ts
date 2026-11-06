@@ -527,9 +527,15 @@ export interface LlmPort {
 
   /**
    * The corrector: the scenes it rewrote (each whole, at its path) and the claims it added or corrected, for these
-   * problems of the edit list. It reads the site's text (to quote it) but no pictures.
+   * problems of the edit list. It reads the site's text (to quote it) but no pictures. `turnedDown` is a fix already tried
+   * for the same problems that could not be used: the scenes it put in and what failed in them.
    */
-  patchEdl(input: { edl: Edl; problems: Problem[]; site: SiteData }): Promise<{ patches: ScenePatch[]; claimFixes: Claim[]; usd: number }>;
+  patchEdl(input: {
+    edl: Edl;
+    problems: Problem[];
+    site: SiteData;
+    turnedDown?: { patched: ScenePatch[]; problems: Problem[] };
+  }): Promise<{ patches: ScenePatch[]; claimFixes: Claim[]; usd: number }>;
 
   /** The judge, on the items judgeItems builds: a verdict per item, which may leave some out. */
   judge(input: { claims: JudgeItem[]; framing: FramingItem[] }): Promise<{ verdicts: ClaimVerdict[]; framing: FramingVerdict[]; usd: number }>;

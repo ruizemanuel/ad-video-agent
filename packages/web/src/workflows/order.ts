@@ -37,7 +37,7 @@ import { payForVm, resolveVmPayment, vmPaymentKey, type PayResult } from '../pay
 import { canAfford, EST } from '../pipeline/budget';
 import { failedCandidate, generateCandidate, musicRequest, pickTrack, type Candidate, type ChosenTrack } from '../pipeline/music';
 import { runReview, type ReviewResult } from '../pipeline/review';
-import { correctEdl, failedCallSummary, runScript, unusableSummary, type Corrected, type ScriptResult } from '../pipeline/script';
+import { correctEdl, failedCallSummary, runScript, unusableSummary, type Corrected, type ScriptResult, type TurnedDown } from '../pipeline/script';
 import {
   ModelCallFailed,
   ModelOutputInvalid,
@@ -330,8 +330,9 @@ async function makeMusic(orderId: string, audio: OrderRequest['audio'], edl: Edl
 /**
  * The key frames of each round through the review. What blocks goes to the corrector, at most twice and while the order's
  * cap allows a whole round (the corrector, the judge and the review after it); a fix that cannot be used spends its round
- * and leaves the same problems. Each usable fix is rendered again as key frames of a new round. The edit list that passes
- * is the one rendered. Each review and each correction leaves a note on the order (ReviewNote), which the flow never reads.
+ * and leaves the same problems, and the next try at them is told of it when the code checks or the judge turned it down.
+ * Each usable fix is rendered again as key frames of a new round. The edit list that passes is the one rendered. Each
+ * review and each correction leaves a note on the order (ReviewNote), which the flow never reads.
  */
 async function review(orderId: string, edl: Edl, first: unknown): Promise<{ ok: true; edl: Edl } | Failed> {
   let current = edl;
@@ -353,17 +354,19 @@ async function review(orderId: string, edl: Edl, first: unknown): Promise<{ ok: 
     }
 
     let fixed: Edl | null = null;
+    let turnedDown: TurnedDown | undefined;
     while (blocking.length > 0 && fixed === null) {
       if (corrections === REVIEW_ROUNDS) return await failAt(orderId, 'review', 'quality');
       corrections += 1;
       let correction: Correction;
       try {
-        correction = await correctForReview(orderId, current, blocking, round);
+        correction = await correctForReview(orderId, current, blocking, round, turnedDown);
       } catch {
         correction = { status: 'unusable' };
       }
       if (correction.status === 'over-budget') return await failAt(orderId, 'review', 'quality');
       if (correction.status === 'fixed') fixed = correction.edl;
+      else turnedDown = correction.turnedDown;
     }
     if (fixed === null) return { ok: true, edl: current };
 
@@ -702,7 +705,7 @@ async function reviewKeyframes(orderId: string, edl: Edl, round: number): Promis
 }
 reviewKeyframes.maxRetries = 1;
 
-type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable' } | { status: 'over-budget' };
+type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable'; turnedDown?: TurnedDown } | { status: 'over-budget' };
 
 /**
  * The work of the correction step (see correctForReview), with what it needs: the corrector's fix for what the review
@@ -710,10 +713,19 @@ type Correction = { status: 'fixed'; edl: Edl } | { status: 'unusable' } | { sta
  * order's cap, or the fix cannot be used. Why it cannot be used is logged, one line with ids and rules only (see
  * unusableSummary and failedCallSummary). A model that may answer later (429, 5xx, no status) is asked again on the step's
  * next try; on its last (`lastTry`), the correction cannot be used either, and says so. Anything else goes up. What the
- * correction of round `round` came to is noted on the order, with what failed in full; one that goes up is not.
+ * correction of round `round` came to is noted on the order, with what failed in full; one that goes up is not. A fix the
+ * code checks or the judge turned down is given back for the next try at the same problems (`turnedDown`), which tells
+ * the corrector of it.
  */
 export async function correctOnce(
-  { orderId, edl, problems, round, lastTry }: { orderId: string; edl: Edl; problems: Problem[]; round: number; lastTry: boolean },
+  {
+    orderId,
+    edl,
+    problems,
+    round,
+    lastTry,
+    turnedDown,
+  }: { orderId: string; edl: Edl; problems: Problem[]; round: number; lastTry: boolean; turnedDown?: TurnedDown },
   {
     store,
     blob,
@@ -728,22 +740,27 @@ export async function correctOnce(
     await note('over-budget', null);
     return { status: 'over-budget' };
   }
-  const unusable = async (why: string, failed: Problem[] = [], patched: ScenePatch[] = []): Promise<Correction> => {
+  const unusable = async (why: string, failed: Problem[] = [], patched: ScenePatch[] = [], next?: TurnedDown): Promise<Correction> => {
     console.warn('[correction_unusable]', orderId, why);
     await note('unusable', why, failed, patched);
-    return { status: 'unusable' };
+    return next === undefined ? { status: 'unusable' } : { status: 'unusable', turnedDown: next };
   };
   const capture = await readCapture(blob, orderId);
   if (capture === undefined) return await unusable('capture-unreadable');
   let corrected: Corrected;
   try {
-    corrected = await correctEdl({ orderId, edl, problems, site: capture.site, deps: { store, llm } });
+    corrected = await correctEdl({ orderId, edl, problems, site: capture.site, ...(turnedDown === undefined ? {} : { turnedDown }), deps: { store, llm } });
   } catch (error) {
     if (!lastTry) retryLaterIfBusy(error);
     if (isModelFailure(error)) return await unusable(failedCallSummary(error));
     throw error;
   }
-  if (!corrected.ok) return await unusable(unusableSummary(corrected, capture.site), corrected.problems, corrected.patched);
+  if (!corrected.ok) {
+    const { reason, problems: failed, patched, judged } = corrected;
+    // Only a fix the checks or the judge read has something to tell the next try.
+    const next = reason === 'checks' || reason === 'judge' ? { patched, problems: failed, judged } : undefined;
+    return await unusable(unusableSummary(corrected, capture.site), failed, patched, next);
+  }
   await note('fixed', null, [], corrected.patched);
   return { status: 'fixed', edl: corrected.edl };
 }
@@ -767,19 +784,23 @@ async function keepNote(store: Pick<OrderStore, 'addReviewNote'>, orderId: strin
 }
 
 /**
- * The corrector's fix for what the review of round `round` blocked on, or why there is none (see correctOnce); the step's
- * output says no more than `unusable`. A step that fails for good (on its last try, or with an error not to be tried
- * again) leaves the correction unusable too, as the review loop takes it: it says so first, by the error's name alone,
- * and notes it on the order when it has the store to.
+ * The corrector's fix for what the review of round `round` blocked on, or why there is none (see correctOnce), told of a
+ * fix for the same problems that was turned down (`turnedDown`); the step's output says no more than `unusable` and the
+ * fix the checks or the judge turned down, for the next try. A step that fails for good (on its last try, or with an
+ * error not to be tried again) leaves the correction unusable too, as the review loop takes it: it says so first, by
+ * the error's name alone, and notes it on the order when it has the store to.
  */
-async function correctForReview(orderId: string, edl: Edl, problems: Problem[], round: number): Promise<Correction> {
+async function correctForReview(orderId: string, edl: Edl, problems: Problem[], round: number, turnedDown?: TurnedDown): Promise<Correction> {
   'use step';
   const lastTry = getStepMetadata().attempt > correctForReview.maxRetries;
   let store: OrderStore | undefined;
   try {
     const adapters = await getAdapters();
     store = adapters.store;
-    return await correctOnce({ orderId, edl, problems, round, lastTry }, { store, blob: adapters.blob, llm: adapters.llm, spendCap: env().SPEND_CAP_PER_ORDER_USD });
+    return await correctOnce(
+      { orderId, edl, problems, round, lastTry, ...(turnedDown === undefined ? {} : { turnedDown }) },
+      { store, blob: adapters.blob, llm: adapters.llm, spendCap: env().SPEND_CAP_PER_ORDER_USD },
+    );
   } catch (error) {
     if (lastTry || FatalError.is(error)) {
       const why = `step-failed:${errorName(error)}`;

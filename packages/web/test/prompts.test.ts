@@ -569,6 +569,26 @@ describe('patchPrompt', () => {
     expect(fences(text)).toBe(6);
     expect(blocks(text)).toEqual([siteForModel(siteEscaping()), edl, [problem]]);
   });
+
+  describe('a fix for the same problems that was turned down', () => {
+    const problem: Problem = { where: 'body[1]', rule: 'visual', detail: 'visual review: a letter is cut by an edge or a mask' };
+    const failed: Problem = { where: 'body[1]', rule: 'not-equivalent', detail: `claim c3: "0% de comisión en tus ventas." against its quote "${ESCAPE}": it says more` };
+    const turnedDown = () => ({ patched: [{ path: 'body[1]', scene: edlShop().body[1]! }], problems: [failed] });
+    const text = () => patchPrompt({ edl: edlShop(), problems: [problem], site: siteShop(), turnedDown: turnedDown() });
+
+    it('goes after the problems, in a block of its own that keeps text with a fence inside', () => {
+      expect(fences(text())).toBe(8);
+      expect(blocks(text())).toEqual([siteForModel(siteShop()), edlShop(), [problem], turnedDown()]);
+    });
+
+    it('is what the instructions name, with what to do with it: a line turned down fails again as it was', () => {
+      const label = text().split('\n\n').at(-1)?.split(':\n')[0] ?? '';
+      const flat = (t: string): string => t.replace(/\s+/g, ' ');
+      expect(label).not.toBe('');
+      expect(flat(PATCH_SYSTEM)).toContain(`"${label}"`);
+      expect(flat(PATCH_SYSTEM)).toMatch(/fails again/);
+    });
+  });
 });
 
 describe('JUDGE_SYSTEM', () => {

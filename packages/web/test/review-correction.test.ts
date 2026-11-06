@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyPatches, scenePaths, validateEdl, type Edl, type Problem } from '@app/core';
+import { applyPatches, judgeItems, scenePaths, validateEdl, type Edl, type Problem } from '@app/core';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RetryableError } from 'workflow';
 import { FileBlob } from '../src/adapters/fake/blob';
@@ -70,11 +70,14 @@ describe('correctOnce', () => {
     expect(await notes()).toEqual([note({ outcome: 'fixed', patched: [{ path: 'body[1]', scene: edlShop.body[1]! }] })]);
   });
 
-  it('says why the fix cannot be used, in one line, and notes what failed with the scenes it put in', async () => {
+  it('says why the fix cannot be used, in one line, notes what failed with the scenes it put in, and gives both to the next try', async () => {
     const scene = scenePaths(edlShop).find((p) => p.path === 'body[1]')!.scene;
     const bad: Edl = applyPatches(edlShop, [{ path: 'body[1]', scene: { ...scene, lines: scene.lines.map((line, k) => (k === 0 ? { ...line, text: `${line.text} 99` } : line)) } }], []);
     llm.fixed = bad;
-    expect(await correct(false)).toEqual({ status: 'unusable' });
+    expect(await correct(false)).toEqual({
+      status: 'unusable',
+      turnedDown: { patched: [{ path: 'body[1]', scene: bad.body[1]! }], problems: validateEdl(bad, captureShop().site), judged: { claims: [], framing: [] } },
+    });
     expect(lines()).toEqual([['[correction_unusable]', id, 'checks body[1].lines[0]:number-mismatch | patched body[1]:KineticHeadline']]);
     expect(await notes()).toEqual([
       note({
@@ -83,6 +86,37 @@ describe('correctOnce', () => {
         patched: [{ path: 'body[1]', scene: bad.body[1]! }],
       }),
     ]);
+  });
+
+  it('gives the next try a fix the judge turned down, with what failed in it and what the judge said of each item it read', async () => {
+    llm.fixed = reworded;
+    llm.claimVerdicts = { 'body[1]:c3': false };
+    const c3 = judgeItems(reworded).claims.find((i) => i.id === 'body[1]:c3')!;
+    expect(await correct(false)).toEqual({
+      status: 'unusable',
+      turnedDown: {
+        patched: [{ path: 'body[1]', scene: reworded.body[1]! }],
+        problems: [{ where: 'body[1]', rule: 'not-equivalent', detail: expect.stringContaining('claim c3') }],
+        judged: { claims: [{ item: c3, failed: 'The line says more than the quote.' }], framing: [] },
+      },
+    });
+  });
+
+  it('tells the corrector of the fix that was turned down before, with what failed in it', async () => {
+    const failed: Problem = { where: 'body[1]', rule: 'not-equivalent', detail: 'claim c3: it says more than its quote' };
+    const patched = [{ path: 'body[1]', scene: reworded.body[1]! }];
+    const turnedDown = { patched, problems: [failed], judged: { claims: [], framing: [] } };
+    await correctOnce({ orderId: id, edl: edlShop, problems: cut, round: 0, lastTry: false, turnedDown }, { store, blob, llm, spendCap: CAP });
+    expect(llm.lastPatchInput?.turnedDown).toEqual({ patched, problems: [failed] });
+  });
+
+  it('gives the next try nothing when the answer of the corrector does not fit: there is no fix to tell of', async () => {
+    llm.patchEdl = async () => {
+      throw new ModelOutputInvalid('The corrector did not answer with valid patches.', 0.04);
+    };
+    const correction = await correct(false);
+    expect(correction).toEqual({ status: 'unusable' });
+    expect(correction).not.toHaveProperty('turnedDown');
   });
 
   it('says the capture could not be read', async () => {

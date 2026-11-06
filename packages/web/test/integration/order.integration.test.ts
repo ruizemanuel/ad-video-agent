@@ -559,7 +559,7 @@ describe('an order that is refunded', () => {
     expect(await noteLines(id)).toEqual(['review:0:blocked', 'correction:0:fixed', 'review:1:blocked', 'correction:1:fixed', 'review:2:blocked']);
   });
 
-  it('logs why each correction could not be used, in ids and rules only, and keeps the step output to the status', async () => {
+  it('logs why each correction could not be used, in ids and rules only', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     scenario({ review: 'always-cut' });
     // The corrector rewrites every scene the review blocked on, and puts a number its quote does not have in body[1].
@@ -582,13 +582,35 @@ describe('an order that is refunded', () => {
       for (const text of said) expect(why).not.toContain(text);
       expect(why).not.toContain('"');
     }
-    expect(await stepOutput(run.runId, 'correctForReview')).toEqual({ status: 'unusable' });
 
     // The note of each says what the log line says, and what failed in full.
     expect(await noteLines(id)).toEqual(['review:0:blocked', 'correction:0:unusable', 'correction:0:unusable']);
     const corrections = (await notes(id)).filter((n) => n.kind === 'correction');
     expect(corrections.map((n) => n.why)).toEqual(lines.map(([, , why]) => why));
     for (const n of corrections) expect(n.problems).toEqual(validateEdl(bad, siteShop));
+  });
+
+  it('tells the second correction of the fix the first could not use, with what failed in it', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    scenario({ review: 'always-cut' });
+    // The corrector rewrites body[1] each time, with a number its quote does not have.
+    const bad: Edl = {
+      ...edlShop,
+      body: edlShop.body.map((scene, k) => (k === 1 ? { ...scene, lines: scene.lines.map((line, n) => (n === 0 ? { ...line, text: `${line.text} 99` } : line)) } : scene)),
+    };
+    const patched = [{ path: 'body[1]', scene: bad.body[1]! }];
+    const told: unknown[] = [];
+    fakes.llm.patchEdl = async ({ turnedDown }) => {
+      told.push(turnedDown);
+      return { patches: patched, claimFixes: [], usd: 0.05 };
+    };
+    const run = await captureAndPreview(id);
+    expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'quality' });
+
+    const turnedDown = { patched, problems: validateEdl(bad, siteShop), judged: { claims: [], framing: [] } };
+    expect(validateEdl(bad, siteShop).map((p) => `${p.where}:${p.rule}`)).toEqual(['body[1].lines[0]:number-mismatch']);
+    expect(await stepOutput(run.runId, 'correctForReview')).toEqual({ status: 'unusable', turnedDown });
+    expect(told).toEqual([undefined, { patched, problems: turnedDown.problems }]);
   });
 
   it('logs a correction whose step failed for good, by the name of the error alone', async () => {

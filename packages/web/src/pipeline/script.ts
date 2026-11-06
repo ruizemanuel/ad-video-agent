@@ -31,12 +31,22 @@ export type ScriptDeps = {
 
 export type ScriptResult = { ok: true; edl: Edl } | { ok: false; reason: 'validation' | 'budget' };
 
+/** What the judge said of each item it read: why it failed it, or null when it passed it. */
+export type Judged = { claims: { item: JudgeItem; failed: string | null }[]; framing: { item: FramingItem; failed: string | null }[] };
+
 /**
  * Why the corrector's fix cannot be used: its answer does not fit (`patch-invalid`), it patches a scene that is not there
  * (`patch-path`), the edit list it makes fails the code checks (`checks`) or the judge fails an item of it (`judge`).
- * `problems` are what failed, and `patched` the scenes the fix put in, for the last two.
+ * `problems` are what failed, and `patched` the scenes the fix put in, for the last two. `judged` is what the judge said
+ * of the items it read, in this fix and in the one turned down before it.
  */
-export type Unusable = { ok: false; reason: 'patch-invalid' | 'patch-path' | 'checks' | 'judge'; problems: Problem[]; patched: ScenePatch[] };
+export type Unusable = { ok: false; reason: 'patch-invalid' | 'patch-path' | 'checks' | 'judge'; problems: Problem[]; patched: ScenePatch[]; judged: Judged };
+
+/**
+ * A fix the code checks or the judge turned down, for the next try at the same problems: the scenes it put in, what failed
+ * in them, and what the judge said of the items it read, which stands in the next try while an item reads the same.
+ */
+export type TurnedDown = Pick<Unusable, 'patched' | 'problems' | 'judged'>;
 
 /** A fix that can be used: the edit list with it, and the scenes it put in. */
 export type Corrected = { ok: true; edl: Edl; patched: ScenePatch[] } | Unusable;
@@ -74,11 +84,19 @@ const PASSED = Symbol('passed');
 type Items = { claims: JudgeItem[]; framing: FramingItem[] };
 
 /**
- * What the judge said about each item it read, for the life of one script: why it failed, or `passed`. An item that
- * reads the same is never asked about again, so a verdict that failed it cannot be turned by asking until it passes.
+ * What the judge said about each item it read, for the life of one script (or of one correction, and the one turned down
+ * before it): why it failed, or `passed`. An item that reads the same is never asked about again, so a verdict that
+ * failed it cannot be turned by asking until it passes.
  */
 class Verdicts {
   private readonly said = new Map<string, string | typeof PASSED>();
+  private readonly read: Judged = { claims: [], framing: [] };
+
+  /** Starts from what the judge said before: of the items of a fix that was turned down. */
+  constructor(before: Judged = { claims: [], framing: [] }) {
+    for (const { item, failed } of before.claims) this.heardClaim(item, failed);
+    for (const { item, failed } of before.framing) this.heardFraming(item, failed);
+  }
 
   /** The items there is no verdict on yet. */
   unread(items: Items): Items {
@@ -93,8 +111,23 @@ class Verdicts {
 
   /** Keeps what the judge said about the items it was asked about. */
   keep(asked: Items, verdict: { verdicts: ClaimVerdict[]; framing: FramingVerdict[] }): void {
-    for (const item of asked.claims) this.said.set(claimKey(item), failure(item.id, verdict.verdicts, (v) => !v.equivalent) ?? PASSED);
-    for (const item of asked.framing) this.said.set(framingKey(item), failure(item.id, verdict.framing, (v) => v.assertsProductFact) ?? PASSED);
+    for (const item of asked.claims) this.heardClaim(item, failure(item.id, verdict.verdicts, (v) => !v.equivalent) ?? null);
+    for (const item of asked.framing) this.heardFraming(item, failure(item.id, verdict.framing, (v) => v.assertsProductFact) ?? null);
+  }
+
+  /** What the judge said of the items it read, the ones it started from included. */
+  judged(): Judged {
+    return { claims: [...this.read.claims], framing: [...this.read.framing] };
+  }
+
+  private heardClaim(item: JudgeItem, failed: string | null): void {
+    this.said.set(claimKey(item), failed ?? PASSED);
+    this.read.claims.push({ item, failed });
+  }
+
+  private heardFraming(item: FramingItem, failed: string | null): void {
+    this.said.set(framingKey(item), failed ?? PASSED);
+    this.read.framing.push({ item, failed });
   }
 
   /** What failed, as problems whose `where` starts with the scene path. Every item has to have been read. */
@@ -147,17 +180,20 @@ async function problemsOf(calls: Calls, edl: Edl, site: SiteData, verdicts: Verd
 
 /**
  * The edit list with the corrector's fix and the scenes it put in, or why the fix cannot be used: an answer that does not
- * fit, or a patch for a scene that is not there.
+ * fit, or a patch for a scene that is not there. The corrector is told of a fix for the same problems that was turned
+ * down, when there was one: the scenes it put in and what failed in them.
  */
 async function patched(
   calls: Calls,
   edl: Edl,
   problems: Problem[],
   site: SiteData,
+  turnedDown?: TurnedDown,
 ): Promise<{ ok: true; edl: Edl; patches: ScenePatch[] } | { ok: false; reason: 'patch-invalid' | 'patch-path' }> {
+  const told = turnedDown === undefined ? {} : { turnedDown: { patched: turnedDown.patched, problems: turnedDown.problems } };
   let fix: Awaited<ReturnType<LlmPort['patchEdl']>>;
   try {
-    fix = await paid(calls, 'llm:patch', () => calls.llm.patchEdl({ edl, problems, site }));
+    fix = await paid(calls, 'llm:patch', () => calls.llm.patchEdl({ edl, problems, site, ...told }));
   } catch (error) {
     if (error instanceof ModelOutputInvalid) return { ok: false, reason: 'patch-invalid' };
     throw error;
@@ -207,30 +243,34 @@ export async function runScript({
  * corrector's fix, applied and checked as the script checks its edit lists (the code checks, then the judge on the items
  * the fix changed), with the scenes it put in. The edit list it is given passed the judge whole (the script's, or a fix
  * that passed), so what the judge said of each of its items stands while the item reads the same: asked again, the judge
- * turns down items it passed, and the fix would fail on what it never touched. When the fix cannot be used, says why
- * (see Unusable). Every call is recorded on the order, and any other failure of a model goes up: a call that failed, or a
- * judge's answer that does not fit (the corrector's own is `patch-invalid`).
+ * turns down items it passed, and the fix would fail on what it never touched. A second try at the same problems, after a
+ * fix that was turned down (`turnedDown`), tells the corrector what failed in it, and keeps what the judge said of its
+ * items: a line it turned down fails again as it was, and one it passed is not read again. When the fix cannot be used,
+ * says why (see Unusable). Every call is recorded on the order, and any other failure of a model goes up: a call that
+ * failed, or a judge's answer that does not fit (the corrector's own is `patch-invalid`).
  */
 export async function correctEdl({
   orderId,
   edl,
   problems,
   site,
+  turnedDown,
   deps,
 }: {
   orderId: string;
   edl: Edl;
   problems: Problem[];
   site: SiteData;
+  turnedDown?: TurnedDown;
   deps: Omit<Calls, 'orderId'>;
 }): Promise<Corrected> {
   const calls: Calls = { orderId, ...deps };
-  const fix = await patched(calls, edl, problems, site);
-  if (!fix.ok) return { ok: false, reason: fix.reason, problems: [], patched: [] };
-  const verdicts = new Verdicts();
+  const verdicts = new Verdicts(turnedDown?.judged);
   verdicts.pass(judgeItems(edl));
+  const fix = await patched(calls, edl, problems, site, turnedDown);
+  if (!fix.ok) return { ok: false, reason: fix.reason, problems: [], patched: [], judged: verdicts.judged() };
   const found = await problemsOf(calls, fix.edl, site, verdicts);
-  if (found.problems.length > 0) return { ok: false, reason: found.by, problems: found.problems, patched: fix.patches };
+  if (found.problems.length > 0) return { ok: false, reason: found.by, problems: found.problems, patched: fix.patches, judged: verdicts.judged() };
   return { ok: true, edl: fix.edl, patched: fix.patches };
 }
 
@@ -239,7 +279,7 @@ export async function correctEdl({
  * scenes the fix put in as `path:piece shotId#boxIndex`. Only what the code wrote or checked goes in: never a problem's
  * detail, which quotes the site and the model, nor the text of a scene, and a shot the site does not have is `?`.
  */
-export function unusableSummary({ reason, problems, patched: fixes }: Unusable, site: SiteData): string {
+export function unusableSummary({ reason, problems, patched: fixes }: Omit<Unusable, 'judged'>, site: SiteData): string {
   const failed = [...new Set(problems.map((p) => `${p.where}:${p.rule}`))].join(',');
   const shotOf = (shotId: string): string => (site.shots.some((s) => s.id === shotId) ? shotId : '?');
   const scenes = fixes

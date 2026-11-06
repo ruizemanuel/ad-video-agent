@@ -357,12 +357,18 @@ describe('correctEdl', () => {
   it('says the fix fails the code checks, with what failed and the scenes it put in, without asking the judge', async () => {
     const bad = withBadNumber(edlShop, 'body[1]');
     patchTo(bad, 'body[1]');
-    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'checks', problems: validateEdl(bad, siteShop()), patched: [{ path: 'body[1]', scene: bad.body[1] }] });
+    expect(await correctEdl(input)).toEqual({
+      ok: false,
+      reason: 'checks',
+      problems: validateEdl(bad, siteShop()),
+      patched: [{ path: 'body[1]', scene: bad.body[1] }],
+      judged: { claims: [], framing: [] },
+    });
     expect(validateEdl(bad, siteShop()).map((p) => `${p.where}:${p.rule}`)).toEqual(['body[1].lines[0]:number-mismatch']);
     expect(llm.calls.judge).toBe(0);
   });
 
-  it('says the judge fails the fixed edit list, with the item it failed and the scenes the fix put in', async () => {
+  it('says the judge fails the fixed edit list, with the item it failed, the scenes the fix put in and what it said of each item it read', async () => {
     patchTo(reworded, 'body[1]');
     llm.claimVerdicts = { 'body[1]:c3': false };
     expect(await correctEdl(input)).toEqual({
@@ -370,20 +376,81 @@ describe('correctEdl', () => {
       reason: 'judge',
       problems: [{ where: 'body[1]', rule: 'not-equivalent', detail: expect.stringContaining('claim c3') }],
       patched: [{ path: 'body[1]', scene: reworded.body[1] }],
+      judged: { claims: [{ item: judgeItems(reworded).claims.find((i) => i.id === 'body[1]:c3'), failed: 'The line says more than the quote.' }], framing: [] },
     });
   });
 
   it('says the fix patches a scene that does not exist', async () => {
     llm.patchEdl = async () => ({ patches: [{ path: 'body[9]', scene: edlShop.cta }], claimFixes: [], usd: 0.05 });
-    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-path', problems: [], patched: [] });
+    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-path', problems: [], patched: [], judged: { claims: [], framing: [] } });
   });
 
   it('says the answer does not fit, and records what it cost', async () => {
     llm.patchEdl = async () => {
       throw new ModelOutputInvalid('The corrector did not answer with valid patches.', 0.04);
     };
-    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-invalid', problems: [], patched: [] });
+    expect(await correctEdl(input)).toEqual({ ok: false, reason: 'patch-invalid', problems: [], patched: [], judged: { claims: [], framing: [] } });
     expect(await store.orderCost(id)).toBe(0.04);
+  });
+
+  // When a fix for what the review blocked on cannot be used, the next try at the same problems is told what was turned
+  // down and why, and what the judge said of that fix stands while a text reads the same, as in the script.
+  describe('a second try, after a fix the checks or the judge turned down', () => {
+    const c3Of = (edl: Edl) => judgeItems(edl).claims.find((i) => i.id === 'body[1]:c3');
+    const withLine = (edl: Edl, path: string, text: string): Edl =>
+      withScene(edl, path, (scene) => ({ ...scene, lines: scene.lines.map((line, k) => (k === 0 ? { ...line, text } : line)) }));
+    const patchScenes = (edl: Edl, paths: string[]) => {
+      llm.patchEdl = async () => ({ patches: paths.map((path) => ({ path, scene: scenePaths(edl).find((p) => p.path === path)!.scene })), claimFixes: [], usd: 0.05 });
+    };
+    // The first try, turned down: what the next one is given.
+    const firstTry = async () => {
+      const first = await correctEdl(input);
+      if (first.ok) throw new Error('The first fix was meant to be turned down.');
+      const { patched, problems, judged } = first;
+      return { patched, problems, judged };
+    };
+
+    it('gives the corrector the fix that was turned down and what failed in it, and nothing of what the judge said', async () => {
+      const failed: Problem = { where: 'body[1]', rule: 'not-equivalent', detail: 'claim c3: it says more than its quote' };
+      const patched = [{ path: 'body[1]', scene: reworded.body[1]! }];
+      await correctEdl({ ...input, turnedDown: { patched, problems: [failed], judged: { claims: [{ item: c3Of(reworded)!, failed: 'it says more' }], framing: [] } } });
+      expect(llm.lastPatchInput).toEqual({ edl: edlShop, problems: [cut], site: siteShop(), turnedDown: { patched, problems: [failed] } });
+    });
+
+    it('fails a line the judge turned down in that fix when this one repeats it, without asking the judge again', async () => {
+      patchTo(reworded, 'body[1]');
+      llm.claimVerdicts = { 'body[1]:c3': false };
+      const turnedDown = await firstTry();
+      // Asked again, the judge would pass it.
+      llm.claimVerdicts = {};
+      expect(await correctEdl({ ...input, turnedDown })).toEqual({ ok: false, reason: 'judge', ...turnedDown });
+      expect(llm.calls.judge).toBe(1);
+    });
+
+    it('fails a framing line the judge turned down in that fix when this one repeats it, without asking the judge again', async () => {
+      const asks = withLine(edlShop, 'hooks[0][0]', '¿Cuánto te cuesta');
+      patchScenes(asks, ['hooks[0][0]']);
+      llm.framingVerdicts = { 'hooks[0][0]:framing:0': true };
+      const turnedDown = await firstTry();
+      llm.framingVerdicts = {};
+      expect(await correctEdl({ ...input, turnedDown })).toEqual({ ok: false, reason: 'judge', ...turnedDown });
+      expect(llm.calls.judge).toBe(1);
+    });
+
+    it('asks the judge only about what this fix changed from that one, keeping what it passed there', async () => {
+      // The first fix rewrites body[0] and body[1]: the judge passes body[0] and turns body[1] down.
+      const both = withLine(reworded, 'body[0]', 'Tus clientes te piden por WhatsApp.');
+      patchScenes(both, ['body[0]', 'body[1]']);
+      llm.claimVerdicts = { 'body[1]:c3': false };
+      const turnedDown = await firstTry();
+      // The second keeps body[0] as the first wrote it and words body[1] another way. Asked again, the judge would turn
+      // body[0] down.
+      const again = withLine(both, 'body[1]', 'Vendé sin comisión.');
+      patchScenes(again, ['body[0]', 'body[1]']);
+      llm.claimVerdicts = { 'body[0]:c6': false };
+      expect(await correctEdl({ ...input, turnedDown })).toMatchObject({ ok: true, edl: again });
+      expect(llm.lastJudgeInput).toEqual({ claims: [c3Of(again)], framing: [] });
+    });
   });
 
   it("lets a judge's answer that does not fit through: the flow says which call it was", async () => {
