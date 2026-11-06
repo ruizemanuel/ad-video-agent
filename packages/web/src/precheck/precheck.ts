@@ -89,7 +89,7 @@ export async function precheck(url: string, deps: PrecheckDeps): Promise<Prechec
       text: analysis.text.slice(0, CLASSIFIER_TEXT_CHARS),
     });
   } catch (error) {
-    if (error instanceof ModelOutputInvalid) await deps.store.addCost('precheck', 'llm:classify', error.usd, 'card');
+    if (ModelOutputInvalid.is(error)) await deps.store.addCost('precheck', 'llm:classify', error.usd, 'card');
     throw error;
   }
   await deps.store.addCost('precheck', 'llm:classify', verdict.usd, 'card');

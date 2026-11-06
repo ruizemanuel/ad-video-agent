@@ -8,7 +8,7 @@ import { FakeAlerts } from '../../src/adapters/fake/alerts';
 import { FakeLlm } from '../../src/adapters/fake/llm';
 import { FakeMusic } from '../../src/adapters/fake/music';
 import { refundFailedAlert } from '../../src/maintenance/alerts';
-import type { ReviewNote } from '../../src/ports';
+import { ModelOutputInvalid, type ReviewNote } from '../../src/ports';
 import { renderPaths } from '../../src/vm/tasks';
 import { vmTokenHash } from '../../src/vm/token';
 import { orderWorkflow } from '../../src/workflows/order';
@@ -289,6 +289,19 @@ describe('an order that goes through', () => {
     expect((await fakes.store.getOrder(id))?.summary?.music).toBeNull();
   });
 
+  it('asks the director once more when its answer does not fit, says why in the log, and delivers', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fakes.llm.writeEdl = async () => {
+      if (fakes.llm.calls.writeEdl === 1) throw new ModelOutputInvalid('The director model did not answer with a valid edl.', 0.31, { call: 'director', fault: 'schema' });
+      return { edl: edlShop, usd: 0.2 };
+    };
+    const run = await captureAndPreview(id);
+    await actAsVm(run, id, 'render', 0, null, RENDERED);
+    expect(await run.returnValue).toEqual({ status: 'delivered', files: ALL_FILES, warnings: [] });
+    expect(fakes.llm.calls.writeEdl).toBe(2);
+    expect(warn.mock.calls.filter(([tag]) => tag === '[director_retry]')).toEqual([['[director_retry]', id, 'schema']]);
+  });
+
   it('corrects what the review blocks on, makes key frames of the correction and delivers the corrected edit list', async () => {
     // The first review finds the ad would do for any brand; the review of the corrected key frames does not.
     fakes.llm.review = async ({ frames }) => ({
@@ -547,6 +560,56 @@ describe('an order that is refunded', () => {
     expect(await kinds(id)).toEqual(['capture:0', 'shutdown:0']);
     expect((await fakes.store.getOrder(id))?.steps.script).toBe('failed');
     expect(warn).toHaveBeenCalledWith('[script_failed]', id, 'validation');
+  });
+
+  describe('when the director or the judge answers with something that does not fit', () => {
+    const misfit = (call: string, fault: 'cut-off' | 'empty' | 'not-json' | 'schema', usd = 0.3) =>
+      new ModelOutputInvalid(`The ${call} model did not answer with a valid answer.`, usd, { call, fault });
+    const scriptOf = async (orderId: string) => {
+      const run = await start(orderWorkflow, [orderId]);
+      await actAsVm(run, orderId, 'capture', 0, captureShop(), CAPTURED);
+      return run;
+    };
+    const tagged = (warn: ReturnType<typeof vi.spyOn>, tag: string): unknown[][] => warn.mock.calls.filter(([t]: unknown[]) => t === tag);
+
+    it('refunds when the director does not fit twice, saying why each time', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      fakes.llm.writeEdl = async () => {
+        throw misfit('director', 'not-json');
+      };
+      const run = await scriptOf(id);
+      expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'script' });
+      expect(fakes.llm.calls.writeEdl).toBe(2);
+      expect(tagged(warn, '[director_retry]')).toEqual([['[director_retry]', id, 'not-json']]);
+      expect(tagged(warn, '[script_failed]')).toEqual([['[script_failed]', id, 'ModelOutputInvalid:director:not-json']]);
+      expect(await kinds(id)).toEqual(['capture:0', 'shutdown:0']);
+    });
+
+    it("does not ask the director again for a judge's answer that does not fit", async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      fakes.llm.judge = async () => {
+        throw misfit('judge', 'schema', 0.01);
+      };
+      const run = await scriptOf(id);
+      expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'script' });
+      expect(fakes.llm.calls.writeEdl).toBe(1);
+      expect(tagged(warn, '[director_retry]')).toEqual([]);
+      expect(tagged(warn, '[script_failed]')).toEqual([['[script_failed]', id, 'ModelOutputInvalid:judge:schema']]);
+    });
+
+    it('does not ask the director again when the order cannot afford another director call', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      // With the VM and the first director call, another one no longer fits under the cap of 2.5.
+      await fakes.store.addCost(id, 'test:spent', 2.2, 'card');
+      fakes.llm.writeEdl = async () => {
+        throw misfit('director', 'cut-off');
+      };
+      const run = await scriptOf(id);
+      expect(await run.returnValue).toEqual({ status: 'refunded', reason: 'script' });
+      expect(fakes.llm.calls.writeEdl).toBe(1);
+      expect(tagged(warn, '[director_retry]')).toEqual([]);
+      expect(tagged(warn, '[script_failed]')).toEqual([['[script_failed]', id, 'ModelOutputInvalid:director:cut-off']]);
+    });
   });
 
   it('refunds after two blocking review rounds, with key frames for rounds 0, 1 and 2', async () => {

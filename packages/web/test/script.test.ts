@@ -678,5 +678,5 @@ describe('canAfford', () => {
 
   it('refuses what would pass the cap', () => expect(canAfford(2.45, EST.patch + EST.judge, 2.5)).toBe(false));
 
-  it('estimates the next calls as measured in the quality test', () => expect(EST).toEqual({ patch: 0.1, judge: 0.03, review: 0.25, lyria: 0.08 }));
+  it('estimates the next calls as measured', () => expect(EST).toEqual({ director: 0.35, patch: 0.1, judge: 0.03, review: 0.25, lyria: 0.08 }));
 });

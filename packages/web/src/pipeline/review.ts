@@ -183,7 +183,7 @@ export async function runReview({
     await store.addCost(orderId, 'llm:review', answer.usd, 'card');
   } catch (error) {
     // The model was paid for an answer that did not fit.
-    if (error instanceof ModelOutputInvalid) await store.addCost(orderId, 'llm:review', error.usd, 'card');
+    if (ModelOutputInvalid.is(error)) await store.addCost(orderId, 'llm:review', error.usd, 'card');
     throw error;
   }
 

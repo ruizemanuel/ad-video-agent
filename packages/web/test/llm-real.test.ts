@@ -348,3 +348,23 @@ describe('GatewayLlm: the schema each call sends', () => {
     expect((failure as ModelOutputInvalid).usd).toBeCloseTo((1000 * 4 + 500 * 20) / 1e6, 9);
   });
 });
+
+// The flow tells a director that may answer well when asked again from a judge that failed, and says in its log why an
+// answer did not fit: the call and the kind of fault, never what was written.
+describe('GatewayLlm: why an answer does not fit', () => {
+  it.each([
+    ['text that is not JSON', answer('Here is your ad: "Vendé por WhatsApp"'), 'not-json'],
+    ['JSON that breaks the edit list schema', answer(JSON.stringify({ ...edlShop(), bpm: 0 })), 'schema'],
+    ['an answer cut off at the output cap', answer('{"lang":"es","bpm":', { finishReason: { unified: 'length', raw: 'max_tokens' } }), 'cut-off'],
+    ['no answer at all', answer('', { content: [] }), 'empty'],
+  ] as const)('says the director gave %s', async (_, reply, fault) => {
+    const failure = await adapter(reply).llm.writeEdl({ site: siteShop(), images: [] }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelOutputInvalid);
+    expect(failure).toMatchObject({ call: 'director', fault });
+  });
+
+  it('says which call it was', async () => {
+    const failure = await adapter(answer('Every claim is fine.')).llm.judge(judgeItems(edlShop())).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ call: 'judge', fault: 'not-json' });
+  });
+});

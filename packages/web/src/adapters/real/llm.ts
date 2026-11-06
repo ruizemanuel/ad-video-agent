@@ -3,14 +3,24 @@
 // Output.object, over a provider-safe schema) and says what it cost: what the gateway billed, or, when it does not say,
 // the price of its tokens.
 import { EdlSchema } from '@app/core';
-import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output, RetryError, type LanguageModel, type LanguageModelUsage, type UserContent } from 'ai';
+import {
+  generateText,
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+  Output,
+  RetryError,
+  TypeValidationError,
+  type LanguageModel,
+  type LanguageModelUsage,
+  type UserContent,
+} from 'ai';
 import type { z } from 'zod';
 import { CLASSIFY_OUTPUT, CLASSIFY_SYSTEM, classifyPrompt } from '../../prompts/classify';
 import { DIRECTOR_SYSTEM, directorRequest } from '../../prompts/director';
 import { JUDGE_OUTPUT, JUDGE_SYSTEM, judgePrompt } from '../../prompts/judge';
 import { PATCH_OUTPUT, PATCH_SYSTEM, patchPrompt } from '../../prompts/patch';
 import { REVIEW_OUTPUT, REVIEW_SYSTEM, reviewIntro } from '../../prompts/review';
-import { ModelCallFailed, ModelOutputInvalid, type LlmPort } from '../../ports';
+import { ModelCallFailed, ModelOutputInvalid, type LlmPort, type OutputFault } from '../../ports';
 import { modelSchema } from './provider-safe-schema';
 
 /** The AI Gateway's ids of the models each call uses (checked on 17/10/2026). The corrector and the visual review use the director's model. */
@@ -55,6 +65,13 @@ const failed = (role: Role, error: unknown): ModelCallFailed => {
   const status = (last as { statusCode?: unknown } | null | undefined)?.statusCode;
   const kind = error instanceof Error ? error.name : 'unknown error';
   return new ModelCallFailed(role, kind, typeof status === 'number' ? status : undefined);
+};
+
+// Why the SDK found no object in an answer: cut off at the output cap, empty, not JSON, or JSON that breaks the schema.
+const faultOf = (error: NoObjectGeneratedError): OutputFault => {
+  if (error.finishReason === 'length') return 'cut-off';
+  if (TypeValidationError.isInstance(error.cause)) return 'schema';
+  return (error.text ?? '').trim() === '' ? 'empty' : 'not-json';
 };
 
 type Ask<T> = {
@@ -147,11 +164,11 @@ export class GatewayLlm implements LlmPort {
   }
 
   // One call for structured output. An answer that does not fit the schema is a ModelOutputInvalid with what the call
-  // cost; any other failure is a ModelCallFailed with its kind and status. Neither says what was sent or written (it can
-  // hold the site's text).
+  // cost, the call and why it did not fit; any other failure is a ModelCallFailed with its kind and status. Neither says
+  // what was sent or written (it can hold the site's text).
   private async ask<T>({ role, instructions, content, schema, name, maxOutputTokens }: Ask<T>): Promise<{ output: T; usd: number }> {
     const id = MODELS[role];
-    const invalid = (usd: number) => new ModelOutputInvalid(`The ${role} model did not answer with a valid ${name}.`, usd);
+    const invalid = (usd: number, fault: OutputFault) => new ModelOutputInvalid(`The ${role} model did not answer with a valid ${name}.`, usd, { call: role, fault });
     const result = await generateText({
       model: this.model(id),
       instructions,
@@ -160,14 +177,14 @@ export class GatewayLlm implements LlmPort {
       output: Output.object({ schema: modelSchema(schema), name }),
       maxOutputTokens,
     }).catch((error: unknown) => {
-      throw NoObjectGeneratedError.isInstance(error) ? invalid(priced(id, error.usage)) : failed(role, error);
+      throw NoObjectGeneratedError.isInstance(error) ? invalid(priced(id, error.usage), faultOf(error)) : failed(role, error);
     });
     // Each step is billed: there is one unless the SDK had to go on.
     const usd = result.steps.reduce((sum, step) => sum + (billed(step.providerMetadata) ?? priced(id, step.usage)), 0);
     try {
       return { output: result.output, usd };
     } catch (error) {
-      throw NoOutputGeneratedError.isInstance(error) ? invalid(usd) : failed(role, error);
+      throw NoOutputGeneratedError.isInstance(error) ? invalid(usd, 'no-output') : failed(role, error);
     }
   }
 }

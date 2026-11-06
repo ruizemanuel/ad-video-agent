@@ -59,7 +59,7 @@ function checkUnavailable(error: unknown): Response | null {
     return refuse(503, 'precheck_unavailable', reason, { 'retry-after': String(error.retryAfterSeconds) });
   }
   // The classifier answered with something that did not fit, or did not answer: there is no verdict, so no price yet.
-  if (error instanceof ModelOutputInvalid || error instanceof ModelCallFailed) {
+  if (ModelOutputInvalid.is(error) || ModelCallFailed.is(error)) {
     return refuse(503, 'precheck_unavailable', 'The site could not be checked right now. Try again in a minute.', { 'retry-after': String(MODEL_RETRY_AFTER_SECONDS) });
   }
   return null;

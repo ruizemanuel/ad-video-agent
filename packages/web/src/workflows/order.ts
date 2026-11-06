@@ -538,13 +538,13 @@ function taskInput(task: TaskRequest): unknown {
 
 /** A model that did not answer is asked again later when it may answer then (429, 5xx, no status): the step is retried. */
 function retryLaterIfBusy(error: unknown): void {
-  if (error instanceof ModelCallFailed && (error.status === undefined || error.status === 429 || error.status >= 500)) {
+  if (ModelCallFailed.is(error) && (error.status === undefined || error.status === 429 || error.status >= 500)) {
     throw new RetryableError(error.message, { retryAfter: '30s' });
   }
 }
 
 /** A model call that failed for good, or answered with something that did not fit (that one is billed and recorded). */
-const isModelFailure = (error: unknown): error is ModelCallFailed | ModelOutputInvalid => error instanceof ModelCallFailed || error instanceof ModelOutputInvalid;
+const isModelFailure = (error: unknown): error is ModelCallFailed | ModelOutputInvalid => ModelCallFailed.is(error) || ModelOutputInvalid.is(error);
 
 /** A JSON file the VM wrote, or undefined when it is not JSON. A file that cannot be read throws, and the step is retried. */
 async function readJson(blob: Pick<BlobPort, 'get'>, path: string): Promise<unknown> {
@@ -565,7 +565,15 @@ async function readCapture(blob: Pick<BlobPort, 'get'>, orderId: string): Promis
   return shaped ? (file as CaptureFile) : undefined;
 }
 
-/** The script, from the capture: the director's edit list, checked by code and by the judge, and corrected. */
+/** Why a model call ended the script, for the log: the kind of error, and for an answer that did not fit, its call and fault. */
+const whyFailed = (error: ModelCallFailed | ModelOutputInvalid): string =>
+  ModelOutputInvalid.is(error) ? `${error.name}:${error.call ?? 'unknown'}:${error.fault ?? 'unknown'}` : error.name;
+
+/**
+ * The script, from the capture: the director's edit list, checked by code and by the judge, and corrected. When the
+ * director's answer does not fit, nothing else has run yet: the script starts over once, while the order can afford
+ * another director call, and the log says why the answer did not fit (never what it said).
+ */
 async function writeScript(orderId: string): Promise<{ ok: true; edl: Edl } | Failed> {
   'use step';
   const { store, blob, llm } = await getAdapters();
@@ -580,13 +588,24 @@ async function writeScript(orderId: string): Promise<{ ok: true; edl: Edl } | Fa
   const capture = await readCapture(blob, orderId);
   // The VM said it captured the site, and left no capture to read.
   if (capture === undefined) return await failed('capture', 'capture-unreadable');
+  const spendCap = env().SPEND_CAP_PER_ORDER_USD;
+  const script = () => runScript({ orderId, capture, brief: order.request.brief, deps: { store, llm, spendCap } });
   let result: ScriptResult;
   try {
-    result = await runScript({ orderId, capture, brief: order.request.brief, deps: { store, llm, spendCap: env().SPEND_CAP_PER_ORDER_USD } });
+    result = await script();
   } catch (error) {
     retryLaterIfBusy(error);
-    if (isModelFailure(error)) return await failed('script', error.name);
-    throw error;
+    if (!isModelFailure(error)) throw error;
+    const director = ModelOutputInvalid.is(error) && error.call === 'director' ? error : undefined;
+    if (director === undefined || !canAfford(await store.orderCost(orderId), EST.director, spendCap)) return await failed('script', whyFailed(error));
+    console.warn('[director_retry]', orderId, director.fault ?? 'unknown');
+    try {
+      result = await script();
+    } catch (again) {
+      retryLaterIfBusy(again);
+      if (isModelFailure(again)) return await failed('script', whyFailed(again));
+      throw again;
+    }
   }
   if (!result.ok) return await failed('script', result.reason);
   await store.setStep(orderId, 'script', 'done');

@@ -649,17 +649,42 @@ export class MusicOutputInvalid extends FatalError {
   }
 }
 
+// The brand each model error carries, by which it is told apart (see ModelOutputInvalid.is): the workflow runtime bundles
+// its steps apart, and an error made by another copy of this module is not an instance of the step's class.
+const branded = (brand: symbol) => (error: unknown): boolean => typeof error === 'object' && error !== null && (error as Record<symbol, unknown>)[brand] === true;
+const OUTPUT_INVALID = Symbol.for('ad-video-agent/ModelOutputInvalid');
+const CALL_FAILED = Symbol.for('ad-video-agent/ModelCallFailed');
+
+/**
+ * Why an answer did not fit: it was cut off at the output cap (`cut-off`), it was empty (`empty`), it was not JSON
+ * (`not-json`), it was JSON that breaks the schema (`schema`), or the call ended with no output (`no-output`).
+ */
+export type OutputFault = 'cut-off' | 'empty' | 'not-json' | 'schema' | 'no-output';
+
 /**
  * A model answered, but not with what it was asked for (its answer did not fit the schema). The call was still billed:
- * `usd` is what it cost. The message never quotes the answer, which can hold the site's text.
+ * `usd` is what it cost. `call` is the call it was (`director`, `judge`...) and `fault` why the answer did not fit, when
+ * they are known. The message never quotes the answer, which can hold the site's text.
  */
 export class ModelOutputInvalid extends Error {
+  readonly call: string | undefined;
+  readonly fault: OutputFault | undefined;
+
   constructor(
     message: string,
     readonly usd: number,
+    { call, fault }: { call?: string; fault?: OutputFault } = {},
   ) {
     super(message);
     this.name = 'ModelOutputInvalid';
+    this.call = call;
+    this.fault = fault;
+    Object.defineProperty(this, OUTPUT_INVALID, { value: true });
+  }
+
+  /** Whether `error` is one, made by any copy of this module. */
+  static is(error: unknown): error is ModelOutputInvalid {
+    return branded(OUTPUT_INVALID)(error);
   }
 }
 
@@ -677,6 +702,12 @@ export class ModelCallFailed extends Error {
   ) {
     super(`The ${call} model call failed (${kind}${status === undefined ? '' : `, HTTP ${status}`}).`);
     this.name = 'ModelCallFailed';
+    Object.defineProperty(this, CALL_FAILED, { value: true });
+  }
+
+  /** Whether `error` is one, made by any copy of this module. */
+  static is(error: unknown): error is ModelCallFailed {
+    return branded(CALL_FAILED)(error);
   }
 }
 

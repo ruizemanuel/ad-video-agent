@@ -160,7 +160,7 @@ async function paid<T extends { usd: number }>({ orderId, store }: Calls, item: 
     await store.addCost(orderId, item, answer.usd, 'card');
     return answer;
   } catch (error) {
-    if (error instanceof ModelOutputInvalid) await store.addCost(orderId, item, error.usd, 'card');
+    if (ModelOutputInvalid.is(error)) await store.addCost(orderId, item, error.usd, 'card');
     throw error;
   }
 }
@@ -195,7 +195,7 @@ async function patched(
   try {
     fix = await paid(calls, 'llm:patch', () => calls.llm.patchEdl({ edl, problems, site, ...told }));
   } catch (error) {
-    if (error instanceof ModelOutputInvalid) return { ok: false, reason: 'patch-invalid' };
+    if (ModelOutputInvalid.is(error)) return { ok: false, reason: 'patch-invalid' };
     throw error;
   }
   try {
@@ -298,6 +298,6 @@ export function unusableSummary({ reason, problems, patched: fixes }: Omit<Unusa
  * fit is `patch-invalid`, so one that comes up here is the judge's.
  */
 export const failedCallSummary = (error: ModelCallFailed | ModelOutputInvalid): string =>
-  error instanceof ModelCallFailed
+  ModelCallFailed.is(error)
     ? `model ${error.call}:${error.kind.replace(/[^\w$]+/g, '-')}${error.status === undefined ? '' : `:${error.status}`}`
     : `model judge:${error.name}`;
